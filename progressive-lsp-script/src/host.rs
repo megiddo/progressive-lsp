@@ -19,6 +19,7 @@ pub enum HookName {
     OnWatch,
     OnEngineSpawn,
     OnTierReady,
+    OnInstallVerify,
 }
 
 impl HookName {
@@ -31,6 +32,7 @@ impl HookName {
             Self::OnWatch => "on_watch",
             Self::OnEngineSpawn => "on_engine_spawn",
             Self::OnTierReady => "on_tier_ready",
+            Self::OnInstallVerify => "on_install_verify",
         }
     }
 }
@@ -227,6 +229,20 @@ impl ScriptHost {
         }
     }
 
+    /// After hash check, before first exec / rename of a new binary. Abort refuses it.
+    pub fn on_install_verify(&mut self, path: &str, pack: &str) -> Result<(), ScriptAbort> {
+        let ctx = ScriptContext {
+            path: path.into(),
+            pack: pack.into(),
+            ..ScriptContext::default()
+        };
+        match self.run(HookName::OnInstallVerify, &ctx) {
+            Ok(ScriptDecision::Abort(msg)) => Err(ScriptAbort(msg)),
+            Ok(_) => Ok(()),
+            Err(e) => Err(ScriptAbort(e.0)),
+        }
+    }
+
     /// Logging only. Abort cannot unwind a tier that is already ready.
     pub fn on_tier_ready(&mut self, language: &str, package: &str) -> Result<(), ScriptSandbox> {
         let ctx = ScriptContext {
@@ -335,6 +351,7 @@ mod tests {
         assert_eq!(HookName::OnWatch.as_str(), "on_watch");
         assert_eq!(HookName::OnEngineSpawn.as_str(), "on_engine_spawn");
         assert_eq!(HookName::OnTierReady.as_str(), "on_tier_ready");
+        assert_eq!(HookName::OnInstallVerify.as_str(), "on_install_verify");
         assert_eq!(ScriptDecision::default(), ScriptDecision::Continue);
         assert!(SpawnTweak::default().is_empty());
     }
@@ -625,6 +642,52 @@ mod tests {
         abort.on_tier_ready("python", "pkg").unwrap();
         let mut cont = host_with(ScriptDecision::Continue);
         cont.on_tier_ready("rust", "crate").unwrap();
+    }
+
+    #[test]
+    fn on_install_verify_abort_refuses_new_binary() {
+        let mut abort = host_with(ScriptDecision::Abort("bad-elf".into()));
+        let err = abort
+            .on_install_verify("/prefix/engines/python/ty", "python")
+            .unwrap_err();
+        assert!(err.0.contains("bad-elf"));
+        let mut ok = host_with(ScriptDecision::Continue);
+        ok.on_install_verify("/prefix/bin/x", "python").unwrap();
+        let mut skip = host_with(ScriptDecision::SkipPackage);
+        skip.on_install_verify("/p", "rust").unwrap();
+        let mut tiny = ScriptHost::new(
+            Box::new(RhaiEngineFactory),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        );
+        tiny.ops_limit = 5;
+        tiny.load(
+            r#"
+            fn on_install_verify() {
+                let s = 0;
+                while s < 100000 { s += 1; }
+            }
+            "#,
+            "verify.rhai",
+        )
+        .unwrap();
+        assert!(tiny.on_install_verify("/p", "python").is_err());
+        let mut rhai = ScriptHost::new(
+            Box::new(RhaiEngineFactory),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        );
+        rhai.load(
+            r#"
+            fn on_install_verify() {
+                if pack != "python" { abort("bad-pack"); }
+                if path == "" { abort("empty"); }
+            }
+            "#,
+            "ok.rhai",
+        )
+        .unwrap();
+        rhai.on_install_verify("/prefix/engines/python/ty", "python")
+            .unwrap();
+        assert!(rhai.on_install_verify("/x", "rust").is_err());
     }
 
     #[test]

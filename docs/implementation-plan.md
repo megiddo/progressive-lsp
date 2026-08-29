@@ -130,13 +130,15 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M6 (`m6` branch)
 
+**Status: SIGNED OFF.** v1 complete. There is no M7. Do not open a next milestone branch.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M6.1 | `xtask dist` tarballs + SHA256 + slim/full | M0.8, M4 packs | |
-| M6.2 | Install CLI + `on_install_verify` | M0.7, M2.7 | FakeTransport |
-| M6.3 | Refresh control/lsp/plugin/consumer docs vs impl | M6.1 | docs remain source of truth |
-| M6.4 | Conformance dashboard | M5.2 | per language per tier |
-| M6.5 | Versioning: core semver vs engine SHAs | M6.1 | proto stays `v1` |
+| M6.1 | `xtask dist` tarballs + SHA256 + slim/full | M0.8, M4 packs | **SIGNED OFF.** Per-triple musl tarballs + SHA256 + `manifest.json`. Darwin writes stub payloads; Linux CI is the real musl dist. Slim/full as M4. Dist only reads `xtask/allocator-matrix.toml`. |
+| M6.2 | Install CLI + `on_install_verify` | M0.7, M2.7 | **SIGNED OFF.** Verified prefix (hash + atomic replace). `FakeRemoteTransport` (ssh-like put/chmod/rename/hash; no SSH types). Abort refuses the new binary. |
+| M6.3 | Refresh control/lsp/plugin/consumer docs vs impl | M6.1 | **SIGNED OFF.** docs remain source of truth |
+| M6.4 | Conformance dashboard | M5.2 | **SIGNED OFF.** [conformance.md](conformance.md); C# T1/T2 only; Java no T3; T3 0% on Darwin stubs |
+| M6.5 | Versioning: core semver vs engine SHAs | M6.1 | **SIGNED OFF.** Workspace **0.1.0** (first published v1; not 1.0.0 — native macOS/Windows hosts are post-v1). Proto `progressive.v1`. Engine SHAs in pack manifests only. Hygiene: llvm-cov **96.26%** lines (ignore xtask/main/tree-sitter). Mutants on install+script+control+protocol: **333 caught / 392 scored (84.9%)**, 30 unviable, 4 timeouts. |
 
 ## Spikes (do not skip hygiene on merge)
 

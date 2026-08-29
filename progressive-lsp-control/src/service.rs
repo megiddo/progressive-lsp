@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+use prost::Message;
+
+use crate::codec::{decode_exact, decode_frame, encode_frame, CodecError, DecodeOutcome};
 use crate::messages::*;
 
 /// Port so the control crate does not own watch internals.
@@ -160,6 +163,22 @@ impl ControlServer {
             status: Some(Status::ok()),
         }
     }
+
+    /// Mux control channel: inner payload is length-prefixed proto, never `$/` JSON-RPC.
+    pub fn handle_mux_payload(&self, length_prefixed: &[u8]) -> Result<Vec<u8>, CodecError> {
+        let inner = decode_exact(length_prefixed)?;
+        let req = FilesSinceRequest::decode(inner.as_slice()).unwrap_or_default();
+        let resp = self.files_since(&req);
+        encode_frame(&resp.encode_to_vec())
+    }
+
+    pub fn encode_watch_batch(&self) -> Result<Vec<u8>, CodecError> {
+        encode_frame(&self.last_watch_batch().encode_to_vec())
+    }
+
+    pub fn encode_files_since(&self, req: &FilesSinceRequest) -> Result<Vec<u8>, CodecError> {
+        encode_frame(&self.files_since(req).encode_to_vec())
+    }
 }
 
 #[cfg(test)]
@@ -254,5 +273,46 @@ mod tests {
         assert_eq!(batch.events.len(), 1);
         assert_eq!(batch.generation, 8);
         assert_ne!(srv, ControlServer::new(""));
+    }
+
+    #[test]
+    fn mux_and_progressive_fixture_are_protobuf_not_dollar_slash() {
+        let port = Arc::new(StubPort {
+            paths: vec!["src/A.java".into()],
+            truncated: false,
+            generation: 3,
+        });
+        let srv = ControlServer::new("").with_files_since(port).with_progressive(true);
+        let fs = srv
+            .encode_files_since(&FilesSinceRequest {
+                since: Some(files_since_request::Since::SinceGeneration(1)),
+            })
+            .unwrap();
+        let batch = srv.encode_watch_batch().unwrap();
+        assert_ne!(fs.first().copied(), Some(b'{'));
+        assert_ne!(batch.first().copied(), Some(b'{'));
+        assert!(!String::from_utf8_lossy(&fs).contains("$/"));
+        assert!(!String::from_utf8_lossy(&batch).contains("$/"));
+        let inner = encode_frame(
+            &FilesSinceRequest {
+                since: Some(files_since_request::Since::SinceUnixMs(9)),
+            }
+            .encode_to_vec(),
+        )
+        .unwrap();
+        let reply = srv.handle_mux_payload(&inner).unwrap();
+        assert_ne!(reply.first().copied(), Some(b'{'));
+        assert!(!reply.is_empty());
+        assert!(!fs.is_empty());
+        assert!(!batch.is_empty());
+        assert!(matches!(
+            decode_frame(&fs).unwrap(),
+            DecodeOutcome::Complete { .. }
+        ));
+        assert!(matches!(
+            decode_frame(&batch).unwrap(),
+            DecodeOutcome::Complete { .. }
+        ));
+        assert!(srv.handle_mux_payload(b"{").is_err());
     }
 }

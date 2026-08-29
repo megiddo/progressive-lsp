@@ -16,7 +16,7 @@ u32be payload_length | protobuf bytes
 
 Max payload: implement a documented cap (suggest 16 MiB) and fail the request if exceeded. Do not silently truncate FilesSince without setting `truncated`.
 
-`--mux`: outer mux frame carries channel `control`; inner payload is the same length-prefixed proto.
+`--mux`: outer mux frame is `u8 channel | u32be length | payload` (16 MiB cap). Channel `0` = LSP JSON-RPC. Channel `1` = control; inner payload is the same length-prefixed proto (`u32be | protobuf`).
 
 ## Discovery
 

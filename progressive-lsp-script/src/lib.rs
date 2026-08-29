@@ -20,6 +20,7 @@ mod tests {
         let _ = HookName::OnBootstrap;
         let _ = HookName::OnEngineSpawn;
         let _ = HookName::OnTierReady;
+        let _ = HookName::OnInstallVerify;
         let _ = ScriptHost::new(
             Box::new(RhaiEngineFactory),
             Arc::new(FakeClock::at_unix_ms(1)),

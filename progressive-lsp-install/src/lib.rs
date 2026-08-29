@@ -1,5 +1,6 @@
 //! Install crate: `ArtifactTransport`, `LocalFs`, `Installer`. No SSH types. No network.
 
+pub mod dist_manifest;
 pub mod hash;
 pub mod manifest;
 pub mod probe;
@@ -10,11 +11,14 @@ use std::path::{Path, PathBuf};
 
 use progressive_lsp_core::InstallError;
 
+pub use dist_manifest::{
+    DistArtifact, DistManifest, DIST_PAYLOAD_STUB, DIST_PROTO, DIST_TRIPLES, MUSL_TRIPLES,
+};
 pub use hash::{hex_encode, sha256, sha256_file, verify_hash};
 pub use manifest::{Manifest, ManifestArtifact};
 pub use probe::{BuildCensus, HostProbe};
 pub use selector::{CensusSelector, ExplicitPacks, PackId, PackSelector};
-pub use transport::{ArtifactTransport, FakeTransport, LocalFs};
+pub use transport::{ArtifactTransport, FakeRemoteTransport, FakeTransport, LocalFs};
 
 /// Plan + apply. Hash fail → no rename to the final path.
 #[derive(Clone, Debug)]
@@ -70,6 +74,15 @@ impl<T: ArtifactTransport> Installer<T> {
     }
 
     pub fn apply(&self, plan: &InstallPlan) -> Result<(), InstallError> {
+        self.apply_with_verify(plan, |_| Ok(()))
+    }
+
+    /// Hash tmp, run `verify` (e.g. `on_install_verify`), then rename.
+    /// Hash mismatch or verify Err → no rename, tmp removed, no exec.
+    pub fn apply_with_verify<F>(&self, plan: &InstallPlan, verify: F) -> Result<(), InstallError>
+    where
+        F: FnOnce(&InstallPlan) -> Result<(), InstallError>,
+    {
         if let Some(parent) = plan.dest.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)
@@ -87,6 +100,10 @@ impl<T: ArtifactTransport> Installer<T> {
                 expected: hex_encode(&plan.expected_sha256),
                 actual: hex_encode(&actual),
             });
+        }
+        if let Err(e) = verify(plan) {
+            let _ = std::fs::remove_file(&plan.tmp);
+            return Err(e);
         }
         self.transport.rename_atomic(&plan.tmp, &plan.dest)?;
         let after = self.transport.read_hash(&plan.dest)?;
@@ -245,5 +262,59 @@ mod tests {
     fn installer_exposes_transport() {
         let installer = Installer::new(LocalFs);
         let _ = installer.transport().probe().unwrap();
+    }
+
+    #[test]
+    fn verify_abort_does_not_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("bin/new");
+        let bytes = b"payload".to_vec();
+        let expected = sha256(&bytes);
+        let installer = Installer::new(LocalFs);
+        let plan = installer.plan(&dest, bytes, expected, true).unwrap();
+        let err = installer
+            .apply_with_verify(&plan, |_| Err(InstallError::Refused("hook".into())))
+            .unwrap_err();
+        assert!(matches!(err, InstallError::Refused(_)));
+        assert!(!dest.exists());
+        assert!(!plan.tmp.exists());
+    }
+
+    #[test]
+    fn fake_remote_hash_mismatch_skips_rename_and_atomic_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("remote/final");
+        let mut remote = FakeRemoteTransport::new();
+        remote.corrupt_hash = true;
+        let installer = Installer::new(remote);
+        let bytes = b"abc".to_vec();
+        let plan = installer
+            .plan(&dest, bytes, sha256(b"abc"), true)
+            .unwrap();
+        let err = installer.apply(&plan).unwrap_err();
+        assert!(matches!(err, InstallError::Hash { .. }));
+        assert!(!dest.exists());
+        let ops = installer.transport().ops();
+        assert!(ops.iter().any(|o| o.starts_with("put ")));
+        assert!(ops.iter().any(|o| o.starts_with("hash ")));
+        assert!(!ops.iter().any(|o| o.starts_with("rename ")));
+
+        let dest2 = dir.path().join("remote/ok");
+        std::fs::create_dir_all(dest2.parent().unwrap()).unwrap();
+        std::fs::write(&dest2, b"old").unwrap();
+        let remote2 = FakeRemoteTransport::new();
+        let installer2 = Installer::new(remote2);
+        let fresh = b"fresh".to_vec();
+        let plan2 = installer2
+            .plan(&dest2, fresh.clone(), sha256(&fresh), true)
+            .unwrap();
+        installer2.apply(&plan2).unwrap();
+        assert_eq!(std::fs::read(&dest2).unwrap(), fresh);
+        assert!(!plan2.tmp.exists());
+        let ops2 = installer2.transport().ops();
+        assert!(ops2.iter().any(|o| o.starts_with("put ")));
+        assert!(ops2.iter().any(|o| o.starts_with("chmod ")));
+        assert!(ops2.iter().any(|o| o.starts_with("rename ")));
+        assert!(ops2.iter().any(|o| o.starts_with("hash ")));
     }
 }

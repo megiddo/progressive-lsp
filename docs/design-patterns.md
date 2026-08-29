@@ -69,7 +69,9 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `ClockPort` | Dependency injection / Port | Tests never call `thread::sleep` |
 | `FakeClock`, `FakeWatcher`, `FakeTransport`, `FakeResolver` | Test double | Same traits as prod |
 | Tree-sitter CST walk | Visitor | Query/highlight via named visitors, not ad-hoc recursion in protocol |
-| Mux demux | Adapter | Opaque LSP bytes vs proto control on one pipe |
+| Mux demux / `MuxFrame` | Adapter | Opaque LSP bytes (ch 0) vs proto control (ch 1) on one pipe; 16 MiB cap |
+| `DistManifest` / `DistArtifact` | Schema / DTO | Core semver ≠ engine SHA; Darwin `payload_kind=stub`; triples are musl CI targets |
+| `FakeRemoteTransport` | Test double | Same `ArtifactTransport` as prod; logs put/chmod/rename/hash; no SSH types |
 | Feature `lang-*` | Product variants | Disabled language → Factory missing, not a stub that panics |
 | `PackageIngest` / `IngestReport` | Command | One package per step; `didChange` never waits on remaining packages |
 | `WorkDoneProgress` / `ProgressKind` | Event / DTO | Standard LSP `$/progress` begin/report/end; not a `$/` FilesSince shim |

@@ -28,6 +28,7 @@ This directory is the **source of truth** for the product. Implement from these 
 | LATEST+2 pins and lag | [language-matrix.md](language-matrix.md) |
 | What may exist on the host | [host-deps.md](host-deps.md) |
 | How an IDE consumes this | [consumer.md](consumer.md) |
+| Per-language per-tier pass % | [conformance.md](conformance.md) |
 
 ## Agent rules
 

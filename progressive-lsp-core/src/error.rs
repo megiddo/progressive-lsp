@@ -71,6 +71,8 @@ pub enum InstallError {
     Io(String),
     #[error("manifest: {0}")]
     Manifest(String),
+    #[error("install verify refused: {0}")]
+    Refused(String),
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
@@ -154,7 +156,11 @@ mod tests {
         assert_ne!(hash, InstallError::Transport("x".into()));
         assert_ne!(hash, InstallError::Io("x".into()));
         assert_ne!(hash, InstallError::Manifest("x".into()));
+        assert_ne!(hash, InstallError::Refused("x".into()));
         assert!(InstallError::Transport("x".into()).to_string().contains("transport"));
+        assert!(InstallError::Refused("hook".into())
+            .to_string()
+            .contains("refused"));
     }
 
     #[test]

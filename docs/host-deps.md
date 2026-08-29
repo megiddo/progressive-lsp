@@ -19,7 +19,7 @@ Related: [architecture.md](architecture.md), [testing.md](testing.md) (`check-st
 | **musl-static (default)** | `x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`, allocator from matrix (not musl malloc) | — |
 | **glibc-static (optional)** | Embed glibc via `*-linux-gnu` + `crt-static`, `-static-libgcc -static-libstdc++` | **Not** dynamic glibc. **Not** “use the host’s libc.” |
 
-`xtask dist --libc musl|glibc-static`. Both must pass `check-static`.
+`xtask dist --libc musl|glibc-static --dest DIR` writes per-triple tarballs + SHA256 + `manifest.json`. On Darwin (this host) pack payloads are **stubs** — not musl ELFs. Do not run `check-static` on those stubs or claim greens. Linux CI must publish `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` tarballs that **do** pass `check-static`. Both libc flavors must pass `check-static` when they contain real ELFs.
 
 ### glibc-static obligations
 

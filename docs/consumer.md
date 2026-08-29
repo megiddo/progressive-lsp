@@ -42,9 +42,13 @@ progressive-lsp install --prefix DIR --packs python,rust,...
 
 Env: `PROGRESSIVE_LSP_HOME` same as `--prefix`.
 
-M0 `install` is schema/layout only: creates the prefix directories and an `installed-packs.toml` record. No network fetch. Hash-gated `Installer` + `LocalFs` are in `progressive-lsp-install`.
+`progressive-lsp install --prefix DIR --packs python` produces a **verified** prefix: each pack binary and `manifest.json` is written via `Installer` (hash tmp, then atomic rename). Hash mismatch or `on_install_verify` Abort → no rename, no exec. No network fetch. SSH is not implemented in `progressive-lsp-install`; consumers implement `ArtifactTransport` (tests use `FakeRemoteTransport` for remote-like put/chmod/rename/hash).
 
-M3 pack layout: `$PREFIX/engines/python/ty` and `$PREFIX/engines/rust/rust-analyzer` plus `manifest.json`. `xtask dist --pack python,rust --dest DIR` writes that layout. On Darwin the binaries are stubs (not musl ELFs); Linux CI / Docker produce the real static packs.
+Pack layout: `$PREFIX/engines/python/ty` plus `manifest.json` (engine SHA256). `xtask dist --pack slim|full --dest DIR` writes that layout **and** per-triple tarballs (`x86_64-unknown-linux-musl/<flavor>.tar`, `aarch64-unknown-linux-musl/<flavor>.tar`) with sidecar SHA256 and a dist `manifest.json`. On Darwin the pack payloads are **stubs** (not musl ELFs); do not run `check-static` on them. Linux CI / Docker produce the real static musl tarballs.
+
+Workspace/core crate version is **0.1.0** (first published v1; 1.0.0 waits for native macOS/Windows hosts, which are post-v1). Engine SHAs are pack-manifest fields, not Cargo versions. Proto stays `progressive.v1`.
+
+Default `serve` is stock stdio LSP with control **off** (`experimental.progressiveLsp.socket` is null, `mux` is false). `--control-socket PATH` / `--control-fd N` advertise a side channel. `--mux` uses one stdio stream: channel `0` = opaque JSON-RPC, channel `1` = length-prefixed protobuf.
 
 ## What not to do
 

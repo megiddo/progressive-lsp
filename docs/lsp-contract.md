@@ -6,8 +6,8 @@ Related: [control-protocol.md](control-protocol.md), [consumer.md](consumer.md),
 
 ## Transport
 
-- Default: **stdio**, Content-Length headers (LSP).
-- `--mux`: LSP bytes on the `lsp` channel (still JSON-RPC, not protobuf).
+- Default: **stdio**, Content-Length headers (LSP). Control is **off**.
+- `--mux`: one stdio pipe. Frame is `u8 channel | u32be length | payload`. Channel `0` (`lsp`) = opaque JSON-RPC message body (still JSON-RPC, not protobuf). Channel `1` (`control`) = the same length-prefixed proto as a dedicated socket.
 
 ## Capabilities (v1 intent)
 
@@ -53,4 +53,4 @@ May include: `prefix`, `packs`, `scripts` (paths or names on the merge chain). F
 
 ## Conformance
 
-Per-language, per-tier pass rates live on a dashboard in M6. Fixtures under `fixtures/`. A stock client test harness must pass without opening a control socket.
+Per-language, per-tier pass rates: [conformance.md](conformance.md) (generated from `fixtures/matrix/`). A stock client test harness must pass without opening a control socket. C# is T1/T2 only. Java has no T3. T3 is 0% on Darwin stubs; Linux CI with real musl packs is the place to re-score T3.

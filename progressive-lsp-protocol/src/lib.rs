@@ -2,6 +2,7 @@
 
 pub mod framing;
 pub mod intelligence;
+pub mod mux;
 pub mod progress;
 pub mod rpc;
 
@@ -19,11 +20,16 @@ use crate::intelligence::{
 use crate::rpc::{JsonRpcError, JsonRpcRequest};
 
 pub use intelligence::LspIntelligence;
+pub use mux::{
+    decode_mux_frame, encode_mux_frame, read_mux_frame, write_mux_frame, MuxError, MuxFrame,
+    CHANNEL_CONTROL, CHANNEL_LSP, MAX_MUX_PAYLOAD,
+};
 pub use progress::{WorkDoneProgress, PROGRESS_METHOD, WORK_DONE_CREATE};
 
 pub const SERVER_NAME: &str = "progressive-lsp";
-pub const SERVER_VERSION: &str = "0.0.0";
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PROGRESSIVE_LSP_VERSION: &str = "v1";
+pub const PROTO_PACKAGE: &str = "progressive.v1";
 
 /// Advertised `experimental.progressiveLsp` capability.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,38 +227,133 @@ impl LspFacade {
         write_message(writer, body).map_err(|e| InitializeFailed(e.to_string()))
     }
 
-    /// Serve until `exit` or EOF. Stock clients use stdio only.
+    /// Serve until `exit` or EOF. Stock clients use stdio Content-Length only.
     pub fn serve<R, W>(&self, mut reader: R, mut writer: W) -> Result<(), InitializeFailed>
     where
         R: BufRead,
         W: Write,
     {
+        if self.cap.mux {
+            return self.serve_mux(&mut reader, &mut writer, None::<fn(&[u8]) -> Option<Vec<u8>>>);
+        }
+        self.serve_lsp(&mut reader, &mut writer)
+    }
+
+    fn serve_lsp<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<(), InitializeFailed>
+    where
+        R: BufRead,
+        W: Write,
+    {
         loop {
-            let payload = match read_message(&mut reader) {
+            let payload = match read_message(reader) {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => return Ok(()),
                 Err(e) => return Err(InitializeFailed(e.to_string())),
             };
-            let req = match rpc::parse_request(&payload) {
-                Ok(req) => req,
-                Err(e) => {
-                    let resp = rpc::failure(None, e);
-                    Self::write_json(&mut writer, &resp)?;
-                    continue;
-                }
-            };
-            if req.method == "exit" {
+            if self.dispatch_json_rpc(&payload, writer)? {
                 return Ok(());
             }
-            if let Some(resp) = self.handle_request(&req) {
-                Self::write_json(&mut writer, &resp)?;
-            }
-            if let Some(intel) = &self.intelligence {
-                for ev in intel.drain_progress() {
-                    Self::write_json(&mut writer, &ev.to_notification())?;
+        }
+    }
+
+    /// `--mux`: channel id + length + payload. LSP stays JSON-RPC; control is proto.
+    pub fn serve_mux<R, W, C>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        mut on_control: Option<C>,
+    ) -> Result<(), InitializeFailed>
+    where
+        R: std::io::Read,
+        W: Write,
+        C: FnMut(&[u8]) -> Option<Vec<u8>>,
+    {
+        loop {
+            let frame = match crate::mux::read_mux_frame(reader) {
+                Ok(Some(f)) => f,
+                Ok(None) => return Ok(()),
+                Err(e) => return Err(InitializeFailed(e.to_string())),
+            };
+            if frame.is_control() {
+                if let Some(cb) = on_control.as_mut() {
+                    if let Some(resp) = cb(&frame.payload) {
+                        crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_CONTROL, &resp)
+                            .map_err(|e| InitializeFailed(e.to_string()))?;
+                    }
                 }
+                continue;
+            }
+            if !frame.is_lsp() {
+                return Err(InitializeFailed(format!(
+                    "unknown mux channel {}",
+                    frame.channel
+                )));
+            }
+            if self.dispatch_json_rpc_mux(&frame.payload, writer)? {
+                return Ok(());
             }
         }
+    }
+
+    fn dispatch_json_rpc<W: Write>(
+        &self,
+        payload: &[u8],
+        writer: &mut W,
+    ) -> Result<bool, InitializeFailed> {
+        let req = match rpc::parse_request(payload) {
+            Ok(req) => req,
+            Err(e) => {
+                let resp = rpc::failure(None, e);
+                Self::write_json(writer, &resp)?;
+                return Ok(false);
+            }
+        };
+        if req.method == "exit" {
+            return Ok(true);
+        }
+        if let Some(resp) = self.handle_request(&req) {
+            Self::write_json(writer, &resp)?;
+        }
+        if let Some(intel) = &self.intelligence {
+            for ev in intel.drain_progress() {
+                Self::write_json(writer, &ev.to_notification())?;
+            }
+        }
+        Ok(false)
+    }
+
+    fn dispatch_json_rpc_mux<W: Write>(
+        &self,
+        payload: &[u8],
+        writer: &mut W,
+    ) -> Result<bool, InitializeFailed> {
+        let req = match rpc::parse_request(payload) {
+            Ok(req) => req,
+            Err(e) => {
+                let resp = rpc::failure(None, e);
+                let body = serde_json::to_vec(&resp).map_err(|e| InitializeFailed(e.to_string()))?;
+                crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_LSP, &body)
+                    .map_err(|e| InitializeFailed(e.to_string()))?;
+                return Ok(false);
+            }
+        };
+        if req.method == "exit" {
+            return Ok(true);
+        }
+        if let Some(resp) = self.handle_request(&req) {
+            let body = serde_json::to_vec(&resp).map_err(|e| InitializeFailed(e.to_string()))?;
+            crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_LSP, &body)
+                .map_err(|e| InitializeFailed(e.to_string()))?;
+        }
+        if let Some(intel) = &self.intelligence {
+            for ev in intel.drain_progress() {
+                let body = serde_json::to_vec(&ev.to_notification())
+                    .map_err(|e| InitializeFailed(e.to_string()))?;
+                crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_LSP, &body)
+                    .map_err(|e| InitializeFailed(e.to_string()))?;
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -293,6 +394,13 @@ mod tests {
         assert_eq!(cap["socket"], "/tmp/control.sock");
         assert_eq!(cap["mux"], true);
         assert_eq!(facade.initialize_result()["serverInfo"]["name"], SERVER_NAME);
+        assert_eq!(
+            facade.initialize_result()["serverInfo"]["version"],
+            SERVER_VERSION
+        );
+        assert_eq!(SERVER_VERSION, env!("CARGO_PKG_VERSION"));
+        assert_eq!(PROTO_PACKAGE, "progressive.v1");
+        assert_eq!(PROGRESSIVE_LSP_VERSION, "v1");
     }
 
     #[test]
@@ -571,5 +679,76 @@ mod tests {
             params: Value::Null,
         };
         assert!(facade.handle_request(&req).is_none());
+    }
+
+    #[test]
+    fn serve_mux_initialize_is_jsonrpc_on_lsp_channel() {
+        let init = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"capabilities": {}}
+        }))
+        .unwrap();
+        let exit = serde_json::to_vec(&json!({"jsonrpc":"2.0","method":"exit"})).unwrap();
+        let mut stdin = crate::mux::encode_mux_frame(crate::mux::CHANNEL_LSP, &init).unwrap();
+        stdin.extend_from_slice(
+            &crate::mux::encode_mux_frame(crate::mux::CHANNEL_LSP, &exit).unwrap(),
+        );
+        let facade = LspFacade::new(None, true);
+        assert!(facade.cap().mux);
+        let mut out = Vec::new();
+        facade
+            .serve(Cursor::new(stdin), &mut out)
+            .unwrap();
+        let (frame, _) = crate::mux::decode_mux_frame(&out).unwrap().unwrap();
+        assert!(frame.is_lsp());
+        let resp: Value = serde_json::from_slice(&frame.payload).unwrap();
+        assert_eq!(
+            resp["result"]["capabilities"]["experimental"]["progressiveLsp"]["mux"],
+            true
+        );
+        assert!(resp["result"]["capabilities"]["experimental"]["progressiveLsp"]["socket"].is_null());
+    }
+
+    #[test]
+    fn serve_mux_control_callback_and_bad_json() {
+        let inner = b"\0\0\0\0";
+        let mut stdin = crate::mux::encode_mux_frame(crate::mux::CHANNEL_CONTROL, inner).unwrap();
+        stdin.extend_from_slice(
+            &crate::mux::encode_mux_frame(crate::mux::CHANNEL_LSP, b"{").unwrap(),
+        );
+        stdin.extend_from_slice(
+            &crate::mux::encode_mux_frame(
+                crate::mux::CHANNEL_LSP,
+                &serde_json::to_vec(&json!({"jsonrpc":"2.0","method":"exit"})).unwrap(),
+            )
+            .unwrap(),
+        );
+        let facade = LspFacade::new(None, true);
+        let mut out = Vec::new();
+        let mut seen = false;
+        facade
+            .serve_mux(&mut Cursor::new(stdin), &mut out, Some(|p: &[u8]| {
+                seen = p == inner;
+                Some(b"ack".to_vec())
+            }))
+            .unwrap();
+        assert!(seen);
+        let (ctrl, n) = crate::mux::decode_mux_frame(&out).unwrap().unwrap();
+        assert!(ctrl.is_control());
+        assert_eq!(ctrl.payload, b"ack");
+        let (lsp, _) = crate::mux::decode_mux_frame(&out[n..]).unwrap().unwrap();
+        let resp: Value = serde_json::from_slice(&lsp.payload).unwrap();
+        assert_eq!(resp["error"]["code"], -32700);
+    }
+
+    #[test]
+    fn stock_initialize_has_control_off() {
+        let facade = LspFacade::new(None, false);
+        let cap = facade.initialize_result()["capabilities"]["experimental"]["progressiveLsp"].clone();
+        assert_eq!(cap["version"], "v1");
+        assert!(cap["socket"].is_null());
+        assert_eq!(cap["mux"], false);
     }
 }

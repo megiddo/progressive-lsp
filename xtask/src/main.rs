@@ -5,6 +5,7 @@ mod check_static;
 mod dist;
 mod musl;
 mod perf;
+mod tarball;
 
 use std::env;
 use std::path::PathBuf;
@@ -40,7 +41,7 @@ xtask musl [--target TRIPLE] [--both]
 xtask check-static <ELF>...
 xtask bench-alloc
 xtask bench-perf
-xtask dist [--slim|--full|--pack slim|full|python,rust,...] --dest DIR
+xtask dist [--slim|--full|--pack slim|full|python,rust,...] [--libc musl|glibc-static] --dest DIR
 "
     );
 }

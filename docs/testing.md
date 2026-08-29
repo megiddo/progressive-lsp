@@ -76,6 +76,7 @@ T3 latency is per-engine and not a core fail if ty is slow.
 - `allow_shell` default false.
 - Abort on `on_pre_index` skips that package; Abort on `on_watch` drops paths; Abort on `on_bootstrap` fails initialize.
 - Abort on `on_engine_spawn` skips that engine (T1/T2 remain). `on_tier_ready` Abort cannot unwind intelligence.
+- Abort on `on_install_verify` refuses the new binary (no rename, no exec).
 - Scripts cannot register `textDocument/definition`.
 
 ## Milestone sign-off (every WP)

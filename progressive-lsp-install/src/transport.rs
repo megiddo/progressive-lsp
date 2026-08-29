@@ -1,6 +1,7 @@
 //! `ArtifactTransport` strategies. `LocalFs` only — no SSH types, no network.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use progressive_lsp_core::InstallError;
 
@@ -121,6 +122,85 @@ impl ArtifactTransport for FakeTransport {
     }
 }
 
+/// Test double that looks like remote put/chmod/rename/hash.
+/// Same [`ArtifactTransport`] trait. No SSH types, no network.
+#[derive(Clone, Debug, Default)]
+pub struct FakeRemoteTransport {
+    pub corrupt_hash: bool,
+    pub fail_put: bool,
+    pub fail_chmod: bool,
+    pub fail_rename: bool,
+    ops: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeRemoteTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn ops(&self) -> Vec<String> {
+        self.ops.lock().expect("ops").clone()
+    }
+
+    fn log(&self, op: impl Into<String>) {
+        self.ops.lock().expect("ops").push(op.into());
+    }
+}
+
+impl ArtifactTransport for FakeRemoteTransport {
+    fn put(&self, dest: &Path, bytes: &[u8]) -> Result<(), InstallError> {
+        self.log(format!("put {}", dest.display()));
+        if self.fail_put {
+            return Err(InstallError::Transport("remote put failed".into()));
+        }
+        if dest.as_os_str().is_empty() {
+            return Err(InstallError::Transport("empty dest".into()));
+        }
+        if let Some(parent) = dest.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| InstallError::Io(format!("remote mkdir {}: {e}", parent.display())))?;
+            }
+        }
+        std::fs::write(dest, bytes)
+            .map_err(|e| InstallError::Io(format!("remote write {}: {e}", dest.display())))
+    }
+
+    fn chmod_exec(&self, path: &Path) -> Result<(), InstallError> {
+        self.log(format!("chmod {}", path.display()));
+        if self.fail_chmod {
+            return Err(InstallError::Transport("remote chmod failed".into()));
+        }
+        Ok(())
+    }
+
+    fn rename_atomic(&self, from: &Path, to: &Path) -> Result<(), InstallError> {
+        self.log(format!("rename {} -> {}", from.display(), to.display()));
+        if self.fail_rename {
+            return Err(InstallError::Transport("remote rename failed".into()));
+        }
+        if let Some(parent) = to.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| InstallError::Io(format!("remote mkdir {}: {e}", parent.display())))?;
+            }
+        }
+        std::fs::rename(from, to).map_err(|e| InstallError::Io(e.to_string()))
+    }
+
+    fn read_hash(&self, path: &Path) -> Result<[u8; 32], InstallError> {
+        self.log(format!("hash {}", path.display()));
+        if self.corrupt_hash {
+            return Ok([0u8; 32]);
+        }
+        sha256_file(path)
+    }
+
+    fn probe(&self) -> Result<HostProbe, InstallError> {
+        Ok(HostProbe::current(BuildCensus::default()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +248,37 @@ mod tests {
         assert_eq!(t.read_hash(&b).unwrap(), sha256(b"abc"));
         t.corrupt_hash = true;
         assert_eq!(t.read_hash(&b).unwrap(), [0u8; 32]);
+    }
+
+    #[test]
+    fn fake_remote_logs_put_chmod_rename_hash() {
+        let t = FakeRemoteTransport::new();
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let dest = dir.path().join("nested/b");
+        t.put(&a, b"xyz").unwrap();
+        t.chmod_exec(&a).unwrap();
+        assert_eq!(t.read_hash(&a).unwrap(), sha256(b"xyz"));
+        t.rename_atomic(&a, &dest).unwrap();
+        assert!(!a.exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"xyz");
+        let ops = t.ops();
+        assert!(ops.iter().any(|o| o.starts_with("put ")));
+        assert!(ops.iter().any(|o| o.starts_with("chmod ")));
+        assert!(ops.iter().any(|o| o.starts_with("rename ")));
+        assert!(ops.iter().any(|o| o.starts_with("hash ")));
+        assert_eq!(t.probe().unwrap().os, std::env::consts::OS);
+        let mut fail = FakeRemoteTransport::new();
+        fail.fail_put = true;
+        assert!(fail.put(Path::new("x"), b"y").is_err());
+        fail.fail_put = false;
+        assert!(fail.put(Path::new(""), b"y").is_err());
+        fail.fail_chmod = true;
+        assert!(fail.chmod_exec(&dest).is_err());
+        fail.fail_chmod = false;
+        fail.fail_rename = true;
+        assert!(fail.rename_atomic(&dest, &a).is_err());
+        fail.corrupt_hash = true;
+        assert_eq!(fail.read_hash(&dest).unwrap(), [0u8; 32]);
     }
 }

@@ -199,13 +199,17 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M6 — Deploy, contracts as standard (~3 weeks)
 
+**Status: SIGNED OFF** on branch `m6`. v1 is complete. There is no M7. Do not open a next milestone branch.
+
 - `xtask dist` per-triple tarballs + `manifest.json` + SHA256; slim vs full.
-- Install CLI: `install` / `serve` / `--control-socket` / `--mux`; `on_install_verify`; FakeTransport hash mismatch + atomic replace.
-- Docs in this tree are the **published** standard (refresh if impl drifted).
-- Conformance dashboard (pass % per language per tier).
-- Versioning: core semver independent of engine SHAs; proto `progressive.v1`.
+- Install CLI: `install` / `serve` / `--control-socket` / `--control-fd` / `--mux`; `on_install_verify`; FakeRemoteTransport hash mismatch + atomic replace.
+- Docs in this tree are the **published** standard (refreshed vs impl).
+- Conformance dashboard (pass % per language per tier): [conformance.md](conformance.md).
+- Versioning: workspace/core **0.1.0**; engine SHAs live in pack `manifest.json`; proto stays `progressive.v1`.
 
 **Exit:** local `progressive-lsp install --packs python` produces a verified prefix; stock `initialize` with control off; progressive fixture uses FilesSince + WatchBatch over protobuf only. Fake ssh-like transport test for install.
+
+**Darwin vs CI:** this host’s `xtask dist` tarballs contain **stubs**, not musl ELFs. Do not claim `check-static` green on them. The real dist is Linux CI per-triple musl (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`).
 
 ## Post-v1 (not scheduled)
 

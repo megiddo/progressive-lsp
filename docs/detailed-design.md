@@ -56,6 +56,7 @@ Use typed errors with `thiserror`. Do not `unwrap` on user paths.
 | `EngineNotReady` | T3 requested/implied but child not ready; resolver falls back |
 | `InstallError::Hash` | SHA mismatch; do not exec |
 | `InstallError::Transport` | `ArtifactTransport` failed |
+| `InstallError::Refused` | `on_install_verify` Abort; tmp deleted, no rename |
 | `StaticLinkError` | `check-static` failed (xtask, not runtime) |
 | `ScriptAbort` | Hook returned Abort; documented skip |
 | `ScriptSandbox` | ops/string cap exceeded |
@@ -192,4 +193,6 @@ Each `progressive-lsp-lang-*` exports `LanguageFactory`. Unshipped T3: Factory s
 
 ## Mux (optional)
 
-`--mux`: one stdio stream, two channels. Frame: channel id + length + payload. Channel `lsp` = opaque JSON-RPC bytes. Channel `control` = protobuf messages as in [control-protocol.md](control-protocol.md).
+`--mux`: one stdio stream, two channels. Frame: `u8 channel | u32be length | payload` (16 MiB cap). Channel `0` (`lsp`) = opaque JSON-RPC bytes. Channel `1` (`control`) = length-prefixed protobuf as in [control-protocol.md](control-protocol.md). Types: `MuxFrame`, `CHANNEL_LSP`, `CHANNEL_CONTROL`.
+
+`DistManifest` / `DistArtifact`: dist `manifest.json`. `core_version` is crate semver (0.1.0). Engine SHAs stay on pack `Manifest` artifacts. Darwin `payload_kind` is `stub`. Real musl ELFs are Linux CI per-triple tarballs.

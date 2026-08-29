@@ -5,13 +5,18 @@ use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use progressive_lsp_core::{apply_worktree_excludes, PrefixLayout, SystemClock};
-use progressive_lsp_engine::{EngineSupervisor, PackAdapter};
+use progressive_lsp_control::ControlServer;
+use progressive_lsp_core::{apply_worktree_excludes, InstallError, PrefixLayout, SystemClock};
+use progressive_lsp_engine::{
+    binary_name_for_pack, stub_pack_bytes, EngineSupervisor, PackAdapter,
+};
 use progressive_lsp_install::{
-    sha256, sha256_file, ExplicitPacks, Installer, LocalFs, Manifest, PackSelector,
+    hex_encode, sha256, sha256_file, ExplicitPacks, Installer, LocalFs, Manifest, ManifestArtifact,
+    PackSelector,
 };
 use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
+use progressive_lsp_script::ScriptHost;
 
 mod session;
 pub use session::{register_languages, WorkspaceSession};
@@ -185,29 +190,96 @@ pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
     let facade = LspFacade::new(socket, opts.mux);
     let stdin = io::stdin();
     let stdout = io::stdout();
-    facade.serve(BufReader::new(stdin.lock()), stdout.lock())?;
+    if opts.mux {
+        let srv = ControlServer::new("").with_progressive(true);
+        facade.serve_mux(
+            &mut BufReader::new(stdin.lock()),
+            &mut stdout.lock(),
+            Some(|payload: &[u8]| srv.handle_mux_payload(payload).ok()),
+        )?;
+    } else {
+        facade.serve(BufReader::new(stdin.lock()), stdout.lock())?;
+    }
     Ok(())
 }
 
-pub fn run_install(opts: InstallOpts) -> Result<(), progressive_lsp_core::InstallError> {
+pub fn run_install(opts: InstallOpts) -> Result<(), InstallError> {
+    run_install_with_scripts(opts, None)
+}
+
+/// Hash-gated prefix. `on_install_verify` Abort refuses the new binary (no rename).
+pub fn run_install_with_scripts(
+    opts: InstallOpts,
+    mut scripts: Option<&mut ScriptHost>,
+) -> Result<(), InstallError> {
     let layout = PrefixLayout::from_path(&opts.prefix);
     layout
         .ensure_dirs()
-        .map_err(|e| progressive_lsp_core::InstallError::Io(e.to_string()))?;
-    write_install_record(&layout, &opts.packs)?;
+        .map_err(|e| InstallError::Io(e.to_string()))?;
+    let installer = Installer::new(LocalFs);
+    for pack in &opts.packs {
+        install_verified_pack(&installer, &layout, pack, scripts.as_deref_mut())?;
+    }
+    write_install_record(&installer, &layout, &opts.packs, scripts.as_deref_mut())?;
     Ok(())
 }
 
+fn install_verified_pack(
+    installer: &Installer<LocalFs>,
+    layout: &PrefixLayout,
+    pack: &str,
+    scripts: Option<&mut ScriptHost>,
+) -> Result<(), InstallError> {
+    let binary = binary_name_for_pack(pack)
+        .ok_or_else(|| InstallError::Manifest(format!("unknown pack {pack}")))?;
+    let bytes = stub_pack_bytes(pack, binary);
+    let expected = sha256(&bytes);
+    let dest = layout.engines_dir().join(pack).join(binary);
+    let plan = installer.plan(dest, bytes, expected, true)?;
+    apply_verified(installer, &plan, pack, scripts)?;
+    let manifest = Manifest {
+        version: "1".into(),
+        artifacts: vec![ManifestArtifact {
+            name: binary.into(),
+            rel_path: binary.into(),
+            sha256: hex_encode(&expected),
+            executable: true,
+        }],
+    };
+    let man_bytes = manifest.to_json()?.into_bytes();
+    let man_hash = sha256(&man_bytes);
+    let man_dest = layout.engines_dir().join(pack).join("manifest.json");
+    let man_plan = installer.plan(man_dest, man_bytes, man_hash, false)?;
+    apply_verified(installer, &man_plan, pack, None)?;
+    Ok(())
+}
+
+fn apply_verified(
+    installer: &Installer<LocalFs>,
+    plan: &progressive_lsp_install::InstallPlan,
+    pack: &str,
+    scripts: Option<&mut ScriptHost>,
+) -> Result<(), InstallError> {
+    installer.apply_with_verify(plan, |_| {
+        if let Some(host) = scripts {
+            host.on_install_verify(&plan.dest.to_string_lossy(), pack)
+                .map_err(|e| InstallError::Refused(e.0))?;
+        }
+        Ok(())
+    })
+}
+
 fn write_install_record(
+    installer: &Installer<LocalFs>,
     layout: &PrefixLayout,
     packs: &[String],
-) -> Result<(), progressive_lsp_core::InstallError> {
+    scripts: Option<&mut ScriptHost>,
+) -> Result<(), InstallError> {
     let record = format!("packs = {packs:?}\n");
     let dest = layout.root().join("installed-packs.toml");
     let hash = sha256(record.as_bytes());
-    let installer = Installer::new(LocalFs);
     let plan = installer.plan(dest, record.into_bytes(), hash, false)?;
-    installer.apply(&plan)
+    apply_verified(installer, &plan, "core", scripts)
 }
 
 /// Schema-only local place of a verified blob under prefix (no network).
@@ -378,6 +450,54 @@ mod tests {
         assert!(dir.path().join("config.toml").is_file());
         let rec = std::fs::read_to_string(dir.path().join("installed-packs.toml")).unwrap();
         assert!(rec.contains("python"));
+        let ty = dir.path().join("engines/python/ty");
+        assert!(ty.is_file());
+        let man = dir.path().join("engines/python/manifest.json");
+        assert!(man.is_file());
+        let found = progressive_lsp_engine::discover_pack(
+            &PrefixLayout::from_path(dir.path()),
+            "python",
+        )
+        .unwrap();
+        assert_eq!(found.path, ty);
+        assert!(progressive_lsp_engine::is_pack_stub(&std::fs::read(&ty).unwrap()));
+    }
+
+    #[test]
+    fn install_unknown_pack_is_manifest_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run_install(InstallOpts {
+            prefix: dir.path().to_path_buf(),
+            packs: vec!["csharp-ls".into()],
+        })
+        .unwrap_err();
+        assert!(matches!(err, InstallError::Manifest(_)));
+    }
+
+    #[test]
+    fn on_install_verify_abort_refuses_new_binary() {
+        use progressive_lsp_core::FakeClock;
+        use progressive_lsp_script::{FakeEngineFactory, ScriptDecision, ScriptHost};
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = ScriptHost::new(
+            Box::new(FakeEngineFactory {
+                decision: ScriptDecision::Abort("refuse-ty".into()),
+                fail_create: None,
+            }),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        );
+        host.load("ok", "fake").unwrap();
+        let err = run_install_with_scripts(
+            InstallOpts {
+                prefix: dir.path().to_path_buf(),
+                packs: vec!["python".into()],
+            },
+            Some(&mut host),
+        )
+        .unwrap_err();
+        assert!(matches!(err, InstallError::Refused(msg) if msg.contains("refuse-ty")));
+        assert!(!dir.path().join("engines/python/ty").exists());
     }
 
     #[test]

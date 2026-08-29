@@ -143,6 +143,6 @@ Optional. Canonical encoding: protobuf, length-prefixed `u32be` + payload. Defau
 
 ## Build and dist
 
-`cargo xtask` only. musl default; `xtask dist --libc musl|glibc-static`. Engine packs are **cached, content-addressed jobs** keyed by upstream git SHA. PR CI does not compile LLVM. Allocator: `xtask bench-alloc` → `xtask/allocator-matrix.toml`; `dist` only reads that file ([testing.md](testing.md)).
+`cargo xtask` only. musl default; `xtask dist --libc musl|glibc-static --dest DIR` writes per-triple tarballs + SHA256 + `manifest.json`. Darwin `xtask dist` payloads are stubs (not musl ELFs; not `check-static` greens). Linux CI publishes the real `x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl` tarballs. Engine packs are **cached, content-addressed jobs** keyed by upstream git SHA in pack manifests (independent of core crate **0.1.0**). PR CI does not compile LLVM. Allocator: `xtask bench-alloc` → `xtask/allocator-matrix.toml`; `dist` only reads that file ([testing.md](testing.md)).
 
 Host platforms for **this** server: Linux fully static x86_64 and aarch64. Darwin/Windows clients may speak LSP to a remote Linux static binary; native macOS/Windows hosts are post-v1.
