@@ -28,7 +28,7 @@ Window below is **as of 2026-08**. Update the table when LATEST moves; keep fixt
 | Go | 1.27 | 1.26 | 1.25 | Tree-sitter | `go.mod`/`go.work` + import paths | **gopls** `CGO_ENABLED=0` | Project `go` on PATH may be required for full types/cgo; else T2. Do not bundle a Go SDK. |
 | Zig | pin with zls | −1 | −2 | Tree-sitter | `build.zig` / `@import` | **zls** | zls tracks Zig tightly; matrix lag expected. No project `zig` → T2. |
 
-Exact compiler/grammar git SHAs belong in `xtask` / lockfiles once M0 exists. This table is the product window.
+Exact compiler/grammar git SHAs belong in `xtask` / lockfiles. This table is the product window. M0 ships empty `LanguageFactory` slots for every row (`UnsupportedLanguage`); pins are not Cargo-bumped here.
 
 ## Upstream lag policy
 

@@ -1,4 +1,7 @@
 /target/
+**/target/
+/mutants.out/
+/mutants.out.old/
 **/*.rs.bk
 .DS_Store
 *.swp

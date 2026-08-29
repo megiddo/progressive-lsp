@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "progressive-lsp-core",
+    "progressive-lsp-plugin",
+    "progressive-lsp-protocol",
+    "progressive-lsp-control",
+    "progressive-lsp-install",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+
+[workspace.dependencies]
+progressive-lsp-core = { path = "progressive-lsp-core" }
+progressive-lsp-plugin = { path = "progressive-lsp-plugin" }
+progressive-lsp-protocol = { path = "progressive-lsp-protocol" }
+progressive-lsp-control = { path = "progressive-lsp-control" }
+progressive-lsp-install = { path = "progressive-lsp-install" }
+prost = "0.13"
+semver = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+toml = "0.8"
+tempfile = "3.20"
+
+[package]
+name = "progressive-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Composition root: serve + install"
+
+[dependencies]
+progressive-lsp-control.workspace = true
+progressive-lsp-core.workspace = true
+progressive-lsp-install.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-protocol.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[[bin]]
+name = "progressive-lsp"
+path = "src/main.rs"

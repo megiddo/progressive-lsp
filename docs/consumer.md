@@ -42,6 +42,8 @@ progressive-lsp install --prefix DIR --packs python,rust,...
 
 Env: `PROGRESSIVE_LSP_HOME` same as `--prefix`.
 
+M0 `install` is schema/layout only: creates the prefix directories and an `installed-packs.toml` record. No network fetch. Hash-gated `Installer` + `LocalFs` are in `progressive-lsp-install`.
+
 ## What not to do
 
 - Do not vendor this server inside an IDE agent as a fork of resolvers.

@@ -5,7 +5,8 @@ Gates apply from the **first library crate** (M0). Sign-off: [implementation-pla
 ## Line coverage — 95%
 
 ```text
-cargo llvm-cov --workspace --fail-under-lines 95
+cargo llvm-cov --workspace --fail-under-lines 95 \
+  --ignore-filename-regex 'xtask/|/src/main\.rs$'
 ```
 
 **Exclude from the denominator:** `xtask/`; bin `main.rs` (keep mains tiny: parse CLI, call lib); vendored Tree-sitter C; unmodified `third_party/stack-graphs`; engine pack **source we do not own**.

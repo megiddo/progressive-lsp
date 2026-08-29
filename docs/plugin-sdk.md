@@ -18,6 +18,8 @@ Related: [design-patterns.md](design-patterns.md), [detailed-design.md](detailed
 
 Produces grammar id, `LanguageId`, and the resolver chain (T1 required; T2/T3 optional). Empty slot → `UnsupportedLanguage`.
 
+M0: `register_builtins()` is a no-op. `KNOWN_LANGUAGE_SLOTS` lists the v1 languages; `PluginRegistry::get` returns `UnsupportedLanguage` for each without panic. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
+
 ### `WorkspaceSource`
 
 Maps a workspace root to `WorkspaceModel`. First-party adapters live in this repo because intelligence owns project shape.

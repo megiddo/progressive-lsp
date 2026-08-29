@@ -2,7 +2,7 @@
 
 Optional API. Stock LSP clients never need it. Canonical encoding in v1: **protobuf only**. There is **no** generated `$/` JSON-RPC mirror in v1.
 
-Wire schema lives in `proto/progressive/v1/` (created in M0). This document is the semantic standard; the `.proto` files are the machine source once they exist.
+Wire schema lives in [`proto/progressive/v1/control.proto`](../proto/progressive/v1/control.proto). This document is the semantic standard; the `.proto` file is the machine source. Rust types + the `u32be` codec live in `progressive-lsp-control`. Max payload: **16 MiB** (`MAX_PAYLOAD_BYTES`); larger frames fail (no silent truncate).
 
 Related: [lsp-contract.md](lsp-contract.md), [architecture.md](architecture.md), [consumer.md](consumer.md).
 

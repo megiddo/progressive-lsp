@@ -1,0 +1,16 @@
+[package]
+name = "progressive-lsp-install"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LocalFs, hash, manifest.json — no network, no SSH"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

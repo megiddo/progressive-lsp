@@ -1,0 +1,18 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "musl, check-static, bench-alloc"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

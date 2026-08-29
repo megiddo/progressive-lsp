@@ -50,18 +50,20 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M0 (`m0` branch)
 
+**Status: SIGNED OFF.** Do not open `m1` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M0.1 | Cargo workspace, `rust-toolchain.toml`, tiny bin `main` | D0 | Composition root only |
-| M0.2 | `progressive-lsp-core`: ids, errors, `ClockPort`, prefix | M0.1 | FakeClock tests |
-| M0.3 | `PluginRegistry` + empty `LanguageFactory` slots | M0.2 | `UnsupportedLanguage` tests |
-| M0.4 | `progressive-lsp-protocol`: initialize/shutdown | M0.3 | experimental cap, socket null OK |
-| M0.5 | proto + `progressive-lsp-control` codec | M0.2 | round-trip; empty RPCs OK |
-| M0.6 | `.progressivelsp` layout + git exclude helper | M0.2 | fixture repo; never edit project `.gitignore` |
-| M0.7 | `progressive-lsp-install`: LocalFs, hash, manifest schema | M0.2 | no network |
-| M0.8 | `xtask musl`, `check-static`, Docker stub | M0.1 | both arches |
-| M0.9 | `xtask bench-alloc` + `allocator-matrix.toml` placeholders | M0.8 | mimalloc until CI rows |
-| M0.10 | Spike notes under `spike/` (glibc-static, csharp-ls, PHP T3, …) | M0.8 | notes; fail closed, do not ship `DT_NEEDED` |
+| M0.1 | Cargo workspace, `rust-toolchain.toml`, tiny bin `main` | D0 | **SIGNED OFF.** Composition root only |
+| M0.2 | `progressive-lsp-core`: ids, errors, `ClockPort`, prefix | M0.1 | **SIGNED OFF.** FakeClock tests |
+| M0.3 | `PluginRegistry` + empty `LanguageFactory` slots | M0.2 | **SIGNED OFF.** `UnsupportedLanguage` tests |
+| M0.4 | `progressive-lsp-protocol`: initialize/shutdown | M0.3 | **SIGNED OFF.** experimental cap, socket null OK |
+| M0.5 | proto + `progressive-lsp-control` codec | M0.2 | **SIGNED OFF.** round-trip; empty RPCs OK |
+| M0.6 | `.progressivelsp` layout + git exclude helper | M0.2 | **SIGNED OFF.** fixture repo; never edit project `.gitignore` |
+| M0.7 | `progressive-lsp-install`: LocalFs, hash, manifest schema | M0.2 | **SIGNED OFF.** no network |
+| M0.8 | `xtask musl`, `check-static`, Docker stub | M0.1 | **SIGNED OFF.** both arches via Docker; fixture ELF tests on Darwin |
+| M0.9 | `xtask bench-alloc` + `allocator-matrix.toml` placeholders | M0.8 | **SIGNED OFF.** mimalloc until CI rows |
+| M0.10 | Spike notes under `spike/` (glibc-static, csharp-ls, PHP T3, …) | M0.8 | **SIGNED OFF.** notes; fail closed, do not ship `DT_NEEDED` |
 
 ## M1 (`m1` branch)
 

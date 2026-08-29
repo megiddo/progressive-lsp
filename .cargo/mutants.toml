@@ -1,0 +1,2 @@
+# cargo-mutants: listed library crates only (docs/testing.md).
+# Language crates are omitted until they have real resolvers.

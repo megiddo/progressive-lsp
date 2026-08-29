@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package progressive.v1;
+
+// Semantic standard: docs/control-protocol.md
+// Wire: u32be payload_length | protobuf bytes (see progressive-lsp-control).
+
+message Status {
+  int32 code = 1;
+  string message = 2;
+}
+
+message GetConfigRequest {}
+
+message GetConfigResponse {
+  Status status = 1;
+  string toml = 2;
+}
+
+message SetConfigRequest {
+  string patch_toml = 1;
+}
+
+message SetConfigResponse {
+  Status status = 1;
+}
+
+message ReloadConfigRequest {}
+
+message ReloadConfigResponse {
+  Status status = 1;
+}
+
+message InstallPacksRequest {
+  repeated string packs = 1;
+}
+
+message InstallPacksResponse {
+  Status status = 1;
+}
+
+message WatchSubscribeRequest {}
+
+message WatchSubscribeResponse {
+  Status status = 1;
+}
+
+message WatchEvent {
+  string path = 1;
+  string kind = 2;
+}
+
+message WatchBatch {
+  repeated WatchEvent events = 1;
+  bool overflow = 2;
+  bool need_rescan = 3;
+  uint64 generation = 4;
+}
+
+message FilesSinceRequest {
+  oneof since {
+    uint64 since_generation = 1;
+    uint64 since_unix_ms = 2;
+  }
+}
+
+message FilesSinceResponse {
+  Status status = 1;
+  repeated string paths = 2;
+  bool truncated = 3;
+  uint64 generation = 4;
+}
+
+message IndexStatusRequest {}
+
+message IndexPackage {
+  string package_id = 1;
+  uint64 generation = 2;
+}
+
+message IndexStatusResponse {
+  Status status = 1;
+  repeated IndexPackage packages = 2;
+  uint64 cache_entries = 3;
+}
+
+message TierStatusRequest {}
+
+message TierRow {
+  string package_id = 1;
+  string tier = 2;
+}
+
+message TierStatusResponse {
+  Status status = 1;
+  repeated TierRow rows = 2;
+}
+
+message TierReady {
+  string package_id = 1;
+  string tier = 2;
+}
+
+message ReloadScriptsRequest {}
+
+message ReloadScriptsResponse {
+  Status status = 1;
+}

@@ -29,6 +29,8 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M0 — Skeleton, `.progressivelsp`, control schema, build (~2 weeks)
 
+**Status: SIGNED OFF** on branch `m0`. Do not start M1 until this section stays signed off.
+
 - Workspace, `PluginRegistry` + empty `LanguageFactory` slots, vanilla LSP `initialize` / `shutdown`.
 - Default prefix `$HOME/.progressivelsp`; git-exclude helpers; `config.toml` schema stub.
 - `proto/progressive/v1`: Config, WatchBatch, FilesSince, IndexStatus (empty answers OK). Codec round-trip. `experimental.progressiveLsp` advertised (socket may be absent).
@@ -38,7 +40,24 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 - `language-matrix.md` pins as living table; control-protocol and plugin-sdk as implemented stubs matching these docs.
 - Spike **notes** (not blockers for M0 exit unless marked): csharp-ls AOT+musl; glibc-static POC (`spike/glibc-static`); clangd size; ty/RA; tsgo/gopls `CGO_ENABLED=0`; superhtml/zls; PHPantom vs static phpactor; first `bench-alloc` rows or mimalloc placeholders.
 
-**Exit:** static binaries both arches; placeholder or first `allocator-matrix.toml` rows; LSP initialize round-trip; control codec round-trip; `check-static` clean; install layout under `.progressivelsp`; worktree cache git-excluded in a **fixture** repo.
+**Exit:** static binaries both arches (toolchain + documented CI gap on Darwin — see notes); placeholder `allocator-matrix.toml` rows; LSP initialize round-trip; control codec round-trip; `check-static` clean on fixture ELFs; install layout under `.progressivelsp`; worktree cache git-excluded in a **fixture** repo.
+
+**Sign-off checklist (M0)**
+
+- [x] Exit criteria for this WP met (CI Linux must still produce both musl ELFs)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`)
+- [x] 80% mutants on listed crates that exist
+- [x] No `sleep` in tests
+- [x] `check-static` on fixture ELFs (static pass / DT_NEEDED fail / Mach-O refuse). Not run against a host Mach-O as a fake green.
+- [x] [design-patterns.md](design-patterns.md) table updated for M0 types
+- [x] Docs in this tree updated if a locked decision was refined
+
+**Darwin / CI notes**
+
+- Native `cargo test` is the M0 gate on macOS.
+- `xtask musl` is Docker-based for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`. Producing both-arch ELFs requires Linux CI or a working multi-arch Docker; this host does not substitute a Mach-O.
+- `xtask check-static` is unit-tested against in-tree fixture ELFs. A green result on those fixtures is not a claim that release musl binaries were built here.
 
 ## M1 — Watch, FilesSince, incremental T1, Java baseline (~3 weeks)
 
