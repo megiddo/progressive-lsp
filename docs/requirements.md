@@ -23,7 +23,7 @@ Normative. If code and this file disagree, fix the code or file an explicit doc 
 | Engine/backends | C, C++, C# Native AOT, Rust, Go, Zig, PHP (static pack only). |
 | Java T3 | Out of v1. No JVM. |
 | Host `php` | Not a T3 pack. |
-| Not an IDE host | No SSH, git porcelain, PTY, file-tree CRUD in this repo. |
+| Not an IDE host | No SSH, git porcelain, PTY, file-tree CRUD **in the server**. In-tree `poc-ide/` is a **consumer sample** ([poc-ide/README.md](poc-ide/README.md)): tree view + open/save only. |
 | No `$/` mirror of control RPCs in v1 | [lsp-contract.md](lsp-contract.md). |
 | No `dlopen` plugins in v1 | Compile-time Factory + Rhai. |
 | No Python/Node **build** scripts | `cargo xtask` orchestrates; Go/Zig/PHP toolchains are build-time for packs. |
