@@ -22,7 +22,7 @@ These are **not** the crate unit/mutation suite (`docs/testing.md` in the produc
 
 ## Harness sketch (for the implementer)
 
-Layout in this directory (IT-1 harness landed on `pd1`; IT-2/IT-3 stay empty until those branches):
+Layout in this directory (IT-1 on `pd1`; IT-2 on `pd2`; IT-3 stays empty until `pd3`):
 
 ```text
 integration/
@@ -31,13 +31,15 @@ integration/
   02-lsp-backends.md
   03-extended-protocol.md
   compose.yaml          # Arch / Rocky / Debian / Ubuntu userspaces
-  harness/              # plsp-it1 stdio driver + run-it1.sh
+  harness/              # plsp-it1 handshake + backend + run-it1.sh / run-it2.sh
   artifacts/            # CI drops the musl ELF here (not committed)
-  corpora/              # fetch-at-SHA scripts (PD2)
-  expected/             # golden F12 / hover snippets per corpus
+  corpora/              # pins.json + fetch-at-SHA (PD2); csharp-mini snippet
+  expected/             # golden find / ghost siblings per corpus
 ```
 
 **Darwin:** `harness/run-it1.sh auto` is host_smoke + a gap note when Docker or a musl ELF is missing. Do not treat that as IT-1.1. Linux CI bind-mounts a `check-static` musl ELF and runs the four distros.
+
+**IT-2 Darwin:** `harness/run-it2.sh auto` runs stock stdio against native Mach-O on in-tree supplements + fetched corpora. T3 rows are `skip_pack_missing` when packs are stubs. That is **not** a typed hover green. Linux CI with real musl packs is the T3 gate.
 
 **Client:** a tiny stdio LSP driver (initialize → didOpen → request → shutdown). Progressive tests add a Unix-socket protobuf client using `progressive-lsp-control`. Do not use Neovim as the only gate; a headless driver is reproducible.
 

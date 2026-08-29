@@ -258,11 +258,30 @@ Headless install/`serve`/`initialize` on Arch, Rocky/UBI, Debian, Ubuntu contain
 
 ## PD2 — IT-2 vanilla LSP backends
 
-**Status:** not started. Branch `pd2` on `pd1`.
+**Status: SIGNED OFF** on branch `pd2`. Do not start PD3 until this section stays signed off.
 
 Each language on a **pinned SHA** real corpus. Stock stdio LSP only. Spec: [integration/02-lsp-backends.md](../integration/02-lsp-backends.md).
 
 **Exit:** report rows per language; T3 rows `skip_pack_missing` when packs are stubs. No `$/` FilesSince.
+
+**Sign-off checklist (PD2)**
+
+- [x] Exit criteria for this WP met (corpora pins + goldens + `plsp-it1 backend`; T3 stub rows are `skip_pack_missing`)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **96.55% lines**
+- [x] 80% mutants on listed crates that exist — **N/A** (composition root + integration harness only; no listed crate source change)
+- [x] No `sleep` in crate unit tests (IT-2 waits on `workDoneProgress` with a deadline)
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `ServeDiskWatch` / `CorpusPin` / `ExpectedGolden` / `It2BackendDriver` / `It2ReportRow`
+- [x] Docs in this tree updated if a locked decision was refined
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD2 unit gate on macOS.
+- `integration/harness/run-it2.sh auto` fetches URL+SHA corpora (no submodule mirrors) and runs stock stdio on the native Mach-O. In-tree fixtures + `csharp-mini` are supplements, not the only Java/C# proof.
+- T3 rows (`ty`, `rust-analyzer`, `clangd`, `tsgo`, `phpantom`, `biome`, `superhtml`, `gopls`, `zls`) are `skip_pack_missing` when the prefix holds Darwin stubs. That is **not** a typed hover green and must not be reported as clangd/ty T3 pass.
+- C# is `expected_ceiling` T1/T2. Java has no T3. `$/` / `workspace/filesSince` must be method-not-found.
+- Linux CI with real musl packs is the T3 gate — same class as the M0 musl gap.
 
 ## PD3 — IT-3 extended protocol
 

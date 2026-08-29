@@ -19,3 +19,5 @@ profraw/
 !/integration/artifacts/.gitkeep
 /integration/out/
 /integration/harness/target/
+/integration/corpora/.cache/
+**/.progressivelsp/

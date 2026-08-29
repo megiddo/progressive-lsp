@@ -167,10 +167,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## PD2 (`pd2` branch)
 
+**Status: SIGNED OFF.** Do not open `pd3` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| PD2.1 | Corpora fetch-at-SHA + expected goldens | PD1 | No git submodule mirrors |
-| PD2.2 | IT-2 per-language stock LSP | PD2.1 | [integration/02-lsp-backends.md](../integration/02-lsp-backends.md) |
+| PD2.1 | Corpora fetch-at-SHA + expected goldens | PD1 | **SIGNED OFF.** `integration/corpora/pins.json` + `plsp-it1 fetch`; no submodule mirrors |
+| PD2.2 | IT-2 per-language stock LSP | PD2.1 | **SIGNED OFF.** [integration/02-lsp-backends.md](../integration/02-lsp-backends.md). T3 stubs → `skip_pack_missing` |
 
 ## PD3 (`pd3` branch)
 

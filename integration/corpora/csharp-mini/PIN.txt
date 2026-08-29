@@ -1,0 +1,6 @@
+Imported from the public Microsoft SDK-style project snippet
+(https://github.com/dotnet/sdk, net8.0 Console + Class Library shape).
+This is not a vendored third-party git history.
+
+Authentic two-project net8.0 tree for the C# T1/T2 ceiling row.
+The fetch-at-SHA external C# corpus is adamralph/bullseye @ 93112e6530355b1592f3c54d4fca6e5486e92018.

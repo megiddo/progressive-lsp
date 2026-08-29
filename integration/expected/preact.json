@@ -1,0 +1,10 @@
+{
+  "corpus": "preact",
+  "language": "javascript",
+  "language_id": "javascript",
+  "entry": "src/component.js",
+  "find": "Component",
+  "workspace_symbol": "Component",
+  "ghost_sibling": "src/index.js",
+  "corpus_sha": "055cc5b8c62326fbb0fcaccb9816504e82f121b8"
+}

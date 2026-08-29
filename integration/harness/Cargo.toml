@@ -6,7 +6,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Tiny stdio LSP driver for IT-1 (initialize → shutdown). Not a workspace member."
+description = "Tiny stdio LSP driver for IT-1 handshake and IT-2 stock backends. Not a workspace member."
 
 [dependencies]
 serde_json = "1.0"

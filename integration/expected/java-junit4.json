@@ -1,0 +1,10 @@
+{
+  "corpus": "junit4",
+  "language": "java",
+  "language_id": "java",
+  "entry": "src/main/java/junit/framework/TestCase.java",
+  "find": "TestCase",
+  "workspace_symbol": "TestCase",
+  "ghost_sibling": "src/main/java/junit/framework/Assert.java",
+  "corpus_sha": "05fe2a64f59127c02135be22f416e91260d6ede6"
+}

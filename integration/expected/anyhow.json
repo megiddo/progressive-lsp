@@ -1,0 +1,10 @@
+{
+  "corpus": "anyhow",
+  "language": "rust",
+  "language_id": "rust",
+  "entry": "src/lib.rs",
+  "find": "format_err",
+  "workspace_symbol": "Error",
+  "ghost_sibling": "src/error.rs",
+  "corpus_sha": "48be1caa24fa65467aaa8071eb698542e4fa1d43"
+}

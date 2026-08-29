@@ -12,7 +12,7 @@ use progressive_lsp_resolve::{
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
-use progressive_lsp_workspace::{detect_workspace, WorkspaceModel};
+use progressive_lsp_workspace::{detect_workspace, PackageEntry, WorkspaceModel};
 
 #[cfg(test)]
 use progressive_lsp_watch::FakeWatcher;
@@ -46,7 +46,7 @@ pub struct WorkspaceSession {
     pub index: SharedIndex,
     pub chain: ResolverChain,
     pub filter: Box<dyn WatchFilter>,
-    pub model: Option<WorkspaceModel>,
+    pub model: Mutex<Option<WorkspaceModel>>,
     scripts: Mutex<Option<ScriptHost>>,
     progress: Mutex<Vec<WorkDoneProgress>>,
     skipped_packages: Mutex<Vec<PackageId>>,
@@ -59,7 +59,7 @@ impl WorkspaceSession {
             index,
             chain,
             filter: Box::new(DefaultIgnoreFilter),
-            model: None,
+            model: Mutex::new(None),
             scripts: Mutex::new(None),
             progress: Mutex::new(Vec::new()),
             skipped_packages: Mutex::new(Vec::new()),
@@ -95,18 +95,17 @@ impl WorkspaceSession {
         Self::new(index, chain)
     }
 
-    pub fn discover(&mut self, root: &Path) {
-        self.model = detect_workspace(root);
-        if let Some(model) = self.model.clone() {
+    pub fn discover(&self, root: &Path) {
+        let mut model = detect_workspace(root).or_else(|| synthetic_directory(root));
+        if let Some(found) = model.as_mut() {
             if let Some(host) = self.scripts.lock().expect("scripts").as_mut() {
-                let roots: Vec<PathBuf> = model.packages.iter().map(|p| p.root.clone()).collect();
+                let roots: Vec<PathBuf> = found.packages.iter().map(|p| p.root.clone()).collect();
                 if let Ok(kept) = host.on_workspace_discover(&roots) {
-                    if let Some(m) = &mut self.model {
-                        m.packages.retain(|p| kept.iter().any(|k| k == &p.root));
-                    }
+                    found.packages.retain(|p| kept.iter().any(|k| k == &p.root));
                 }
             }
         }
+        *self.model.lock().expect("model") = model;
     }
 
     pub fn indexer_for(&self, path: &Path, language_id: &str) -> Option<Box<dyn LanguageIndexer>> {
@@ -168,7 +167,8 @@ impl WorkspaceSession {
     /// Package-stream ingest. Completing a package marks Graph and emits progress.
     /// Never called from [`LspIntelligence::did_change`].
     pub fn ingest_workspace(&self) {
-        let Some(model) = &self.model else {
+        let model = self.model.lock().expect("model").clone();
+        let Some(model) = model else {
             return;
         };
         for pkg in &model.packages {
@@ -228,13 +228,51 @@ impl WorkspaceSession {
                     filtered.events.retain(|e| kept.iter().any(|k| k == &e.path));
                 }
             }
-            let mut idx = self.index.lock();
-            idx.apply_watch_batch(&filtered, self.filter.as_ref());
-            #[cfg(feature = "lang-java")]
-            {
-                idx.reindex_dirty(&JavaIndexer);
+            self.index
+                .lock()
+                .apply_watch_batch(&filtered, self.filter.as_ref());
+            for ev in &filtered.events {
+                let path = PathBuf::from(&ev.path);
+                if let Ok(src) = std::fs::read_to_string(&path) {
+                    self.index_path(&path, &src);
+                }
             }
         }
+    }
+
+    pub fn source_paths(&self) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        if let Some(model) = self.model.lock().expect("model").as_ref() {
+            for pkg in &model.packages {
+                for root in &pkg.source_roots {
+                    collect_sources(root, &mut files, 0);
+                }
+                collect_sources(&pkg.root, &mut files, 0);
+            }
+        }
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    /// Stock ghost-disk: reindex files whose on-disk bytes changed (no LSP didChange).
+    pub fn reindex_known_paths(&self) -> usize {
+        let mut n = 0usize;
+        for path in self.source_paths() {
+            if let Ok(src) = std::fs::read_to_string(&path) {
+                let unchanged = self
+                    .index
+                    .lock()
+                    .source(&path)
+                    .map(|old| old == src)
+                    .unwrap_or(false);
+                if !unchanged {
+                    self.index_path(&path, &src);
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 }
 
@@ -271,8 +309,21 @@ fn guess_lang(files: &[PathBuf]) -> &'static str {
     ""
 }
 
+fn synthetic_directory(root: &Path) -> Option<WorkspaceModel> {
+    let mut files = Vec::new();
+    collect_sources(root, &mut files, 0);
+    if files.is_empty() {
+        return None;
+    }
+    let mut model = WorkspaceModel::new("directory", root.to_path_buf());
+    model.add_package(
+        PackageEntry::new("root", root.to_path_buf()).with_source_root(root.to_path_buf()),
+    );
+    Some(model)
+}
+
 fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
-    if depth > 8 {
+    if depth > 12 {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -728,5 +779,25 @@ mod tests {
         session.index_path(Path::new("A.java"), "class A {}");
         assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
         assert!(!workspace.path().join(".progressivelsp/cache").exists());
+    }
+
+    #[cfg(feature = "lang-css")]
+    #[test]
+    fn discover_falls_back_to_non_java_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("card.css"), ".card { color: red; }\n").unwrap();
+        let session = WorkspaceSession::java_default();
+        session.discover(dir.path());
+        session.ingest_workspace();
+        assert!(!session.source_paths().is_empty());
+        assert_eq!(session.reindex_known_paths(), 0);
+        std::fs::write(dir.path().join("card.css"), ".card { color: blue; }\n").unwrap();
+        assert_eq!(session.reindex_known_paths(), 1);
+        assert!(session
+            .index
+            .lock()
+            .source(&dir.path().join("card.css"))
+            .unwrap()
+            .contains("blue"));
     }
 }

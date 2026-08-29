@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-cpp",
+  "language": "cpp",
+  "language_id": "cpp",
+  "entry": "sample.cpp",
+  "find": "add",
+  "workspace_symbol": "add",
+  "ghost_sibling": "sample.cpp",
+  "corpus_sha": "in-tree"
+}

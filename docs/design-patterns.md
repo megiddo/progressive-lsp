@@ -107,6 +107,11 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail |
 | `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
 | `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
+| `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |
+| `CorpusPin` (`integration/corpora/pins.json`) | Value object / Schema | URL + peeled SHA + entry; fetch-at-SHA; never a submodule mirror |
+| `ExpectedGolden` | Schema / DTO | 0-based `find` → line/character; integration only |
+| `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |
+| `It2ReportRow` | DTO | `language`, `corpus_sha`, `pack`, `tier_observed`, `definition_ok`, `tokens_ok`, `ghost_edit_ok`, `notes`; T3 stub → `skip_pack_missing` |
 
 ## Patterns we do not use (v1)
 

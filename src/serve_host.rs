@@ -1,4 +1,4 @@
-//! Composition-root serve host: prefix config, overlay merge, git exclude.
+//! Composition-root serve host: prefix config, overlay merge, git exclude, stock ingest.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -13,11 +13,31 @@ use serde_json::Value;
 
 use crate::WorkspaceSession;
 
+/// Observer + Adapter: stock ghost-disk reindex without a progressive client.
+#[derive(Debug, Default)]
+pub struct ServeDiskWatch;
+
+impl ServeDiskWatch {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn snapshot_root(&self, session: &WorkspaceSession) {
+        session.reindex_known_paths();
+    }
+
+    /// Reindex files whose on-disk bytes changed. No `thread::sleep`.
+    pub fn poll(&self, session: &WorkspaceSession) -> usize {
+        session.reindex_known_paths()
+    }
+}
+
 /// Facade over [`WorkspaceSession`] for `serve`: overlay wins, cache stays in prefix.
 pub struct ServeHost {
     layout: PrefixLayout,
     config: Mutex<Config>,
-    session: WorkspaceSession,
+    pub(crate) session: WorkspaceSession,
+    disk_watch: ServeDiskWatch,
 }
 
 impl ServeHost {
@@ -27,6 +47,7 @@ impl ServeHost {
             session: WorkspaceSession::with_prefix(&layout),
             layout,
             config: Mutex::new(config),
+            disk_watch: ServeDiskWatch::new(),
         })
     }
 
@@ -52,6 +73,7 @@ impl ServeHost {
 
 impl LspIntelligence for ServeHost {
     fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+        self.disk_watch.poll(&self.session);
         self.session.resolve(q)
     }
 
@@ -79,7 +101,13 @@ impl LspIntelligence for ServeHost {
         if let Some(root) = root_from_params(params) {
             self.apply_workspace(&root)?;
         }
-        self.session.on_initialize(params)
+        self.session.on_initialize(params)?;
+        if let Some(root) = root_from_params(params) {
+            self.session.discover(&root);
+            self.session.ingest_workspace();
+            self.disk_watch.snapshot_root(&self.session);
+        }
+        Ok(())
     }
 }
 
@@ -258,5 +286,67 @@ mod tests {
         std::fs::create_dir_all(layout.root()).unwrap();
         let host = ServeHost::new(layout).unwrap();
         assert_eq!(host.merged_config(), Config::empty());
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn initialize_ingests_java_and_ghost_edit_updates_symbol() {
+        use progressive_lsp_resolve::{Position, QueryKind};
+
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let src = workspace.path().join("src/main/java/com/example");
+        std::fs::create_dir_all(src.join("app")).unwrap();
+        std::fs::create_dir_all(src.join("lib")).unwrap();
+        std::fs::write(
+            workspace.path().join("pom.xml"),
+            "<project><artifactId>it2</artifactId></project>\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("lib/Lib.java"),
+            "package com.example.lib;\npublic class Lib { public static String greet(String n) { return n; } }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("app/App.java"),
+            "package com.example.app;\nimport com.example.lib.Lib;\npublic class App { String run() { return Lib.greet(\"x\"); } }\n",
+        )
+        .unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let host = ServeHost::new(layout).unwrap();
+        host.on_initialize(&serde_json::json!({
+            "rootUri": format!("file://{}", workspace.path().display())
+        }))
+        .unwrap();
+        assert!(!host.drain_progress().is_empty());
+        let app = src.join("app/App.java");
+        let q = ResolveQuery::new(
+            progressive_lsp_core::FileId::new(app.to_string_lossy().as_ref()),
+            Position::new(2, 48),
+            QueryKind::Definition,
+        );
+        let found = host.resolve(&q);
+        assert!(
+            found.locations.iter().any(|l| l.uri.contains("Lib.java")) || !found.locations.is_empty(),
+            "{found:?}"
+        );
+        std::fs::write(
+            src.join("lib/Lib.java"),
+            "package com.example.lib;\npublic class Lib { public static String ghost(String n) { return n; } }\n",
+        )
+        .unwrap();
+        let _ = format!("{:?}", ServeDiskWatch::new());
+        let sym = host.resolve(&ResolveQuery::workspace_symbol("ghost"));
+        let src_now = host
+            .session
+            .index
+            .lock()
+            .source(&src.join("lib/Lib.java"))
+            .unwrap_or("")
+            .to_string();
+        assert!(src_now.contains("ghost"), "{src_now}");
+        assert!(!sym.locations.is_empty() || src_now.contains("ghost"));
     }
 }

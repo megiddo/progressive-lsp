@@ -1,0 +1,10 @@
+{
+  "corpus": "go-version",
+  "language": "go",
+  "language_id": "go",
+  "entry": "version.go",
+  "find": "Version",
+  "workspace_symbol": "Version",
+  "ghost_sibling": "constraint.go",
+  "corpus_sha": "fcaa53267960208632e9308c93aa89535526a018"
+}

@@ -20,7 +20,7 @@ use progressive_lsp_script::ScriptHost;
 
 mod serve_host;
 mod session;
-pub use serve_host::{root_from_params, ServeHost};
+pub use serve_host::{root_from_params, ServeDiskWatch, ServeHost};
 pub use session::{register_languages, WorkspaceSession};
 
 pub const USAGE: &str = "\

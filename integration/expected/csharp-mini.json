@@ -1,0 +1,11 @@
+{
+  "corpus": "csharp-mini",
+  "language": "csharp",
+  "language_id": "csharp",
+  "entry": "App/Program.cs",
+  "find": "Greeter",
+  "workspace_symbol": "Greeter",
+  "ghost_sibling": "Lib/Greeter.cs",
+  "expected_ceiling": true,
+  "corpus_sha": "imported-sdk-style"
+}

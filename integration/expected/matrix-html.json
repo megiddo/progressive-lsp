@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-html",
+  "language": "html",
+  "language_id": "html",
+  "entry": "sample.html",
+  "find": "button",
+  "workspace_symbol": "p",
+  "ghost_sibling": "sample.html",
+  "corpus_sha": "in-tree"
+}

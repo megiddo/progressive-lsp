@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-js",
+  "language": "javascript",
+  "language_id": "javascript",
+  "entry": "index.js",
+  "find": "add",
+  "workspace_symbol": "add",
+  "ghost_sibling": "index.js",
+  "corpus_sha": "in-tree"
+}

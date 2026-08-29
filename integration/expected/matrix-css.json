@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-css",
+  "language": "css",
+  "language_id": "css",
+  "entry": "sample.css",
+  "find": "card",
+  "workspace_symbol": "card",
+  "ghost_sibling": "sample.css",
+  "corpus_sha": "in-tree"
+}

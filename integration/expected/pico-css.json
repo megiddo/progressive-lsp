@@ -1,0 +1,10 @@
+{
+  "corpus": "pico-css",
+  "language": "css",
+  "language_id": "css",
+  "entry": "css/pico.css",
+  "find": "container",
+  "workspace_symbol": "container",
+  "ghost_sibling": "css/pico.classless.css",
+  "corpus_sha": "6dc6489e69cc1f22daa938ebd38c02400032428c"
+}

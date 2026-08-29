@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-php",
+  "language": "php",
+  "language_id": "php",
+  "entry": "Lib.php",
+  "find": "Lib",
+  "workspace_symbol": "Lib",
+  "ghost_sibling": "Lib.php",
+  "corpus_sha": "in-tree"
+}

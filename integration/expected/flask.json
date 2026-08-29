@@ -1,0 +1,10 @@
+{
+  "corpus": "flask",
+  "language": "python",
+  "language_id": "python",
+  "entry": "src/flask/app.py",
+  "find": "Flask",
+  "workspace_symbol": "Flask",
+  "ghost_sibling": "src/flask/helpers.py",
+  "corpus_sha": "ab8149664182b662453a563161aa89013c806dc9"
+}
