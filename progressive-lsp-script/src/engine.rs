@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use progressive_lsp_core::{ClockPort, ScriptSandbox};
 use rhai::{Dynamic, Engine, EvalAltResult, Position, Scope};
 
-use crate::host::{HookName, ScriptContext, ScriptDecision};
+use crate::host::{HookName, ScriptContext, ScriptDecision, SpawnTweak};
 
 /// One loaded script engine (Interpreter).
 pub trait ScriptEngine: Send {
@@ -30,6 +30,7 @@ pub struct RhaiEngineFactory;
 struct HookState {
     denied: Vec<String>,
     skip: bool,
+    tweak: SpawnTweak,
 }
 
 struct RhaiEngine {
@@ -76,6 +77,7 @@ impl ScriptEngineFactory for RhaiEngineFactory {
         let state = Arc::new(Mutex::new(HookState {
             denied: Vec::new(),
             skip: false,
+            tweak: SpawnTweak::default(),
         }));
         let deny = state.clone();
         engine.register_fn("deny_path", move |p: &str| {
@@ -84,6 +86,22 @@ impl ScriptEngineFactory for RhaiEngineFactory {
         let skip = state.clone();
         engine.register_fn("skip_package", move || {
             skip.lock().expect("hook").skip = true;
+        });
+        let argv = state.clone();
+        engine.register_fn("tweak_argv", move |a: &str| {
+            argv.lock().expect("hook").tweak.argv.push(a.to_string());
+        });
+        let cwd = state.clone();
+        engine.register_fn("tweak_cwd", move |c: &str| {
+            cwd.lock().expect("hook").tweak.cwd = Some(c.to_string());
+        });
+        let env = state.clone();
+        engine.register_fn("tweak_env", move |k: &str, v: &str| {
+            env.lock()
+                .expect("hook")
+                .tweak
+                .env
+                .push((k.to_string(), v.to_string()));
         });
         let ast = engine
             .compile(source)
@@ -125,10 +143,13 @@ impl ScriptEngine for RhaiEngine {
         // Rhai reserves `package`; scripts read the package id as `pkg`.
         scope.push("pkg", ctx.package.clone());
         scope.push("root", ctx.root.clone());
+        scope.push("pack", ctx.pack.clone());
+        scope.push("cwd", ctx.cwd.clone());
         {
             let mut st = self.state.lock().expect("hook");
             st.denied.clear();
             st.skip = false;
+            st.tweak = SpawnTweak::default();
         }
         let _ = &self.name;
         match self
@@ -142,6 +163,9 @@ impl ScriptEngine for RhaiEngine {
                 }
                 if !st.denied.is_empty() {
                     return Ok(ScriptDecision::DenyPaths(st.denied.clone()));
+                }
+                if !st.tweak.is_empty() {
+                    return Ok(ScriptDecision::TweakSpawn(st.tweak.clone()));
                 }
                 Ok(ScriptDecision::Continue)
             }
@@ -353,5 +377,68 @@ mod tests {
             ScriptDecision::DenyPaths(p) => assert_eq!(p, vec!["drop.me".to_string()]),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn rhai_engine_spawn_abort_and_tweaks() {
+        let mut skip = RhaiEngineFactory
+            .create(
+                r#"fn on_engine_spawn() { abort("skip-ty"); }"#,
+                "t",
+                Arc::new(FakeClock::at_unix_ms(1)),
+                1000,
+                4096,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            skip.eval_hook(HookName::OnEngineSpawn, &ScriptContext { pack: "python".into(), ..Default::default() })
+                .unwrap(),
+            ScriptDecision::Abort("skip-ty".into())
+        );
+        let mut tweak = RhaiEngineFactory
+            .create(
+                r#"fn on_engine_spawn() { tweak_argv("--stdio"); tweak_cwd("/ws"); tweak_env("RUST_LOG", "info"); }"#,
+                "t",
+                Arc::new(FakeClock::at_unix_ms(1)),
+                1000,
+                4096,
+                false,
+            )
+            .unwrap();
+        match tweak
+            .eval_hook(
+                HookName::OnEngineSpawn,
+                &ScriptContext {
+                    pack: "python".into(),
+                    root: "/ws".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        {
+            ScriptDecision::TweakSpawn(t) => {
+                assert_eq!(t.argv, vec!["--stdio".to_string()]);
+                assert_eq!(t.cwd.as_deref(), Some("/ws"));
+                assert_eq!(t.env, vec![("RUST_LOG".into(), "info".into())]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut ready = RhaiEngineFactory
+            .create(
+                r#"fn on_tier_ready() { abort("cannot-drop"); }"#,
+                "t",
+                Arc::new(FakeClock::at_unix_ms(1)),
+                1000,
+                4096,
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            ready
+                .eval_hook(HookName::OnTierReady, &ScriptContext::default())
+                .unwrap(),
+            ScriptDecision::Abort(_)
+        ));
     }
 }

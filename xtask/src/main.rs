@@ -2,6 +2,7 @@
 
 mod allocator;
 mod check_static;
+mod dist;
 mod musl;
 
 use std::env;
@@ -21,6 +22,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "musl" => musl::run(&args[1..]),
         "check-static" => check_static::run(&args[1..]),
         "bench-alloc" => allocator::run(&args[1..]),
+        "dist" => dist::run(&args[1..]),
         "help" | "-h" | "--help" => {
             print_help();
             Ok(())
@@ -35,6 +37,7 @@ fn print_help() {
 xtask musl [--target TRIPLE] [--both]
 xtask check-static <ELF>...
 xtask bench-alloc
+xtask dist --pack python,rust --dest DIR
 "
     );
 }

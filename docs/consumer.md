@@ -44,6 +44,8 @@ Env: `PROGRESSIVE_LSP_HOME` same as `--prefix`.
 
 M0 `install` is schema/layout only: creates the prefix directories and an `installed-packs.toml` record. No network fetch. Hash-gated `Installer` + `LocalFs` are in `progressive-lsp-install`.
 
+M3 pack layout: `$PREFIX/engines/python/ty` and `$PREFIX/engines/rust/rust-analyzer` plus `manifest.json`. `xtask dist --pack python,rust --dest DIR` writes that layout. On Darwin the binaries are stubs (not musl ELFs); Linux CI / Docker produce the real static packs.
+
 ## What not to do
 
 - Do not vendor this server inside an IDE agent as a fork of resolvers.

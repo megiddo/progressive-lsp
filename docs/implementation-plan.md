@@ -95,13 +95,15 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M3 (`m3` branch)
 
+**Status: SIGNED OFF.** Do not open `m4` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M3.1 | `EngineSupervisor` + `EngineAdapter` trait | M2 | crash/backoff tests |
-| M3.2 | Pack discovery `$PREFIX/engines/` | M3.1, M0.6 | |
-| M3.3 | ty pack + Python T3 handoff | M3.1 | T1 (optional TSG T2) without pack |
-| M3.4 | rust-analyzer pack + Rust T3 | M3.1 | no pack / no sysroot → T1 (no dedicated Rust T2) |
-| M3.5 | `on_engine_spawn` / `on_tier_ready` | M2.7, M3.1 | |
+| M3.1 | `EngineSupervisor` + `EngineAdapter` trait | M2 | **SIGNED OFF.** crash/backoff tests; FakeClock; no sleep |
+| M3.2 | Pack discovery `$PREFIX/engines/` | M3.1, M0.6 | **SIGNED OFF.** missing pack / bad hash → no spawn |
+| M3.3 | ty pack + Python T3 handoff | M3.1 | **SIGNED OFF.** T1 without pack; Fake ty for T3; no CPython/pylsp/pyright |
+| M3.4 | rust-analyzer pack + Rust T3 | M3.1 | **SIGNED OFF.** no pack / no sysroot → T1 (no dedicated Rust T2) |
+| M3.5 | `on_engine_spawn` / `on_tier_ready` | M2.7, M3.1 | **SIGNED OFF.** Abort spawn skips engine; on_tier_ready cannot Abort intelligence |
 
 ## M4 (`m4` branch)
 

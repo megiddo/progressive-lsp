@@ -124,13 +124,32 @@ impl LspLocation {
 pub struct Hover {
     pub name: String,
     pub arity: Option<u32>,
+    /// T3 type text (ty / rust-analyzer). Absent at T1/T2.
+    pub type_info: Option<String>,
 }
 
 impl Hover {
     pub fn signature(&self) -> String {
-        match self.arity {
-            Some(n) => format!("{}({})", self.name, n),
-            None => self.name.clone(),
+        match (&self.type_info, self.arity) {
+            (Some(ty), _) => format!("{}: {ty}", self.name),
+            (None, Some(n)) => format!("{}({})", self.name, n),
+            (None, None) => self.name.clone(),
+        }
+    }
+
+    pub fn named(name: impl Into<String>, arity: Option<u32>) -> Self {
+        Self {
+            name: name.into(),
+            arity,
+            type_info: None,
+        }
+    }
+
+    pub fn typed(name: impl Into<String>, type_info: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            arity: None,
+            type_info: Some(type_info.into()),
         }
     }
 }
@@ -274,13 +293,18 @@ mod tests {
         let with = Hover {
             name: "greet".into(),
             arity: Some(2),
+            type_info: None,
         };
         assert_eq!(with.signature(), "greet(2)");
         let none = Hover {
             name: "Lib".into(),
             arity: None,
+            type_info: None,
         };
         assert_eq!(none.signature(), "Lib");
+        let typed = Hover::typed("x", "int");
+        assert_eq!(typed.signature(), "x: int");
+        assert_eq!(Hover::named("y", Some(1)).signature(), "y(1)");
     }
 
     #[test]

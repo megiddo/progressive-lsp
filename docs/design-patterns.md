@@ -79,6 +79,19 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `HookName` / `ScriptContext` / `ScriptDecision` | Command / DTO | Abort skips the documented side effect; scripts cannot register `textDocument/definition` |
 | `RhaiEngineFactory` / `FakeEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai |
 | `ControlServer::push_tier_ready` | Observer | Push only when progressive connected; stock clients get `workDoneProgress` only |
+| `FakeEngineAdapter` | Test double | Same `EngineAdapter` trait as prod; crash/backoff tests never `thread::sleep` |
+| `EngineCapabilities` | Value object | Merge is OR; empty has no methods |
+| `EngineResolver` | Adapter / Chain step | `NotReady` unless supervisor is ready for `(language, package)` |
+| `discover_pack` / `EngineBinary` | Repository + Value object | Missing pack or hash mismatch → no spawn; path is `$PREFIX/engines/<pack>/` |
+| `BackoffPolicy` | Strategy | Delay doubles then caps; `can_respawn` uses `ClockPort.unix_ms` |
+| `SpawnTweak` / `SpawnDecision` | Command / DTO | Only allowlisted argv/cwd/env apply; Abort spawn skips the engine |
+| `EngineHooks` / `ScriptHookBridge` / `NoopHooks` | Port / Adapter | Supervisor does not hard-code Rhai; tests inject Abort/Noop |
+| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec (CI/Docker builds real musl ELFs) |
+| `EngineMessage` | Event / DTO | Forwarded didChange/watch recorded on `ChildHandle` inbox |
+| `PythonLanguageFactory` / `RustLanguageFactory` | Abstract Factory | `language_id` is stable; T3 only when supervisor ready (Rust also requires sysroot) |
+| `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
+| `PyprojectAdapter` / `CargoTomlAdapter` | Adapter | Manifest files only; no host CPython/rustc |
+| `RustT1Resolver` | Decorator | Missing sysroot/pack annotates T1 hover; never a dedicated Rust T2 |
 
 ## Patterns we do not use (v1)
 

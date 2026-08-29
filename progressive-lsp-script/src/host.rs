@@ -17,6 +17,8 @@ pub enum HookName {
     OnPreIndex,
     OnPostIndex,
     OnWatch,
+    OnEngineSpawn,
+    OnTierReady,
 }
 
 impl HookName {
@@ -27,6 +29,8 @@ impl HookName {
             Self::OnPreIndex => "on_pre_index",
             Self::OnPostIndex => "on_post_index",
             Self::OnWatch => "on_watch",
+            Self::OnEngineSpawn => "on_engine_spawn",
+            Self::OnTierReady => "on_tier_ready",
         }
     }
 }
@@ -36,6 +40,22 @@ pub struct ScriptContext {
     pub path: String,
     pub package: String,
     pub root: String,
+    pub pack: String,
+    pub argv: Vec<String>,
+    pub cwd: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpawnTweak {
+    pub argv: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: Vec<(String, String)>,
+}
+
+impl SpawnTweak {
+    pub fn is_empty(&self) -> bool {
+        self.argv.is_empty() && self.cwd.is_none() && self.env.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +64,13 @@ pub enum ScriptDecision {
     Abort(String),
     DenyPaths(Vec<String>),
     SkipPackage,
+    TweakSpawn(SpawnTweak),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpawnDecision {
+    Proceed(SpawnTweak),
+    Skip(String),
 }
 
 impl Default for ScriptDecision {
@@ -98,18 +125,28 @@ impl ScriptHost {
 
     pub fn run(&mut self, hook: HookName, ctx: &ScriptContext) -> Result<ScriptDecision, ScriptSandbox> {
         let mut denied = Vec::new();
+        let mut tweak = SpawnTweak::default();
         for engine in &mut self.engines {
             match engine.eval_hook(hook, ctx)? {
                 ScriptDecision::Continue => {}
                 ScriptDecision::Abort(msg) => return Ok(ScriptDecision::Abort(msg)),
                 ScriptDecision::DenyPaths(paths) => denied.extend(paths),
                 ScriptDecision::SkipPackage => return Ok(ScriptDecision::SkipPackage),
+                ScriptDecision::TweakSpawn(t) => {
+                    tweak.argv.extend(t.argv);
+                    if t.cwd.is_some() {
+                        tweak.cwd = t.cwd;
+                    }
+                    tweak.env.extend(t.env);
+                }
             }
         }
-        if denied.is_empty() {
-            Ok(ScriptDecision::Continue)
-        } else {
+        if !denied.is_empty() {
             Ok(ScriptDecision::DenyPaths(denied))
+        } else if !tweak.is_empty() {
+            Ok(ScriptDecision::TweakSpawn(tweak))
+        } else {
+            Ok(ScriptDecision::Continue)
         }
     }
 
@@ -128,6 +165,7 @@ impl ScriptHost {
                 root: root.to_string_lossy().into_owned(),
                 path: root.to_string_lossy().into_owned(),
                 package: String::new(),
+                ..ScriptContext::default()
             };
             match self.run(HookName::OnWorkspaceDiscover, &ctx) {
                 Ok(ScriptDecision::Abort(_)) | Ok(ScriptDecision::SkipPackage) => {}
@@ -139,7 +177,9 @@ impl ScriptHost {
                         keep.push(root.clone());
                     }
                 }
-                Ok(ScriptDecision::Continue) => keep.push(root.clone()),
+                Ok(ScriptDecision::Continue) | Ok(ScriptDecision::TweakSpawn(_)) => {
+                    keep.push(root.clone())
+                }
                 Err(e) => return Err(ScriptAbort(e.0)),
             }
         }
@@ -166,6 +206,40 @@ impl ScriptHost {
         Ok(())
     }
 
+    pub fn on_engine_spawn(
+        &mut self,
+        pack: &str,
+        workspace: &str,
+    ) -> Result<SpawnDecision, ScriptSandbox> {
+        let ctx = ScriptContext {
+            pack: pack.into(),
+            root: workspace.into(),
+            cwd: workspace.into(),
+            ..ScriptContext::default()
+        };
+        match self.run(HookName::OnEngineSpawn, &ctx)? {
+            ScriptDecision::Abort(msg) => Ok(SpawnDecision::Skip(msg)),
+            ScriptDecision::SkipPackage => Ok(SpawnDecision::Skip("skip_package".into())),
+            ScriptDecision::TweakSpawn(tweak) => {
+                Ok(SpawnDecision::Proceed(filter_spawn_tweaks(&tweak, workspace)))
+            }
+            _ => Ok(SpawnDecision::Proceed(SpawnTweak::default())),
+        }
+    }
+
+    /// Logging only. Abort cannot unwind a tier that is already ready.
+    pub fn on_tier_ready(&mut self, language: &str, package: &str) -> Result<(), ScriptSandbox> {
+        let ctx = ScriptContext {
+            package: package.into(),
+            path: language.into(),
+            ..ScriptContext::default()
+        };
+        match self.run(HookName::OnTierReady, &ctx)? {
+            ScriptDecision::Abort(_) => Ok(()),
+            _ => Ok(()),
+        }
+    }
+
     pub fn on_watch(&mut self, paths: &[String]) -> Result<Vec<String>, ScriptSandbox> {
         let mut keep = Vec::new();
         for path in paths {
@@ -180,7 +254,7 @@ impl ScriptHost {
                         keep.push(path.clone());
                     }
                 }
-                ScriptDecision::Continue => keep.push(path.clone()),
+                ScriptDecision::Continue | ScriptDecision::TweakSpawn(_) => keep.push(path.clone()),
             }
         }
         Ok(keep)
@@ -189,6 +263,49 @@ impl ScriptHost {
     pub fn is_empty(&self) -> bool {
         self.engines.is_empty()
     }
+}
+
+/// Env keys scripts may set on engine spawn. Others are dropped.
+pub const SPAWN_ENV_ALLOWLIST: &[&str] = &["RUST_LOG", "RA_LOG", "TY_LOG", "TMPDIR"];
+/// Argv tokens scripts may append. Others are dropped.
+pub const SPAWN_ARGV_ALLOWLIST: &[&str] = &["--stdio", "--quiet", "--log-level", "--log-file"];
+
+pub fn filter_spawn_tweaks(tweak: &SpawnTweak, workspace: &str) -> SpawnTweak {
+    let argv = tweak
+        .argv
+        .iter()
+        .filter(|a| argv_allowed(a))
+        .cloned()
+        .collect();
+    let cwd = tweak.cwd.as_deref().and_then(|c| {
+        if cwd_allowed(c, workspace) {
+            Some(c.to_string())
+        } else {
+            None
+        }
+    });
+    let env = tweak
+        .env
+        .iter()
+        .filter(|(k, _)| SPAWN_ENV_ALLOWLIST.iter().any(|ok| *ok == k.as_str()))
+        .cloned()
+        .collect();
+    SpawnTweak { argv, cwd, env }
+}
+
+fn argv_allowed(arg: &str) -> bool {
+    SPAWN_ARGV_ALLOWLIST.iter().any(|k| {
+        *arg == **k || arg.starts_with(&format!("{k}="))
+    })
+}
+
+fn cwd_allowed(cwd: &str, workspace: &str) -> bool {
+    if workspace.is_empty() {
+        return false;
+    }
+    cwd == workspace
+        || cwd.starts_with(&format!("{workspace}/"))
+        || cwd.starts_with(&format!("{workspace}\\"))
 }
 
 #[cfg(test)]
@@ -216,7 +333,10 @@ mod tests {
         assert_eq!(HookName::OnPreIndex.as_str(), "on_pre_index");
         assert_eq!(HookName::OnPostIndex.as_str(), "on_post_index");
         assert_eq!(HookName::OnWatch.as_str(), "on_watch");
+        assert_eq!(HookName::OnEngineSpawn.as_str(), "on_engine_spawn");
+        assert_eq!(HookName::OnTierReady.as_str(), "on_tier_ready");
         assert_eq!(ScriptDecision::default(), ScriptDecision::Continue);
+        assert!(SpawnTweak::default().is_empty());
     }
 
     #[test]
@@ -444,6 +564,116 @@ mod tests {
         let io = host.load("shell(\"ls\"); fn on_bootstrap() {}", "io.rhai");
         assert!(io.is_err());
         assert!(host.load_path(PathBuf::from("/no/such/script.rhai").as_path()).is_err());
+    }
+
+    #[test]
+    fn on_engine_spawn_abort_skips_and_tweaks_are_allowlisted() {
+        let mut abort = host_with(ScriptDecision::Abort("skip-ty".into()));
+        match abort.on_engine_spawn("python", "/ws").unwrap() {
+            SpawnDecision::Skip(msg) => assert!(msg.contains("skip-ty")),
+            other => panic!("{other:?}"),
+        }
+        let mut skip = host_with(ScriptDecision::SkipPackage);
+        match skip.on_engine_spawn("python", "/ws").unwrap() {
+            SpawnDecision::Skip(_) => {}
+            other => panic!("{other:?}"),
+        }
+        let mut tweaks = host_with(ScriptDecision::TweakSpawn(SpawnTweak {
+            argv: vec!["--stdio".into(), "--evil".into()],
+            cwd: Some("/ws/src".into()),
+            env: vec![
+                ("RUST_LOG".into(), "info".into()),
+                ("LD_PRELOAD".into(), "x".into()),
+            ],
+        }));
+        match tweaks.on_engine_spawn("python", "/ws").unwrap() {
+            SpawnDecision::Proceed(t) => {
+                assert_eq!(t.argv, vec!["--stdio".to_string()]);
+                assert_eq!(t.cwd.as_deref(), Some("/ws/src"));
+                assert_eq!(t.env, vec![("RUST_LOG".into(), "info".into())]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut bad_cwd = host_with(ScriptDecision::TweakSpawn(SpawnTweak {
+            argv: vec!["--log-level=error".into()],
+            cwd: Some("/etc".into()),
+            env: vec![("TY_LOG".into(), "1".into())],
+        }));
+        match bad_cwd.on_engine_spawn("python", "/ws").unwrap() {
+            SpawnDecision::Proceed(t) => {
+                assert_eq!(t.argv, vec!["--log-level=error".to_string()]);
+                assert!(t.cwd.is_none());
+                assert_eq!(t.env, vec![("TY_LOG".into(), "1".into())]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut cont = host_with(ScriptDecision::Continue);
+        match cont.on_engine_spawn("rust", "/ws").unwrap() {
+            SpawnDecision::Proceed(t) => assert!(t.is_empty()),
+            other => panic!("{other:?}"),
+        }
+        assert!(filter_spawn_tweaks(&SpawnTweak::default(), "").is_empty());
+        assert!(!cwd_allowed("/x", ""));
+        assert!(cwd_allowed(r"C:\ws\a", r"C:\ws"));
+        assert!(argv_allowed("--quiet"));
+        assert!(!argv_allowed("--eval"));
+    }
+
+    #[test]
+    fn on_tier_ready_abort_cannot_unwind_intelligence() {
+        let mut abort = host_with(ScriptDecision::Abort("no".into()));
+        abort.on_tier_ready("python", "pkg").unwrap();
+        let mut cont = host_with(ScriptDecision::Continue);
+        cont.on_tier_ready("rust", "crate").unwrap();
+    }
+
+    #[test]
+    fn rhai_spawn_uses_pack_root_cwd_and_tier_ready_sandbox() {
+        let mut host = ScriptHost::new(
+            Box::new(RhaiEngineFactory),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        );
+        host.load(
+            r#"
+            fn on_engine_spawn() {
+                if pack != "python" { abort("bad-pack"); }
+                if root != "/ws" { abort("bad-root"); }
+                tweak_argv("--stdio");
+                tweak_cwd(cwd);
+                tweak_env("TY_LOG", "1");
+            }
+            "#,
+            "spawn.rhai",
+        )
+        .unwrap();
+        match host.on_engine_spawn("python", "/ws").unwrap() {
+            SpawnDecision::Proceed(t) => {
+                assert_eq!(t.argv, vec!["--stdio".to_string()]);
+                assert_eq!(t.cwd.as_deref(), Some("/ws"));
+                assert_eq!(t.env, vec![("TY_LOG".into(), "1".into())]);
+            }
+            other => panic!("{other:?}"),
+        }
+        match host.on_engine_spawn("rust", "/ws").unwrap() {
+            SpawnDecision::Skip(msg) => assert!(msg.contains("bad-pack")),
+            other => panic!("{other:?}"),
+        }
+        let mut tiny = ScriptHost::new(
+            Box::new(RhaiEngineFactory),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        );
+        tiny.ops_limit = 5;
+        tiny.load(
+            r#"
+            fn on_tier_ready() {
+                let s = 0;
+                while s < 100000 { s += 1; }
+            }
+            "#,
+            "tier.rhai",
+        )
+        .unwrap();
+        assert!(tiny.on_tier_ready("python", "pkg").is_err());
     }
 
     #[test]

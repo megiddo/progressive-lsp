@@ -19,8 +19,9 @@ Empty Factory slots still count: tests that they return `UnsupportedLanguage` wi
 
 - Always when present: `progressive-lsp-core`, `-control`, `-install`, `-watch`, `-index`, `-resolve`, `-script`, `-workspace`
 - Language crates once they have real resolvers (not empty slots)
+- `progressive-lsp-engine`: supervisor crash/backoff/hash/discovery only
 
-Do not mutation-test clangd. Engine wrappers: supervisor crash/backoff/hash only.
+Do not mutation-test clangd, ty, or rust-analyzer **source we do not own**. Engine wrappers: supervisor crash/backoff/hash/discovery only.
 
 ## Time and threads
 
@@ -67,6 +68,7 @@ T3 latency is per-engine and not a core fail if ty is slow.
 - Ops limit / string cap → error, no I/O.
 - `allow_shell` default false.
 - Abort on `on_pre_index` skips that package; Abort on `on_watch` drops paths; Abort on `on_bootstrap` fails initialize.
+- Abort on `on_engine_spawn` skips that engine (T1/T2 remain). `on_tier_ready` Abort cannot unwind intelligence.
 - Scripts cannot register `textDocument/definition`.
 
 ## Milestone sign-off (every WP)

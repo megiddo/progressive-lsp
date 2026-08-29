@@ -134,6 +134,7 @@ impl Resolver for TreeSitterResolver {
                     hover: Some(Hover {
                         name: sym.name,
                         arity: sym.arity,
+                        type_info: None,
                     }),
                     symbols: Vec::new(),
                 })

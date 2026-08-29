@@ -110,6 +110,8 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M3 — Engine supervisor + Python/Rust T3 (~4 weeks)
 
+**Status: SIGNED OFF** on branch `m3`. Do not start M4 until this section stays signed off. No clangd/tsgo/gopls/zls/csharp-ls/PHPantom packs.
+
 - `EngineAdapter` plugins: spawn, stdio proxy, crash/backoff, capability merge, forward changes.
 - Pack discovery under `$PREFIX/engines/` (not a zeds-dead path).
 - **ty** and **rust-analyzer** artifacts via `xtask dist --pack python,rust`.
@@ -117,6 +119,23 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 - Handoff: T3 when ready for that package; else T2 if that language has a T2 Strategy, else T1.
 
 **Exit:** Python go-to-def / refs / hover types / implementation via ty; Rust the same via RA when sysroot exists; without packs, those languages still navigate at T1 (Python may use optional TSG T2; Rust has no dedicated T2). Core still static and usable alone. A script can skip ty; Python stays T1 (optional TSG T2).
+
+**Sign-off checklist (M3)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own) — **96.14% lines**
+- [x] 80% mutants on listed crates that exist — engine 81.5%, script 80.6%, python 92.0%, rust 86.0%, workspace 98.7%, resolve 80.7%, core 94.2%; remaining listed libs unchanged from M2
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change; Darwin dist writes stubs only)
+- [x] [design-patterns.md](design-patterns.md) table updated for M3 types
+- [x] Docs in this tree updated if a locked decision was refined
+
+**Darwin / CI notes**
+
+- Native `cargo test` is the M3 gate on macOS. Tests use `FakeEngineAdapter` / fixture stub bytes.
+- `xtask dist --pack python,rust` writes `$PREFIX/engines/{python,rust}/` + `manifest.json` + SHA256. The files are **stubs**, not musl ELFs. Real ty / rust-analyzer static packs are Linux CI / Docker (same class as the M0 musl gap). Do not treat stub hashes as `check-static` greens.
+- Engine wrappers: mutation-test supervisor crash/backoff/hash/discovery only — not clangd/ty/RA upstream source.
 
 ## M4 — Remaining T3 packs (~5 weeks)
 

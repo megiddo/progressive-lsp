@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use progressive_lsp_core::{FakeClock, InitializeFailed, PackageId, Tier};
+use progressive_lsp_engine::EngineSupervisor;
 use progressive_lsp_index::{IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex};
 use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
 use progressive_lsp_resolve::{
@@ -30,6 +31,10 @@ use progressive_lsp_lang_javascript::JavaScriptIndexer;
 use progressive_lsp_lang_go::GoIndexer;
 #[cfg(feature = "lang-zig")]
 use progressive_lsp_lang_zig::ZigIndexer;
+#[cfg(feature = "lang-python")]
+use progressive_lsp_lang_python::PythonIndexer;
+#[cfg(feature = "lang-rust")]
+use progressive_lsp_lang_rust::RustIndexer;
 
 pub struct WorkspaceSession {
     pub index: SharedIndex,
@@ -39,6 +44,7 @@ pub struct WorkspaceSession {
     scripts: Mutex<Option<ScriptHost>>,
     progress: Mutex<Vec<WorkDoneProgress>>,
     skipped_packages: Mutex<Vec<PackageId>>,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 
 impl WorkspaceSession {
@@ -51,7 +57,13 @@ impl WorkspaceSession {
             scripts: Mutex::new(None),
             progress: Mutex::new(Vec::new()),
             skipped_packages: Mutex::new(Vec::new()),
+            supervisor: None,
         }
+    }
+
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
     }
 
     pub fn with_scripts(self, host: ScriptHost) -> Self {
@@ -93,6 +105,8 @@ impl WorkspaceSession {
                 "js" | "mjs" | "cjs" | "ts" => "javascript",
                 "go" => "go",
                 "zig" => "zig",
+                "py" => "python",
+                "rs" => "rust",
                 _ => language_id,
             }
         } else {
@@ -113,6 +127,10 @@ impl WorkspaceSession {
             "go" => Some(Box::new(GoIndexer)),
             #[cfg(feature = "lang-zig")]
             "zig" => Some(Box::new(ZigIndexer)),
+            #[cfg(feature = "lang-python")]
+            "python" => Some(Box::new(PythonIndexer)),
+            #[cfg(feature = "lang-rust")]
+            "rust" => Some(Box::new(RustIndexer)),
             _ => None,
         }
     }
@@ -218,6 +236,8 @@ fn guess_lang(files: &[PathBuf]) -> &'static str {
             Some("html") => return "html",
             Some("css") => return "css",
             Some("js") | Some("ts") => return "javascript",
+            Some("py") => return "python",
+            Some("rs") => return "rust",
             _ => {}
         }
     }
@@ -244,7 +264,7 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
             collect_sources(&path, out, depth + 1);
         } else if matches!(
             path.extension().and_then(|s| s.to_str()),
-            Some("java" | "php" | "html" | "css" | "js" | "ts" | "go" | "zig")
+            Some("java" | "php" | "html" | "css" | "js" | "ts" | "go" | "zig" | "py" | "rs")
         ) {
             out.push(path);
         }
@@ -275,6 +295,9 @@ impl LspIntelligence for WorkspaceSession {
             let old = self.index.lock().source(&path).unwrap_or("").to_string();
             let change = InputChange::replace_all(&old, text);
             self.index.lock().apply_change(&path, &change, indexer.as_ref());
+        }
+        if let Some(sup) = &self.supervisor {
+            sup.forward_did_change(uri, text);
         }
     }
 
@@ -337,6 +360,20 @@ impl LspIntelligence for WorkspaceSession {
             let _ = p.set_language(&progressive_lsp_lang_zig::tree_sitter_language());
             if let Some(tree) = p.parse(&src, None) {
                 return progressive_lsp_lang_zig::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-python")]
+        if path.extension().and_then(|s| s.to_str()) == Some("py") {
+            let _ = p.set_language(&progressive_lsp_lang_python::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_python::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-rust")]
+        if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            let _ = p.set_language(&progressive_lsp_lang_rust::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_rust::tokens_from_tree(&src, &tree);
             }
         }
         Vec::new()
@@ -405,6 +442,14 @@ pub fn register_languages(registry: &mut progressive_lsp_plugin::PluginRegistry)
     #[cfg(feature = "lang-zig")]
     {
         registry.register(Box::new(progressive_lsp_lang_zig::ZigLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-python")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_python::PythonLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-rust")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_rust::RustLanguageFactory::new()));
     }
 }
 
@@ -525,5 +570,44 @@ mod tests {
         });
         let err = session.on_initialize(&params).unwrap_err();
         assert!(err.0.contains("denied-path"), "{err}");
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_session_tokens_and_supervisor_forward() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = progressive_lsp_core::PrefixLayout::from_path(dir.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = progressive_lsp_engine::FakeEngineAdapter::ty().with_binary(
+            progressive_lsp_engine::EngineBinary {
+                pack_name: "python".into(),
+                path: dir.path().join("ty"),
+                sha256: [0; 32],
+            },
+        );
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        let _ = sup.try_spawn(
+            "python",
+            &progressive_lsp_core::LanguageId::new("python"),
+            &PackageId::new("pkg"),
+            dir.path(),
+        );
+        let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty())
+            .with_supervisor(Arc::new(sup));
+        session.did_open("file:///t.py", "python", "def greet(name):\n    return name\n");
+        let toks = session.semantic_tokens("file:///t.py");
+        assert!(!toks.is_empty());
+        session.did_change("file:///t.py", "def greet(name):\n    return name\n");
+        session.did_close("file:///t.py");
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn rust_session_tokens() {
+        let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty());
+        session.did_open("file:///t.rs", "rust", "fn greet() {}\n");
+        assert!(!session.semantic_tokens("file:///t.rs").is_empty());
     }
 }

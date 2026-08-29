@@ -1,5 +1,6 @@
 //! WorkspaceSource adapters. Disk/build files → WorkspaceModel. No host JDK.
 
+pub mod cargo;
 pub mod composer;
 pub mod directory;
 pub mod eclipse;
@@ -7,8 +8,10 @@ pub mod go_mod;
 pub mod gradle;
 pub mod maven;
 pub mod model;
+pub mod pyproject;
 pub mod zig_build;
 
+pub use cargo::CargoTomlAdapter;
 pub use composer::ComposerAdapter;
 pub use directory::DirectoryAdapter;
 pub use eclipse::EclipseAdapter;
@@ -16,6 +19,7 @@ pub use go_mod::GoModAdapter;
 pub use gradle::GradleAdapter;
 pub use maven::MavenAdapter;
 pub use model::{PackageEntry, WorkspaceModel, WorkspaceSource};
+pub use pyproject::PyprojectAdapter;
 pub use zig_build::ZigBuildAdapter;
 
 use std::path::Path;
@@ -38,6 +42,12 @@ pub fn detect_workspace(root: &Path) -> Option<WorkspaceModel> {
         return Some(m);
     }
     if let Some(m) = ZigBuildAdapter.detect(root) {
+        return Some(m);
+    }
+    if let Some(m) = CargoTomlAdapter.detect(root) {
+        return Some(m);
+    }
+    if let Some(m) = PyprojectAdapter.detect(root) {
         return Some(m);
     }
     DirectoryAdapter.detect(root)
@@ -108,5 +118,13 @@ mod tests {
         let zig = tempfile::tempdir().unwrap();
         std::fs::write(zig.path().join("build.zig"), "pub fn build() void {}\n").unwrap();
         assert_eq!(detect_workspace(zig.path()).unwrap().kind, "build.zig");
+
+        let cargo = tempfile::tempdir().unwrap();
+        std::fs::write(cargo.path().join("Cargo.toml"), "[package]\nname = \"r\"\n").unwrap();
+        assert_eq!(detect_workspace(cargo.path()).unwrap().kind, "cargo");
+
+        let py = tempfile::tempdir().unwrap();
+        std::fs::write(py.path().join("pyproject.toml"), "[project]\nname = \"p\"\n").unwrap();
+        assert_eq!(detect_workspace(py.path()).unwrap().kind, "pyproject");
     }
 }

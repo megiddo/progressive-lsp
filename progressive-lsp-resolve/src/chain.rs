@@ -29,6 +29,23 @@ impl ResolverChain {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
     }
+
+    /// T3 (if any), then T2 (if any), then T1. First `Ready` wins.
+    pub fn with_tiers(
+        t3: Option<Box<dyn Resolver>>,
+        t2: Option<Box<dyn Resolver>>,
+        t1: Box<dyn Resolver>,
+    ) -> Self {
+        let mut steps = Vec::new();
+        if let Some(r) = t3 {
+            steps.push(r);
+        }
+        if let Some(r) = t2 {
+            steps.push(r);
+        }
+        steps.push(t1);
+        Self { steps }
+    }
 }
 
 impl Resolver for ResolverChain {
@@ -114,6 +131,68 @@ mod tests {
             ResolveOutcome::Ready(r) => {
                 assert_eq!(r.locations[0].uri, "file:///t1");
                 assert_eq!(r.tier, Tier::Syntax);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_tiers_is_t3_then_t2_then_t1() {
+        let chain = ResolverChain::with_tiers(
+            Some(Box::new(NotReadyResolver::new(
+                LanguageId::new("python"),
+                PackageId::new("pkg"),
+            ))),
+            Some(Box::new(FakeResolver::graph("t2").with_location(LspLocation::new(
+                "file:///t2",
+                Range::default(),
+                Tier::Graph,
+            )))),
+            Box::new(FakeResolver::syntax("t1").with_location(LspLocation::new(
+                "file:///t1",
+                Range::default(),
+                Tier::Syntax,
+            ))),
+        );
+        match chain.resolve(&def_query()) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert_eq!(r.locations[0].uri, "file:///t2");
+            }
+            other => panic!("{other:?}"),
+        }
+        let t3_ready = ResolverChain::with_tiers(
+            Some(Box::new(FakeResolver::types("t3").with_location(LspLocation::new(
+                "file:///t3",
+                Range::default(),
+                Tier::Types,
+            )))),
+            Some(Box::new(FakeResolver::graph("t2"))),
+            Box::new(FakeResolver::syntax("t1")),
+        );
+        match t3_ready.resolve(&def_query()) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Types);
+                assert_eq!(r.locations[0].uri, "file:///t3");
+            }
+            other => panic!("{other:?}"),
+        }
+        let no_t2 = ResolverChain::with_tiers(
+            Some(Box::new(NotReadyResolver::new(
+                LanguageId::new("rust"),
+                PackageId::new("p"),
+            ))),
+            None,
+            Box::new(FakeResolver::syntax("t1").with_location(LspLocation::new(
+                "file:///t1",
+                Range::default(),
+                Tier::Syntax,
+            ))),
+        );
+        match no_t2.resolve(&def_query()) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Syntax);
+                assert_eq!(r.locations[0].uri, "file:///t1");
             }
             other => panic!("{other:?}"),
         }

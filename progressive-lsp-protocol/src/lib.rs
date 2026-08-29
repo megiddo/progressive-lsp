@@ -464,6 +464,7 @@ mod tests {
                 r.hover = Some(progressive_lsp_resolve::Hover {
                     name: "n".into(),
                     arity: Some(0),
+                    type_info: None,
                 });
                 return r;
             }

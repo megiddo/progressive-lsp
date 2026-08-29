@@ -51,3 +51,7 @@ Allowed **project** compilers on PATH for **accuracy**, not for our libc: `rustc
 ## Build-time (CI / xtask)
 
 Rust pinned toolchain, musl cc, optionally Go/Zig/PHP **in a pinned container** to **build packs**. Those toolchains are not runtime deps of the core. PR CI does not compile LLVM/clangd/tsgo from scratch; use content-addressed artifact cache keyed by upstream git SHA.
+
+### M3 engine packs (ty, rust-analyzer)
+
+`xtask dist --pack python,rust --dest DIR` writes `$PREFIX/engines/python/ty` and `$PREFIX/engines/rust/rust-analyzer` plus `manifest.json` (SHA256). On Darwin this host writes **stub** bytes (`progressive-lsp-pack-stub:…`) and `engines/DARWIN_CI_GAP.txt`. Those stubs are not musl ELFs and must not be `check-static` greened. Building real static ty / rust-analyzer is Linux CI / Docker (same class as `xtask musl`). Tests use `FakeEngineAdapter` and fixture hashes; they do not download LLVM.

@@ -7,4 +7,4 @@ Both are Rust engines and belong on the `rust-engine` allocator-matrix cells.
 
 **Fail closed:** any `DT_NEEDED` / interpreter → do not ship that pack.
 
-**M0 result:** notes only. Packs land in M3.
+**M3 result:** supervisor + FakeEngineAdapter tests landed. `xtask dist --pack python,rust` writes dest/hash/manifest. Real musl ty/RA binaries remain Linux CI / Docker. Tests do not download LLVM.

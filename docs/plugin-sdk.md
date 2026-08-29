@@ -18,9 +18,9 @@ Related: [design-patterns.md](design-patterns.md), [detailed-design.md](detailed
 
 Produces grammar id, `LanguageId`, and the resolver chain (T1 required; T2/T3 optional). Empty slot → `UnsupportedLanguage`.
 
-`LanguageFactory::resolver_chain` returns a `ResolverChain` (T1 `TreeSitterResolver`; T2 `HeuristicResolver` when the package has finished ingest). Empty slot → `UnsupportedLanguage`. Composition-root `register_languages` installs Java, PHP, HTML, CSS, JavaScript (and TypeScript T1 via the JS grammar), Go, and Zig when their `lang-*` features are on (default-on for M2). C/C++/C#/Rust/Python stay empty. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
+`LanguageFactory::resolver_chain` returns a `ResolverChain` (T3 `EngineResolver` when `EngineSupervisor` is ready for that package; else T2 `HeuristicResolver` when the language has a T2 Strategy; else T1 `TreeSitterResolver`). Empty slot → `UnsupportedLanguage`. Composition-root `register_languages` installs Java, PHP, HTML, CSS, JavaScript (and TypeScript T1 via the JS grammar), Go, Zig, Python, and Rust when their `lang-*` features are on (default-on for M3). C/C++/C# stay empty. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
 
-M2 implements `on_bootstrap`, `on_workspace_discover`, `on_pre_index`, `on_post_index`, `on_watch` only. `on_engine_spawn` / `on_tier_ready` / `on_install_verify` remain M3/M6.
+M3 implements `on_engine_spawn` and `on_tier_ready` in addition to the M2 catalog. `on_install_verify` remains M6.
 
 ### `WorkspaceSource`
 

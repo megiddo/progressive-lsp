@@ -131,6 +131,7 @@ impl Resolver for HeuristicResolver {
                 let hover = Hover {
                     name: best.name.clone(),
                     arity: best.arity,
+                    type_info: None,
                 };
                 ResolveOutcome::Ready(ResolveResult {
                     locations: vec![best.to_location(tier)],

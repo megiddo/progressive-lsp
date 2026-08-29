@@ -128,6 +128,7 @@ mod tests {
         let h = Hover {
             name: "m".into(),
             arity: Some(1),
+            type_info: None,
         };
         assert_eq!(hover_to_json(&h)["contents"]["value"], "m(1)");
         let sym = DocumentSymbol {

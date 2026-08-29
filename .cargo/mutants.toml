@@ -1,6 +1,6 @@
 # cargo-mutants: listed library crates only (docs/testing.md).
-# Language crates with real resolvers: java, php, html, css, javascript, go, zig.
-# Also progressive-lsp-script.
+# Language crates with real resolvers: java, php, html, css, javascript, go, zig, python, rust.
+# Also progressive-lsp-script and progressive-lsp-engine (supervisor/crash/backoff/hash/discovery).
 
 # EmptyIndex already returns empty; `vec![]` replacements are equivalent.
 exclude_re = [

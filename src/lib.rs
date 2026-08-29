@@ -3,8 +3,10 @@
 use std::ffi::OsString;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use progressive_lsp_core::{apply_worktree_excludes, PrefixLayout};
+use progressive_lsp_core::{apply_worktree_excludes, PrefixLayout, SystemClock};
+use progressive_lsp_engine::{EngineSupervisor, PackAdapter};
 use progressive_lsp_install::{
     sha256, sha256_file, ExplicitPacks, Installer, LocalFs, Manifest, PackSelector,
 };
@@ -164,6 +166,10 @@ pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
     let layout = PrefixLayout::resolve(opts.prefix.as_deref())?;
     layout.ensure_dirs()?;
     let _registry = build_registry();
+    let mut supervisor = EngineSupervisor::new(Arc::new(SystemClock), layout.clone());
+    supervisor.register(Box::new(PackAdapter::python()));
+    supervisor.register(Box::new(PackAdapter::rust()));
+    let _supervisor = supervisor;
     let socket = opts
         .control_socket
         .as_ref()
@@ -316,6 +322,7 @@ mod tests {
             if matches!(
                 *slot,
                 "java" | "php" | "html" | "css" | "javascript" | "typescript" | "go" | "zig"
+                    | "python" | "rust"
             ) {
                 continue;
             }
@@ -325,7 +332,18 @@ mod tests {
             );
         }
         assert_eq!(a.contains(&progressive_lsp_core::LanguageId::new("java")), cfg!(feature = "lang-java"));
-        assert!(a.get(&progressive_lsp_core::LanguageId::new("python")).is_err());
+        #[cfg(feature = "lang-python")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("python")).is_ok());
+        }
+        #[cfg(not(feature = "lang-python"))]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("python")).is_err());
+        }
+        #[cfg(feature = "lang-rust")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("rust")).is_ok());
+        }
         let _ = b.registered_ids();
     }
 

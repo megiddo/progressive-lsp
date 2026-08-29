@@ -1,0 +1,20 @@
+[package]
+name = "progressive-lsp-lang-rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rust LanguageFactory T1 + optional rust-analyzer T3 (no dedicated T2)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-workspace.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

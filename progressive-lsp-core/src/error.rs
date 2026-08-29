@@ -113,6 +113,14 @@ pub enum EngineError {
     Spawn(String),
     #[error("not discovered: {0}")]
     NotDiscovered(String),
+    #[error("hash mismatch: expected {expected}, got {actual}")]
+    Hash { expected: String, actual: String },
+    #[error("engine crashed: {0}")]
+    Crashed(String),
+    #[error("backoff until unix_ms {next_unix_ms}")]
+    Backoff { next_unix_ms: u64 },
+    #[error("spawn aborted: {0}")]
+    Aborted(String),
 }
 
 #[cfg(test)]
@@ -172,6 +180,25 @@ mod tests {
         assert!(EngineError::NotDiscovered("ty".into())
             .to_string()
             .contains("ty"));
+        assert!(EngineError::Hash {
+            expected: "aa".into(),
+            actual: "bb".into(),
+        }
+        .to_string()
+        .contains("aa"));
+        assert!(EngineError::Crashed("child".into()).to_string().contains("child"));
+        assert!(EngineError::Backoff { next_unix_ms: 9 }
+            .to_string()
+            .contains("9"));
+        assert!(EngineError::Aborted("skip".into()).to_string().contains("skip"));
+        assert_ne!(
+            EngineError::Spawn("x".into()),
+            EngineError::NotDiscovered("x".into())
+        );
+        assert_ne!(
+            EngineError::Crashed("x".into()),
+            EngineError::Aborted("x".into())
+        );
         assert_eq!(ConfigError::HomeUnset.to_string(), "home directory is unset");
         assert!(ConfigError::Toml("bad".into()).to_string().contains("bad"));
         assert!(ConfigError::Io("e".into()).to_string().contains("e"));

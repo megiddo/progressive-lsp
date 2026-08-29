@@ -1,21 +1,16 @@
 [package]
-name = "xtask"
+name = "progressive-lsp-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "musl, check-static, bench-alloc"
-
-[[bin]]
-name = "xtask"
-path = "src/main.rs"
+description = "EngineAdapter, EngineSupervisor, pack discovery"
 
 [dependencies]
-thiserror.workspace = true
-toml.workspace = true
 progressive-lsp-core.workspace = true
-progressive-lsp-engine.workspace = true
 progressive-lsp-install.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-script.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -12,6 +12,7 @@ members = [
     "progressive-lsp-resolve",
     "progressive-lsp-workspace",
     "progressive-lsp-script",
+    "progressive-lsp-engine",
     "progressive-lsp-lang-java",
     "progressive-lsp-lang-php",
     "progressive-lsp-lang-html",
@@ -19,6 +20,8 @@ members = [
     "progressive-lsp-lang-javascript",
     "progressive-lsp-lang-go",
     "progressive-lsp-lang-zig",
+    "progressive-lsp-lang-python",
+    "progressive-lsp-lang-rust",
     "xtask",
 ]
 
@@ -46,6 +49,11 @@ progressive-lsp-lang-javascript = { path = "progressive-lsp-lang-javascript" }
 progressive-lsp-lang-go = { path = "progressive-lsp-lang-go" }
 progressive-lsp-lang-zig = { path = "progressive-lsp-lang-zig" }
 progressive-lsp-script = { path = "progressive-lsp-script" }
+progressive-lsp-engine = { path = "progressive-lsp-engine" }
+progressive-lsp-lang-python = { path = "progressive-lsp-lang-python" }
+progressive-lsp-lang-rust = { path = "progressive-lsp-lang-rust" }
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
 prost = "0.13"
 tree-sitter = "0.24"
 tree-sitter-java = "0.23"
@@ -84,6 +92,9 @@ progressive-lsp-lang-css = { workspace = true, optional = true }
 progressive-lsp-lang-javascript = { workspace = true, optional = true }
 progressive-lsp-lang-go = { workspace = true, optional = true }
 progressive-lsp-lang-zig = { workspace = true, optional = true }
+progressive-lsp-lang-python = { workspace = true, optional = true }
+progressive-lsp-lang-rust = { workspace = true, optional = true }
+progressive-lsp-engine.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-protocol.workspace = true
 progressive-lsp-resolve.workspace = true
@@ -103,6 +114,8 @@ default = [
     "lang-javascript",
     "lang-go",
     "lang-zig",
+    "lang-python",
+    "lang-rust",
 ]
 lang-java = ["dep:progressive-lsp-lang-java"]
 lang-php = ["dep:progressive-lsp-lang-php"]
@@ -111,6 +124,8 @@ lang-css = ["dep:progressive-lsp-lang-css"]
 lang-javascript = ["dep:progressive-lsp-lang-javascript"]
 lang-go = ["dep:progressive-lsp-lang-go"]
 lang-zig = ["dep:progressive-lsp-lang-zig"]
+lang-python = ["dep:progressive-lsp-lang-python"]
+lang-rust = ["dep:progressive-lsp-lang-rust"]
 
 [dev-dependencies]
 serde_json.workspace = true
