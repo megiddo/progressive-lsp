@@ -1,0 +1,15 @@
+[package]
+name = "progressive-lsp-watch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "WatchCoalescer, WatchBackend, FakeWatcher, WatchFilter, FilesSince"
+
+[dependencies]
+progressive-lsp-control.workspace = true
+progressive-lsp-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

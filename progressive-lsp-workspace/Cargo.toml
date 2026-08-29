@@ -1,0 +1,14 @@
+[package]
+name = "progressive-lsp-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "WorkspaceSource and Directory/Maven/Gradle/Eclipse adapters"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

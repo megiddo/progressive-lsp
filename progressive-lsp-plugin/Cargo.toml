@@ -8,3 +8,4 @@ description = "PluginRegistry and LanguageFactory"
 
 [dependencies]
 progressive-lsp-core.workspace = true
+progressive-lsp-resolve.workspace = true

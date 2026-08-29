@@ -1,0 +1,19 @@
+[package]
+name = "progressive-lsp-lang-java"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Java LanguageFactory and T1 Tree-sitter resolver (no JDK)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-workspace.workspace = true
+tree-sitter.workspace = true
+tree-sitter-java.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

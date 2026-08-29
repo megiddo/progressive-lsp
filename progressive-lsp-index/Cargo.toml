@@ -1,0 +1,19 @@
+[package]
+name = "progressive-lsp-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "DirtySet, PriorityIndex, IndexService, IndexCache"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-watch.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tree-sitter-java.workspace = true

@@ -18,7 +18,7 @@ Related: [design-patterns.md](design-patterns.md), [detailed-design.md](detailed
 
 Produces grammar id, `LanguageId`, and the resolver chain (T1 required; T2/T3 optional). Empty slot → `UnsupportedLanguage`.
 
-M0: `register_builtins()` is a no-op. `KNOWN_LANGUAGE_SLOTS` lists the v1 languages; `PluginRegistry::get` returns `UnsupportedLanguage` for each without panic. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
+`LanguageFactory::resolver_chain` returns a `ResolverChain` (T1 `TreeSitterResolver` for Java). Empty slot → `UnsupportedLanguage`. Composition-root `register_builtins` / `register_languages` installs Java when feature `lang-java` is on (default). Other `KNOWN_LANGUAGE_SLOTS` stay empty. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
 
 ### `WorkspaceSource`
 

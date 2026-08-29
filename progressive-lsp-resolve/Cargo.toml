@@ -1,0 +1,14 @@
+[package]
+name = "progressive-lsp-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Resolver trait, chain, TreeSitterResolver, FakeResolver"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

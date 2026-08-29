@@ -40,6 +40,20 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WatchBackend` | Port / Adapter | Prod uses `notify`; tests use `FakeWatcher`; coalescer does not call OS APIs directly |
 | `WatchBatch` | Event / DTO | Overflow / `need_rescan` set; never silently drop FilesSince rows without `truncated` |
 | `WatchFilter` / `on_watch` | Decorator / Filter | Dropped paths never enter `DirtySet` |
+| `IdentityWatchFilter` | Decorator / Filter | Pass-through; identity is a valid v1 filter |
+| `DefaultIgnoreFilter` | Decorator / Filter | Drops ignore globs; manifests still pass |
+| `DenyListFilter` | Decorator / Filter | Explicit drops never enter `DirtySet` |
+| `FilesSinceJournal` / `FilesSinceAnswer` | Repository + DTO | Overflow or generation gap ⇒ `truncated`; never silent drop |
+| `FilesSincePort` / `SharedCoalescer` | Port / Adapter | Control proto calls the journal; no `$/` JSON-RPC |
+| `NotifyWatcher` | Adapter | Maps notify-style kinds; coalescer never calls OS APIs |
+| `SharedIndex` | Adapter | `IndexService` behind a mutex is a `SymbolIndex` |
+| `LanguageIndexer` / `JavaIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
+| `JavaLanguageFactory` | Abstract Factory | `language_id` = java; chain is T1 `TreeSitterResolver` |
+| `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues |
+| `NotReadyResolver` | Test double | T3 skip; must not drop a later T2 `FakeResolver` |
+| `DirectoryAdapter` / `MavenAdapter` / `GradleAdapter` / `EclipseAdapter` | Adapter | Detect from files only; no host JDK |
+| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer` |
+| `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
 | `IndexCache` | Repository | Same `(grammar, lang, hash)` → skip parse |
 | `Config` merge | Chain / Builder | Later file wins for keys it sets; unset key falls through |

@@ -67,15 +67,17 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M1 (`m1` branch)
 
+**Status: SIGNED OFF.** Do not open `m2` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M1.1 | `WatchCoalescer` + FakeWatcher | M0 signed | 10k → 1 batch |
-| M1.2 | FilesSince + overflow/`truncated` | M1.1, M0.5 | control plane |
-| M1.3 | Incremental Tree-sitter + dirty-set priority | M1.1 | ~10 ms class |
-| M1.4 | `WatchFilter` identity | M1.1 | |
-| M1.5 | `progressive-lsp-lang-java` T1 + tokens | M1.3 | no JDK |
-| M1.6 | Directory + Maven/Gradle/Eclipse adapters | M1.5 | multi-package fixture |
-| M1.7 | Server-side `notify` ghost edit reindex | M1.1, M1.5 | no progressive client required |
+| M1.1 | `WatchCoalescer` + FakeWatcher | M0 signed | **SIGNED OFF.** 10k → 1 batch |
+| M1.2 | FilesSince + overflow/`truncated` | M1.1, M0.5 | **SIGNED OFF.** control plane |
+| M1.3 | Incremental Tree-sitter + dirty-set priority | M1.1 | **SIGNED OFF.** ~10 ms class |
+| M1.4 | `WatchFilter` identity | M1.1 | **SIGNED OFF.** |
+| M1.5 | `progressive-lsp-lang-java` T1 + tokens | M1.3 | **SIGNED OFF.** no JDK |
+| M1.6 | Directory + Maven/Gradle/Eclipse adapters | M1.5 | **SIGNED OFF.** multi-package fixture |
+| M1.7 | Server-side `notify` ghost edit reindex | M1.1, M1.5 | **SIGNED OFF.** no progressive client required |
 
 ## M2 (`m2` branch)
 

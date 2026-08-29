@@ -8,7 +8,7 @@ pub use codec::{
     decode_frame, encode_frame, CodecError, DecodeOutcome, MAX_PAYLOAD_BYTES,
 };
 pub use messages::*;
-pub use service::ControlServer;
+pub use service::{ControlServer, FilesSincePort};
 
 #[cfg(test)]
 mod tests {

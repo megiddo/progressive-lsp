@@ -66,7 +66,7 @@ Names are proto service methods. Unary unless marked push.
 | `TierReady` | **push** | Package upgraded tier |
 | `ReloadScripts` | req/resp | Reload Rhai from merge chain |
 
-**FilesSince** is not in LSP. Do not add `workspace/filesSince` or `$/progressive/filesSince` in v1.
+**FilesSince** is not in LSP. Do not add `workspace/filesSince` or `$/progressive/filesSince` in v1. M1 wires `FilesSince` to the watch journal (`truncated` after overflow or a generation gap). `WatchBatch` is the coalesced push DTO.
 
 ## Not in this protocol
 

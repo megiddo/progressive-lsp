@@ -61,6 +61,8 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M1 — Watch, FilesSince, incremental T1, Java baseline (~3 weeks)
 
+**Status: SIGNED OFF** on branch `m1`. Do not start M2 until this section stays signed off.
+
 - Watch coalescer + FakeWatcher/FakeClock (10k events → one `WatchBatch`).
 - `FilesSince` after overflow or generation gap; `truncated` tested.
 - Incremental Tree-sitter on `didChange`; dirty-set priority indexer.
@@ -70,6 +72,17 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 - Directory + Maven/Gradle/Eclipse adapters for a multi-package Java fixture.
 
 **Exit:** F12 across packages on T1; open-buffer reparse in the ~10 ms budget; unopened file change reindexes via **server-side watch** without a progressive client; FilesSince + WatchBatch when control is on. **No host JDK.**
+
+**Sign-off checklist (M1)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C) — **97.16% lines**
+- [x] 80% mutants on listed crates that exist — watch 87.1%, index 97.9%, resolve 85.4%, workspace 87.6%, lang-java 86.6%, core+control+install 93.4%
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change)
+- [x] [design-patterns.md](design-patterns.md) table updated for M1 types
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## M2 — Progressive ingest, T2, web + PHP, host scripts (~4 weeks)
 

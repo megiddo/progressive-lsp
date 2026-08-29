@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use progressive_lsp_core::{LanguageId, UnsupportedLanguage};
+use progressive_lsp_resolve::ResolverChain;
 
 /// Language ids that have a Factory slot in v1. M0 slots are empty.
 pub const KNOWN_LANGUAGE_SLOTS: &[&str] = &[
@@ -25,6 +26,10 @@ pub const KNOWN_LANGUAGE_SLOTS: &[&str] = &[
 pub trait LanguageFactory: Send + Sync {
     fn language_id(&self) -> LanguageId;
     fn grammar_id(&self) -> &str;
+    /// T1 required; T2/T3 optional. Default is an empty chain (empty slot).
+    fn resolver_chain(&self) -> ResolverChain {
+        ResolverChain::empty()
+    }
 }
 
 /// Composition-time Factory / Registry. Lookup is deterministic.
@@ -147,6 +152,7 @@ mod tests {
         let factory = registry.get(&LanguageId::new("java")).unwrap();
         assert_eq!(factory.grammar_id(), "second");
         assert_eq!(factory.language_id().as_str(), "java");
+        assert!(factory.resolver_chain().is_empty());
         assert_eq!(registry.registered_ids(), vec![LanguageId::new("java")]);
         assert!(registry.contains(&LanguageId::new("java")));
         assert!(!registry.contains(&LanguageId::new("rust")));

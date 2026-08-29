@@ -7,6 +7,11 @@ members = [
     "progressive-lsp-protocol",
     "progressive-lsp-control",
     "progressive-lsp-install",
+    "progressive-lsp-watch",
+    "progressive-lsp-index",
+    "progressive-lsp-resolve",
+    "progressive-lsp-workspace",
+    "progressive-lsp-lang-java",
     "xtask",
 ]
 
@@ -22,7 +27,14 @@ progressive-lsp-plugin = { path = "progressive-lsp-plugin" }
 progressive-lsp-protocol = { path = "progressive-lsp-protocol" }
 progressive-lsp-control = { path = "progressive-lsp-control" }
 progressive-lsp-install = { path = "progressive-lsp-install" }
+progressive-lsp-watch = { path = "progressive-lsp-watch" }
+progressive-lsp-index = { path = "progressive-lsp-index" }
+progressive-lsp-resolve = { path = "progressive-lsp-resolve" }
+progressive-lsp-workspace = { path = "progressive-lsp-workspace" }
+progressive-lsp-lang-java = { path = "progressive-lsp-lang-java" }
 prost = "0.13"
+tree-sitter = "0.24"
+tree-sitter-java = "0.23"
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -42,10 +54,20 @@ description = "Composition root: serve + install"
 [dependencies]
 progressive-lsp-control.workspace = true
 progressive-lsp-core.workspace = true
+progressive-lsp-index.workspace = true
 progressive-lsp-install.workspace = true
+progressive-lsp-lang-java = { workspace = true, optional = true }
 progressive-lsp-plugin.workspace = true
 progressive-lsp-protocol.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-watch.workspace = true
+progressive-lsp-workspace.workspace = true
 thiserror.workspace = true
+tree-sitter.workspace = true
+
+[features]
+default = ["lang-java"]
+lang-java = ["dep:progressive-lsp-lang-java"]
 
 [dev-dependencies]
 serde_json.workspace = true

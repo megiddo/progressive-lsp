@@ -1,15 +1,23 @@
 //! LSP Facade: JSON-RPC in, domain out. FilesSince is not a `$/` method.
 
 pub mod framing;
+pub mod intelligence;
 pub mod rpc;
 
 use std::io::{BufRead, Write};
+use std::sync::Arc;
 
 use progressive_lsp_core::InitializeFailed;
+use progressive_lsp_resolve::{QueryKind, ResolveQuery};
 use serde_json::{json, Value};
 
 use crate::framing::{read_message, write_message};
+use crate::intelligence::{
+    file_id_from_uri, position_from_params, result_to_lsp, uri_from_params, SEMANTIC_TOKEN_TYPES,
+};
 use crate::rpc::{JsonRpcError, JsonRpcRequest};
+
+pub use intelligence::LspIntelligence;
 
 pub const SERVER_NAME: &str = "progressive-lsp";
 pub const SERVER_VERSION: &str = "0.0.0";
@@ -42,16 +50,32 @@ impl ProgressiveLspCap {
 }
 
 /// JSON-RPC facade over stdio (or any reader/writer).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LspFacade {
     cap: ProgressiveLspCap,
+    intelligence: Option<Arc<dyn LspIntelligence>>,
+}
+
+impl std::fmt::Debug for LspFacade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LspFacade")
+            .field("cap", &self.cap)
+            .field("has_intelligence", &self.intelligence.is_some())
+            .finish()
+    }
 }
 
 impl LspFacade {
     pub fn new(socket: Option<String>, mux: bool) -> Self {
         Self {
             cap: ProgressiveLspCap::new(socket, mux),
+            intelligence: None,
         }
+    }
+
+    pub fn with_intelligence(mut self, intel: Arc<dyn LspIntelligence>) -> Self {
+        self.intelligence = Some(intel);
+        self
     }
 
     pub fn cap(&self) -> &ProgressiveLspCap {
@@ -69,11 +93,12 @@ impl LspFacade {
                 "hoverProvider": true,
                 "semanticTokensProvider": {
                     "legend": {
-                        "tokenTypes": [],
+                        "tokenTypes": SEMANTIC_TOKEN_TYPES,
                         "tokenModifiers": []
                     },
                     "full": true
                 },
+                "workspace": { "workspaceFolders": { "supported": true } },
                 "experimental": {
                     "progressiveLsp": self.cap.to_json()
                 }
@@ -90,12 +115,89 @@ impl LspFacade {
             "initialize" => Some(rpc::success(req.id.clone(), self.initialize_result())),
             "shutdown" => Some(rpc::success(req.id.clone(), Value::Null)),
             "exit" | "initialized" => None,
+            "textDocument/didOpen" => {
+                if let Some(intel) = &self.intelligence {
+                    let uri = uri_from_params(&req.params);
+                    let text = req.params["textDocument"]["text"].as_str().unwrap_or("");
+                    let lang = req.params["textDocument"]["languageId"]
+                        .as_str()
+                        .unwrap_or("");
+                    intel.did_open(&uri, lang, text);
+                }
+                None
+            }
+            "textDocument/didChange" => {
+                if let Some(intel) = &self.intelligence {
+                    let uri = uri_from_params(&req.params);
+                    let text = req.params["contentChanges"]
+                        .as_array()
+                        .and_then(|a| a.last())
+                        .and_then(|c| c.get("text"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    intel.did_change(&uri, text);
+                }
+                None
+            }
+            "textDocument/didClose" => {
+                if let Some(intel) = &self.intelligence {
+                    intel.did_close(&uri_from_params(&req.params));
+                }
+                None
+            }
+            "textDocument/definition"
+            | "textDocument/references"
+            | "textDocument/hover"
+            | "textDocument/documentSymbol"
+            | "textDocument/typeDefinition"
+            | "textDocument/implementation"
+            | "workspace/symbol"
+            | "textDocument/semanticTokens/full" => {
+                Some(rpc::success(req.id.clone(), self.dispatch_intelligence(req)))
+            }
             other if req.id.is_some() => Some(rpc::failure(
                 req.id.clone(),
                 JsonRpcError::method_not_found(other),
             )),
             _ => None,
         }
+    }
+
+    fn dispatch_intelligence(&self, req: &JsonRpcRequest) -> Value {
+        let Some(intel) = &self.intelligence else {
+            return if req.method == "textDocument/hover" {
+                Value::Null
+            } else if req.method == "textDocument/semanticTokens/full" {
+                json!({ "data": [] })
+            } else {
+                json!([])
+            };
+        };
+        if req.method == "textDocument/semanticTokens/full" {
+            let uri = uri_from_params(&req.params);
+            return json!({ "data": intel.semantic_tokens(&uri) });
+        }
+        let kind = match req.method.as_str() {
+            "textDocument/definition" => QueryKind::Definition,
+            "textDocument/references" => QueryKind::References,
+            "textDocument/hover" => QueryKind::Hover,
+            "textDocument/documentSymbol" => QueryKind::DocumentSymbol,
+            "textDocument/typeDefinition" => QueryKind::TypeDefinition,
+            "textDocument/implementation" => QueryKind::Implementation,
+            "workspace/symbol" => QueryKind::WorkspaceSymbol,
+            _ => QueryKind::Definition,
+        };
+        let uri = uri_from_params(&req.params);
+        let q = if kind == QueryKind::WorkspaceSymbol {
+            ResolveQuery::workspace_symbol(req.params["query"].as_str().unwrap_or(""))
+        } else {
+            ResolveQuery::new(
+                file_id_from_uri(&uri),
+                position_from_params(&req.params),
+                kind,
+            )
+        };
+        result_to_lsp(kind, &intel.resolve(&q))
     }
 
     fn write_json<W: Write>(writer: &mut W, value: &Value) -> Result<(), InitializeFailed> {
@@ -215,7 +317,7 @@ mod tests {
         let req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
             id: Some(json!(3)),
-            method: "textDocument/definition".into(),
+            method: "textDocument/codeAction".into(),
             params: Value::Null,
         };
         let resp = facade.handle_request(&req).unwrap();
@@ -223,7 +325,57 @@ mod tests {
         assert!(resp["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("textDocument/definition"));
+            .contains("textDocument/codeAction"));
+        let def = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(4)),
+            method: "textDocument/definition".into(),
+            params: json!({"textDocument":{"uri":"file:///a.java"},"position":{"line":0,"character":0}}),
+        };
+        let def_resp = facade.handle_request(&def).unwrap();
+        assert!(def_resp["result"].is_array());
+        let hover = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(5)),
+            method: "textDocument/hover".into(),
+            params: json!({}),
+        };
+        assert!(facade.handle_request(&hover).unwrap()["result"].is_null());
+        let toks = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(6)),
+            method: "textDocument/semanticTokens/full".into(),
+            params: json!({}),
+        };
+        assert_eq!(
+            facade.handle_request(&toks).unwrap()["result"]["data"],
+            json!([])
+        );
+        assert!(facade
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: None,
+                method: "textDocument/didOpen".into(),
+                params: json!({"textDocument":{"uri":"u","languageId":"java","text":"class A {}"}}),
+            })
+            .is_none());
+        assert!(facade
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: None,
+                method: "textDocument/didChange".into(),
+                params: json!({"textDocument":{"uri":"u"},"contentChanges":[{"text":"class B {}"}]}),
+            })
+            .is_none());
+        assert!(facade
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: None,
+                method: "textDocument/didClose".into(),
+                params: json!({"textDocument":{"uri":"u"}}),
+            })
+            .is_none());
+        let _ = format!("{:?}", facade);
     }
 
     #[test]
@@ -274,6 +426,113 @@ mod tests {
         assert_eq!(texts.len(), 1);
         let resp: Value = serde_json::from_slice(&texts[0]).unwrap();
         assert_eq!(resp["error"]["code"], -32700);
+    }
+
+    struct StubIntel;
+
+    impl LspIntelligence for StubIntel {
+        fn resolve(&self, q: &progressive_lsp_resolve::ResolveQuery) -> progressive_lsp_resolve::ResolveResult {
+            use progressive_lsp_core::Tier;
+            use progressive_lsp_resolve::{LspLocation, Range, ResolveResult};
+            if q.kind == progressive_lsp_resolve::QueryKind::Hover {
+                let mut r = ResolveResult::empty(Tier::Syntax);
+                r.hover = Some(progressive_lsp_resolve::Hover {
+                    name: "n".into(),
+                    arity: Some(0),
+                });
+                return r;
+            }
+            ResolveResult::locations(
+                Tier::Syntax,
+                vec![LspLocation::new("file:///z", Range::default(), Tier::Syntax)],
+            )
+        }
+        fn did_open(&self, _uri: &str, _language_id: &str, _text: &str) {}
+        fn did_change(&self, _uri: &str, _text: &str) {}
+        fn did_close(&self, _uri: &str) {}
+        fn semantic_tokens(&self, _uri: &str) -> Vec<u32> {
+            vec![0, 0, 1, 0, 0]
+        }
+    }
+
+    #[test]
+    fn intelligence_dispatches_methods() {
+        let facade = LspFacade::new(None, false).with_intelligence(Arc::new(StubIntel));
+        let def = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "textDocument/definition".into(),
+            params: json!({"textDocument":{"uri":"file:///z"},"position":{"line":0,"character":0}}),
+        };
+        let resp = facade.handle_request(&def).unwrap();
+        assert_eq!(resp["result"][0]["uri"], "file:///z");
+        let hover = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(2)),
+            method: "textDocument/hover".into(),
+            params: json!({}),
+        };
+        assert_eq!(
+            facade.handle_request(&hover).unwrap()["result"]["contents"]["value"],
+            "n(0)"
+        );
+        let ws = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(3)),
+            method: "workspace/symbol".into(),
+            params: json!({"query": "z"}),
+        };
+        assert!(facade.handle_request(&ws).unwrap()["result"].is_array());
+        let toks = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(4)),
+            method: "textDocument/semanticTokens/full".into(),
+            params: json!({"textDocument":{"uri":"file:///z"}}),
+        };
+        assert_eq!(
+            facade.handle_request(&toks).unwrap()["result"]["data"][0],
+            0
+        );
+        assert!(facade
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: None,
+                method: "textDocument/didOpen".into(),
+                params: json!({"textDocument":{"uri":"u","languageId":"java","text":"x"}}),
+            })
+            .is_none());
+        assert!(facade
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: None,
+                method: "textDocument/didChange".into(),
+                params: json!({"textDocument":{"uri":"u"},"contentChanges":[{"text":"y"}]}),
+            })
+            .is_none());
+        assert!(facade
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: None,
+                method: "textDocument/didClose".into(),
+                params: json!({"textDocument":{"uri":"u"}}),
+            })
+            .is_none());
+        for method in [
+            "textDocument/references",
+            "textDocument/documentSymbol",
+            "textDocument/typeDefinition",
+            "textDocument/implementation",
+        ] {
+            let r = facade
+                .handle_request(&JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: Some(json!(9)),
+                    method: method.into(),
+                    params: json!({"textDocument":{"uri":"file:///z"},"position":{"line":0,"character":0}}),
+                })
+                .unwrap();
+            assert!(r.get("result").is_some(), "{method}");
+        }
     }
 
     #[test]

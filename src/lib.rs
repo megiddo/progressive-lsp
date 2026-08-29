@@ -8,8 +8,11 @@ use progressive_lsp_core::{apply_worktree_excludes, PrefixLayout};
 use progressive_lsp_install::{
     sha256, sha256_file, ExplicitPacks, Installer, LocalFs, Manifest, PackSelector,
 };
-use progressive_lsp_plugin::{register_builtins, PluginRegistry};
+use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
+
+mod session;
+pub use session::{register_languages, WorkspaceSession};
 
 pub const USAGE: &str = "\
 progressive-lsp serve [--prefix DIR] [--control-socket PATH] [--control-fd N] [--mux]
@@ -142,7 +145,7 @@ fn require_raw(flag: &str, args: &[OsString], i: &mut usize) -> Result<String, C
 
 pub fn build_registry() -> PluginRegistry {
     let mut registry = PluginRegistry::new();
-    register_builtins(&mut registry);
+    register_languages(&mut registry);
     registry
 }
 
@@ -300,11 +303,20 @@ mod tests {
     fn registry_is_injected_not_global() {
         let a = build_registry();
         let b = build_registry();
-        assert!(a.is_empty());
-        assert!(b.is_empty());
+        #[cfg(feature = "lang-java")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("java")).is_ok());
+            assert_eq!(a.get(&progressive_lsp_core::LanguageId::new("java")).unwrap().grammar_id(), "tree-sitter-java");
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("php")).is_err());
+        }
         for slot in KNOWN_LANGUAGE_SLOTS {
+            if *slot == "java" {
+                continue;
+            }
             assert!(a.get(&progressive_lsp_core::LanguageId::new(*slot)).is_err());
         }
+        assert_eq!(a.contains(&progressive_lsp_core::LanguageId::new("java")), cfg!(feature = "lang-java"));
+        let _ = b.registered_ids();
     }
 
     #[test]
