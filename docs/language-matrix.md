@@ -32,7 +32,7 @@ Exact compiler/grammar git SHAs belong in pack `manifest.json` / lockfiles, **no
 
 **M5 fixtures (2026-08 window):** `fixtures/matrix/<lang>/<LATEST|LATEST-1|LATEST-2>/` holds representative syntax (not a full stdlib) for every row above. TypeScript pins in-tree are 5.9 / 5.8 / 5.7. CSS/HTML/Zig use `current` / `prior` / `prior2` labels where the matrix does not name a spec number. `fixtures/matrix/mixed/` is one workspace mixing Java 26, Python 3.12, Rust 2021, PHP 8.3, JS ES2024, Go 1.25, C11. `fixtures/lag/` has newer-than-window / unparsed samples for Java, PHP, JavaScript, Python, Rust, and C. `cargo test` on Darwin stands in for matrix CI green; Linux CI must run the same fixtures.
 
-**Java TSG (M2.3):** GitHub archived [stack-graphs](https://github.com/github/stack-graphs) (2025-09-09). Vendoring the archived C/Rust tree under `third_party/stack-graphs` is impractical on this milestone and would not beat name/arity/import/hierarchy/scope on the in-tree heuristic fixture. **Heuristics are the shipped T2 Strategy.** `StackGraphResolver` remains a `NotReady` Strategy slot. No `third_party/stack-graphs` vendor.
+**Java TSG (PD4):** GitHub archived [stack-graphs](https://github.com/github/stack-graphs) (2025-09-09). Pin `https://github.com/github/stack-graphs.git` @ `fcb7705d5b38ae13b3665a9b2c882e5a97243d44` (Cargo git dep / fetch-at-SHA). No `third_party/` dump. Fetch succeeded. `build_stack_graph_into` panics on workspace `tree-sitter-java` 0.23.5 vs pin `=0.23.4` — stitch column is `skip_runtime`. **Heuristics remain the default T2.** `[t2] java = "stack-graphs"` is opt-in. Results: [spikes/t2-bakeoff-results.md](spikes/t2-bakeoff-results.md).
 
 ## Upstream lag policy
 
@@ -43,7 +43,7 @@ Exact compiler/grammar git SHAs belong in pack `manifest.json` / lockfiles, **no
 
 ## stack-graphs
 
-GitHub **archived** the repo (2025-09-09). **Vendor a fork** under `third_party/stack-graphs/`. Shipped TSG exists for Java, JS, TS, Python (not C/C++/C#/PHP/HTML/CSS). TSG is **one T2 Strategy**. **Heuristic resolvers are the default.** Keep TSG only if it wins on correctness and memory (same adoption gate as the original Java strategy).
+GitHub **archived** the repo (2025-09-09). Pin git URL + SHA (not a vendor dump). Shipped TSG exists for Java, JS, TS, Python (not C/C++/C#/PHP/HTML/CSS). TSG is **one T2 Strategy**. **Heuristic resolvers are the default.** Keep TSG as default only if it wins on correctness and memory (PD4 bake-off: it did not; see [spikes/t2-bakeoff-results.md](spikes/t2-bakeoff-results.md)).
 
 ## Forbidden engines (never “better” in v1)
 

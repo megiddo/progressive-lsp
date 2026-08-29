@@ -1,7 +1,7 @@
 # Spike: T2 Strategy bake-off (heuristics vs stack-graphs vs others)
 
-**Status:** follow-up, **not** done in M2.  
-**Default until this spike ships a winner that beats default:** the **heuristic** T2 already in tree (`HeuristicResolver` / Java name-arity-import-hierarchy-scope, plus the other language T2 heuristics).
+**Status:** done on `pd4`. Results: [t2-bakeoff-results.md](t2-bakeoff-results.md).  
+**Default until this spike ships a winner that beats default:** the **heuristic** T2 already in tree (`HeuristicResolver` / Java name-arity-import-hierarchy-scope, plus the other language T2 heuristics). PD4 measured; winner rule did **not** fire.
 
 M2.3 recorded “heuristics win on the fixture.” That was **not** a head-to-head. Stack-graphs never ran. Heuristics scored ≥95% on `fixtures/java-heuristic/` (20 cases written for those heuristics). `StackGraphResolver` is a `NotReady` stub. This spike is the missing measurement **and** the plugin seam so a better T2 can replace heuristics without forking go-to-definition.
 
@@ -74,12 +74,12 @@ Not Java-only. Each is another Strategy impl, same pick rule:
 
 ## Ship bar
 
-- [ ] `T2Strategy` (or existing `Resolver` Strategy) selectable per language from config; default `heuristic`.
-- [ ] `StackGraphResolver` actually loads pinned TSG for at least Java (not `NotReady` stub) when `t2.java = "stack-graphs"`.
-- [ ] Bake-off table: fixture A, fixture B, RSS, wall time — heuristics vs TSG.
-- [ ] Default in `config.toml` / docs unchanged unless the winner rule fires.
-- [ ] Unit tests: fake T2 Strategy; scripts still cannot register definition.
-- [ ] No `third_party/` dump unless the pin URL dies.
+- [x] `T2Strategy` (or existing `Resolver` Strategy) selectable per language from config; default `heuristic`.
+- [x] `StackGraphResolver` actually loads pinned TSG for at least Java (not `NotReady` stub) when `t2.java = "stack-graphs"`.
+- [x] Bake-off table: fixture A, fixture B, RSS, wall time — heuristics vs TSG (stitch column `skip_runtime`; see results).
+- [x] Default in `config.toml` / docs unchanged unless the winner rule fires.
+- [x] Unit tests: fake T2 Strategy; scripts still cannot register definition.
+- [x] No `third_party/` dump unless the pin URL dies.
 
 ## Out of scope
 

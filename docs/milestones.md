@@ -312,11 +312,29 @@ Java / Python+ty / TypeScript+tsgo progressive client. Envelope + FilesSince / W
 
 ## PD4 — T2 Strategy bake-off
 
-**Status:** not started. Branch `pd4` on `pd3`.
+**Status: SIGNED OFF** on branch `pd4`. Post-dev stack (PD0–PD4) is complete. There is no PD5 in the plan.
 
-Plugin seam: T2 Strategy selectable per language; **default remains heuristics**. Pin stack-graphs by git SHA; measure vs held-out corpus. Spec: [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md).
+Plugin seam: T2 Strategy selectable per language; **default remains heuristics**. Pin stack-graphs by git SHA; measure vs held-out corpus. Spec: [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md). Results: [spikes/t2-bakeoff-results.md](spikes/t2-bakeoff-results.md).
 
-**Exit:** seam + config pick; bake-off table committed (or explicit “TSG not default” with numbers). Default `heuristic` unless winner rule fires.
+**Exit:** seam + config pick; bake-off table committed. Default `heuristic` (winner rule did not fire). TSG stitch column is `skip_runtime` (pin fetched; `build_stack_graph_into` panics on tree-sitter-java 0.23.5 vs pin `=0.23.4`).
+
+**Sign-off checklist (PD4)**
+
+- [x] Exit criteria for this WP met (T2 config pick; `StackGraphResolver` loads pinned Java TSG when selected; bake-off table; default stays heuristic)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **95.24% lines**
+- [x] 80% mutants on listed crates that changed — core **141 caught / 147 scored (95.9%)**, 8 unviable; resolve **117 caught / 141 scored (83.0%)**, 27 unviable; lang-java **82 caught / 94 scored (87.2%)**, 10 unviable
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `T2Backend` / `T2Table` / `T2Strategy` / `TsgPin` / `TsgLoadState`
+- [x] Docs in this tree updated if a locked decision was refined (heuristics remain default; plugin-sdk + language-matrix + spike agree)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD4 unit gate on macOS.
+- Stack-graphs pin `https://github.com/github/stack-graphs.git` @ `fcb7705d5b38ae13b3665a9b2c882e5a97243d44` fetched. No `third_party/` dump.
+- Optional `--features t2-stack-graphs` compiles the runtime. Slim default omits it. Do not treat Darwin RSS as a musl green.
+- Post-dev stack ends here. Do not open a `pd5` branch.
 
 ## Later post-v1 (not in PD0–PD4)
 

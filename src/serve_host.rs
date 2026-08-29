@@ -65,7 +65,7 @@ impl ServeHost {
     pub fn new(layout: PrefixLayout) -> Result<Self, ConfigError> {
         let config = load_config_file(&layout.config_path())?;
         Ok(Self {
-            session: WorkspaceSession::with_prefix(&layout),
+            session: WorkspaceSession::with_prefix_and_t2(&layout, config.t2_for("java")),
             layout,
             config: Mutex::new(config),
             disk_watch: ServeDiskWatch::new(),
@@ -219,6 +219,9 @@ impl ServeHost {
         }
         if overlay.prefix.is_some() {
             file.prefix = overlay.prefix.clone();
+        }
+        if overlay.t2.is_some() {
+            file.t2 = overlay.t2.clone();
         }
         let live = Config::empty().merge(&file);
         std::fs::write(&dest, live.to_toml()).map_err(|e| e.to_string())
@@ -817,6 +820,20 @@ mod tests {
         .unwrap();
         let snap = host.get_config(&GetConfigRequest {});
         assert!(snap.toml.contains("rust") || snap.toml.contains("packs"));
+        assert!(host
+            .set_config(&SetConfigRequest {
+                patch_toml: "[t2]\njava = \"stack-graphs\"\n".into(),
+            })
+            .status
+            .unwrap()
+            .is_ok());
+        let after_t2 = host.get_config(&GetConfigRequest {});
+        assert!(
+            after_t2.toml.contains("stack-graphs"),
+            "{}",
+            after_t2.toml
+        );
+        assert_eq!(host.merged_config().t2_for("java"), progressive_lsp_core::T2Backend::StackGraphs);
         assert!(host
             .set_config(&SetConfigRequest {
                 patch_toml: "[[".into(),

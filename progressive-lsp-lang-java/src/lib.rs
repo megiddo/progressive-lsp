@@ -1,5 +1,7 @@
 //! Java LanguageFactory and T1 Tree-sitter intelligence. No JDK. No JVM.
 
+#[cfg(test)]
+mod bakeoff;
 pub mod extract;
 pub mod factory;
 #[cfg(test)]

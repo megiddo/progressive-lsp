@@ -10,10 +10,13 @@ description = "Java LanguageFactory and T1 Tree-sitter resolver (no JDK)"
 progressive-lsp-core.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-plugin.workspace = true
-progressive-lsp-resolve.workspace = true
+progressive-lsp-resolve = { workspace = true }
 progressive-lsp-workspace.workspace = true
 tree-sitter.workspace = true
 tree-sitter-java.workspace = true
+
+[features]
+t2-stack-graphs = ["progressive-lsp-resolve/t2-stack-graphs"]
 
 [dev-dependencies]
 tempfile.workspace = true

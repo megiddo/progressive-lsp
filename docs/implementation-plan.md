@@ -185,10 +185,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## PD4 (`pd4` branch)
 
+**Status: SIGNED OFF.** Post-dev stack complete. There is no PD5.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| PD4.1 | T2 Strategy config pick; default heuristic | PD3 | Seam only; no default flip without bake-off |
-| PD4.2 | Pin stack-graphs git SHA; bake-off table | PD4.1 | [docs/spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md) |
+| PD4.1 | T2 Strategy config pick; default heuristic | PD3 | **SIGNED OFF.** `[t2] java = "heuristic"` default; tests inject fake T2 |
+| PD4.2 | Pin stack-graphs git SHA; bake-off table | PD4.1 | **SIGNED OFF.** Pin `fcb7705`; winner rule did not fire; [t2-bakeoff-results.md](spikes/t2-bakeoff-results.md) |
 
 ## Spikes (do not skip hygiene on merge)
 

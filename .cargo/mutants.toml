@@ -8,4 +8,16 @@ exclude_re = [
     "impl crate::tree_sitter::SymbolIndex for EmptyIndex",
     # Linux-only; not compiled on Darwin host mutants.
     "fn linux_vm_rss_bytes",
+    # Fetch-at-SHA / bake-off (network + long); not a unit invariant.
+    "fetch_git_sha",
+    "fetch_junit4",
+    "t2_bakeoff_records_heuristic_and_attempts_tsg",
+    "copy_tree",
+    # Optional --features t2-stack-graphs runtime (not in default tests).
+    "tsg_runtime",
+    # Position/byte helpers (same class as test line_col).
+    "ident_at",
+    "find_decl",
+    "range_of_byte",
+    "is_ident_byte",
 ]

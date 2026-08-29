@@ -9,7 +9,7 @@ pub mod prefix;
 pub mod rss;
 
 pub use clock::{ClockPort, FakeClock, SystemClock};
-pub use config::{Config, ConfigLoad, ConfigOverlay};
+pub use config::{Config, ConfigLoad, ConfigOverlay, T2Backend, T2Table};
 pub use error::{
     ConfigError, EngineError, EngineNotReady, InitializeFailed, InstallError, ScriptAbort,
     ScriptSandbox, StaticLinkError, UnsupportedLanguage, WatchOverflow,

@@ -3,12 +3,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use progressive_lsp_core::{FakeClock, InitializeFailed, PackageId, PrefixLayout, Tier};
+use progressive_lsp_core::{FakeClock, InitializeFailed, PackageId, PrefixLayout, T2Backend, Tier};
 use progressive_lsp_engine::EngineSupervisor;
 use progressive_lsp_index::{IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex};
 use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
 use progressive_lsp_resolve::{
-    HeuristicResolver, ResolveQuery, ResolveResult, Resolver, ResolverChain, TreeSitterResolver,
+    ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy, TreeSitterResolver,
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
@@ -78,9 +78,13 @@ impl WorkspaceSession {
     }
 
     pub fn with_prefix(layout: &PrefixLayout) -> Self {
+        Self::with_prefix_and_t2(layout, T2Backend::Heuristic)
+    }
+
+    pub fn with_prefix_and_t2(layout: &PrefixLayout, t2: T2Backend) -> Self {
         let index = SharedIndex::new(IndexService::with_prefix(layout));
         let chain = ResolverChain::new(vec![
-            Box::new(HeuristicResolver::new(Arc::new(index.clone()))),
+            T2Strategy::from_backend(t2).build(Arc::new(index.clone())),
             Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
         ]);
         Self::new(index, chain)
@@ -89,7 +93,7 @@ impl WorkspaceSession {
     pub fn java_default() -> Self {
         let index = SharedIndex::new(IndexService::new());
         let chain = ResolverChain::new(vec![
-            Box::new(HeuristicResolver::new(Arc::new(index.clone()))),
+            T2Strategy::from_backend(T2Backend::Heuristic).build(Arc::new(index.clone())),
             Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
         ]);
         Self::new(index, chain)
@@ -827,7 +831,7 @@ mod tests {
         let prefix = tempfile::tempdir().unwrap();
         let layout = PrefixLayout::from_path(prefix.path());
         layout.ensure_dirs().unwrap();
-        let session = WorkspaceSession::with_prefix(&layout);
+        let session = WorkspaceSession::with_prefix_and_t2(&layout, T2Backend::Heuristic);
         session.index_path(Path::new("A.java"), "class A {}");
         assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
         assert!(!workspace.path().join(".progressivelsp/cache").exists());
