@@ -205,6 +205,7 @@ mod tests {
     fn ten_thousand_events_become_one_batch() {
         let (clock, mut c, mut fake) = setup(50, 20_000);
         fake.start().unwrap();
+        let started = std::time::Instant::now();
         for i in 0..10_000 {
             fake.inject_one(format!("f{i}.java"), WatchKind::Modify);
         }
@@ -223,6 +224,11 @@ mod tests {
         assert!(c.flush_due().is_none());
         assert_eq!(c.last_batch().events.len(), 10_000);
         assert_eq!(c.window_ms(), 50);
+        let elapsed_us = started.elapsed().as_micros();
+        assert!(
+            elapsed_us < 2_000_000,
+            "10k coalesce {elapsed_us}µs exceeds Darwin sample gate (2s)"
+        );
     }
 
     #[test]
@@ -318,6 +324,41 @@ mod tests {
         let clock = Arc::new(FakeClock::at_unix_ms(0));
         let mut c = WatchCoalescer::new(clock);
         assert!(c.flush_due().is_none());
+    }
+
+    #[test]
+    fn burst_10k_overflow_then_files_since_catch_up() {
+        let (clock, mut c, mut fake) = setup(50, 4_096);
+        fake.start().unwrap();
+        for i in 0..10_000 {
+            fake.inject_one(format!("burst{i}.java"), WatchKind::Modify);
+        }
+        let started = std::time::Instant::now();
+        c.poll_backend(&mut fake);
+        assert!(c.last_batch().overflow);
+        assert!(c.last_batch().need_rescan);
+        let fs = c.files_since(&FilesSinceRequest {
+            since: Some(files_since_request::Since::SinceGeneration(0)),
+        });
+        assert!(fs.truncated, "overflow must set FilesSince truncated");
+        assert_eq!(fs.generation, 1);
+        c.ingest([WatchEvent::new("caught-up.java", WatchKind::Modify)]);
+        clock.advance_ms(50);
+        let batch = c.flush_due().expect("catch-up window");
+        assert!(!batch.overflow);
+        assert_eq!(batch.events[0].path, "caught-up.java");
+        let after = c.files_since(&FilesSinceRequest {
+            since: Some(files_since_request::Since::SinceGeneration(batch.generation)),
+        });
+        assert!(!after.truncated);
+        assert!(after.paths.is_empty());
+        let remaining = c.files_since(&FilesSinceRequest { since: None });
+        assert!(remaining.paths.contains(&"caught-up.java".into()));
+        let elapsed_us = started.elapsed().as_micros();
+        assert!(
+            elapsed_us < 5_000_000,
+            "10k burst+catch-up {elapsed_us}µs exceeds Darwin sample gate (5s)"
+        );
     }
 
     #[test]

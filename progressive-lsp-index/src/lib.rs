@@ -6,11 +6,14 @@ pub mod ingest;
 pub mod priority;
 pub mod service;
 
-pub use cache::{CacheKey, IndexCache};
+pub use cache::{sanitize_component, CacheKey, IndexCache};
 pub use dirty::DirtySet;
 pub use ingest::{IngestReport, PackageIngest, ProgressKind, WorkDoneProgress};
 pub use priority::{IndexClass, PriorityIndex};
-pub use service::{IndexedFile, InputChange, LanguageIndexer, IndexService, SharedIndex};
+pub use service::{
+    count_error_nodes, tree_unparsed, IndexedFile, InputChange, LanguageIndexer, IndexService,
+    SharedIndex,
+};
 
 use progressive_lsp_core::FileId;
 use progressive_lsp_resolve::{IndexedSymbol, SymbolIndex};

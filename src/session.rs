@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use progressive_lsp_core::{FakeClock, InitializeFailed, PackageId, Tier};
+use progressive_lsp_core::{FakeClock, InitializeFailed, PackageId, PrefixLayout, Tier};
 use progressive_lsp_engine::EngineSupervisor;
 use progressive_lsp_index::{IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex};
 use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
@@ -75,6 +75,15 @@ impl WorkspaceSession {
     pub fn with_scripts(self, host: ScriptHost) -> Self {
         *self.scripts.lock().expect("scripts") = Some(host);
         self
+    }
+
+    pub fn with_prefix(layout: &PrefixLayout) -> Self {
+        let index = SharedIndex::new(IndexService::with_prefix(layout));
+        let chain = ResolverChain::new(vec![
+            Box::new(HeuristicResolver::new(Arc::new(index.clone()))),
+            Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
+        ]);
+        Self::new(index, chain)
     }
 
     pub fn java_default() -> Self {
@@ -706,5 +715,18 @@ mod tests {
         assert!(!session.semantic_tokens("file:///t.php").is_empty());
         assert!(!session.semantic_tokens("file:///t.go").is_empty());
         assert!(!session.semantic_tokens("file:///t.zig").is_empty());
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn session_with_prefix_writes_cache_under_prefix_not_worktree() {
+        let workspace = tempfile::tempdir().unwrap();
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let session = WorkspaceSession::with_prefix(&layout);
+        session.index_path(Path::new("A.java"), "class A {}");
+        assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
+        assert!(!workspace.path().join(".progressivelsp/cache").exists());
     }
 }

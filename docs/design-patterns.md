@@ -55,7 +55,10 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer` |
 | `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
-| `IndexCache` | Repository | Same `(grammar, lang, hash)` → skip parse |
+| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only |
+| `CacheKey` | Value object / identity | Path is `sanitize(grammar)/sanitize(lang)/hex(hash)`; `.`/`..` cannot escape the prefix |
+| `IndexedFile.has_error` / `unparsed_note` | Value object | ERROR/MISSING nodes ⇒ note; server stays up, no panic |
+| `sample_rss_bytes` / `rss_sample_label` | Value object | Darwin/Linux host sample; not an allocator-matrix CI-arch winner |
 | `Config` merge | Chain / Builder | Later file wins for keys it sets; unset key falls through |
 | `Installer` | Builder (plan) + Command (apply) | Hash fail → no rename to final path |
 | `ArtifactTransport` | Strategy | `LocalFs` vs consumer SSH; install crate has no SSH types |

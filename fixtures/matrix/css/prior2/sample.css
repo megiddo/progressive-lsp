@@ -1,0 +1,2 @@
+/* LATEST-2: :has() */
+.parent:has(.child) { color: green; }

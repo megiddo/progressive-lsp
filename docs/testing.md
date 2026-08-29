@@ -52,14 +52,21 @@ musl default malloc is **unacceptable**. Go/Zig/C# keep their own heaps (not in 
 
 ## Performance budgets (publish numbers in M5 benches)
 
-| Path | Target |
-|---|---|
-| Open-buffer Tree-sitter reparse | ~10 ms class |
-| T1/T2 `definition` p99 after index | &lt; 50 ms |
-| T2 debounce | 50–100 ms (FakeClock) |
-| 10k watch events | 1 coalesced batch |
-| Core RSS without engines | recorded; engines not charged to core |
-| External-edit burst (10k files) | published budget, M5 |
+| Path | Target | M5 recorded |
+|---|---|---|
+| Open-buffer Tree-sitter reparse | ~10 ms class | **71 µs** Darwin aarch64 sample (`xtask bench-perf`). CI required: still ~10 ms class on the matching arch. |
+| T1/T2 `definition` p99 after index | &lt; 50 ms | **9 µs** Darwin aarch64 sample. CI required: &lt; 50 ms on the matching arch. |
+| T2 debounce | 50–100 ms (FakeClock) | unchanged (FakeClock; no `thread::sleep`) |
+| 10k watch events | 1 coalesced batch | 10k FakeWatcher events → 1 batch; overflow path sets `truncated` then FilesSince catch-up |
+| Core RSS without engines | recorded; engines not charged to core | **~4.0 MiB** peak sample during `bench-perf` (4 194 304 bytes after / 1 966 080 before). Darwin `ps` RSS. **T3 not charged.** |
+| External-edit burst (10k files) | published budget, M5 | **2212 µs** (~2.2 ms) Darwin aarch64 sample to inject+coalesce 10k events (FakeClock). Gate in tests: &lt; 2 s. Overflow+catch-up gate: &lt; 5 s. |
+
+**Methodology vs CI-arch allocator winners**
+
+- These rows are **Darwin host samples** from `xtask bench-perf` (macos/aarch64, Homebrew rustc). They are **not** `xtask bench-alloc` cell winners.
+- [Allocator bake-off](#allocator-bake-off-xtask-bench-alloc) still records winners **only** from the matching CI arch job. Empty cells stay mimalloc placeholders. Do not copy laptop RSS/p99 into `allocator-matrix.toml`.
+- Linux CI must re-run the same benches/fixtures on `x86_64`/`aarch64` × `musl`/`glibc-static` before treating a number as a matrix winner.
+- `cargo test` on Darwin is the stand-in for “matrix CI green.” Linux CI must run `fixtures/matrix/` and `fixtures/lag/` on the matching arch.
 
 T3 latency is per-engine and not a core fail if ty is slow.
 

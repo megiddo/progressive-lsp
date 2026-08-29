@@ -1,0 +1,5 @@
+/* current: nesting + @layer */
+@layer base {
+  :root { color: canvastext; }
+}
+.card { & h1 { color: red; } }

@@ -118,13 +118,15 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M5 (`m5` branch)
 
+**Status: SIGNED OFF.** Do not open `m6` until this table stays signed off. No dist tarballs, conformance dashboard, or `on_install_verify` productization on this branch.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M5.1 | Content-addressed index cache | M2.1 | never in git worktree |
-| M5.2 | LATEST+2 fixtures + mixed workspace | M4 languages as landed | [language-matrix.md](language-matrix.md) |
-| M5.3 | Burst + FilesSince overflow catch-up | M1.2 | 10k files budget |
-| M5.4 | Lag fixtures (newer syntax, no panic) | M5.2 | |
-| M5.5 | RSS / p99 gates recorded | M5.1 | T3 not charged to core |
+| M5.1 | Content-addressed index cache | M2.1 | **SIGNED OFF.** `$PREFIX/cache/`; tests inject prefix |
+| M5.2 | LATEST+2 fixtures + mixed workspace | M4 languages as landed | **SIGNED OFF.** [language-matrix.md](language-matrix.md) 2026-08 window |
+| M5.3 | Burst + FilesSince overflow catch-up | M1.2 | **SIGNED OFF.** 10k FakeWatcher; truncated tested |
+| M5.4 | Lag fixtures (newer syntax, no panic) | M5.2 | **SIGNED OFF.** Java/PHP/JS/Python/Rust/C |
+| M5.5 | RSS / p99 gates recorded | M5.1 | **SIGNED OFF.** Darwin samples; T3 not charged to core. Mutants: index 82.7%, watch 98.0%, core 88.0% |
 
 ## M6 (`m6` branch)
 

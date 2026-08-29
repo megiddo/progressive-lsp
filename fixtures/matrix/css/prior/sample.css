@@ -1,0 +1,3 @@
+/* LATEST-1: container queries */
+.wrap { container-type: inline-size; }
+@container (min-width: 20em) { .item { color: blue; } }

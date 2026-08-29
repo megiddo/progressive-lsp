@@ -4,6 +4,7 @@ mod allocator;
 mod check_static;
 mod dist;
 mod musl;
+mod perf;
 
 use std::env;
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "musl" => musl::run(&args[1..]),
         "check-static" => check_static::run(&args[1..]),
         "bench-alloc" => allocator::run(&args[1..]),
+        "bench-perf" => perf::run(&args[1..]),
         "dist" => dist::run(&args[1..]),
         "help" | "-h" | "--help" => {
             print_help();
@@ -37,6 +39,7 @@ fn print_help() {
 xtask musl [--target TRIPLE] [--both]
 xtask check-static <ELF>...
 xtask bench-alloc
+xtask bench-perf
 xtask dist [--slim|--full|--pack slim|full|python,rust,...] --dest DIR
 "
     );

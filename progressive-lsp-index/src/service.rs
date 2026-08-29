@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use progressive_lsp_core::{FileId, LanguageId, PackageId, Tier};
+use progressive_lsp_core::{FileId, LanguageId, PackageId, PrefixLayout, Tier};
 use progressive_lsp_resolve::{
     CallSite, GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, TypeEdge,
 };
@@ -117,6 +117,8 @@ pub struct IndexedFile {
     pub generation: u64,
     pub last_parse_us: u128,
     pub incremental: bool,
+    pub has_error: bool,
+    pub unparsed_note: Option<String>,
 }
 
 /// Facade over dirty + priority + cache + trees. Not a god server.
@@ -146,10 +148,14 @@ impl Default for IndexService {
 
 impl IndexService {
     pub fn new() -> Self {
+        Self::with_cache(IndexCache::new())
+    }
+
+    pub fn with_cache(cache: IndexCache) -> Self {
         Self {
             dirty: DirtySet::new(),
             priority: PriorityIndex::new(),
-            cache: IndexCache::new(),
+            cache,
             files: HashMap::new(),
             trees: HashMap::new(),
             symbols: HashMap::new(),
@@ -163,6 +169,12 @@ impl IndexService {
             pending_progress: Vec::new(),
             pending_tier_ready: Vec::new(),
         }
+    }
+
+    /// Disk cache under `$PREFIX/cache/`. Tests inject [`PrefixLayout`].
+    pub fn with_prefix(layout: &PrefixLayout) -> Self {
+        let _ = std::fs::create_dir_all(layout.cache_dir());
+        Self::with_cache(IndexCache::open(layout.cache_dir()))
     }
 
     pub fn generation(&self) -> u64 {
@@ -251,6 +263,24 @@ impl IndexService {
                 existing.generation = gen;
                 existing.last_parse_us = 0;
                 existing.incremental = incremental;
+                existing.hash = hash;
+                existing.source = source.to_string();
+            } else {
+                self.files.insert(
+                    path.to_path_buf(),
+                    IndexedFile {
+                        path: path.to_path_buf(),
+                        language: language.clone(),
+                        grammar: grammar.to_string(),
+                        source: source.to_string(),
+                        hash,
+                        generation: gen,
+                        last_parse_us: 0,
+                        incremental,
+                        has_error: false,
+                        unparsed_note: None,
+                    },
+                );
             }
             let elapsed = started.elapsed().as_micros();
             return elapsed;
@@ -277,6 +307,7 @@ impl IndexService {
         let uri = path_to_uri(path);
         let extracted = indexer.extract(&file_id, &uri, source, &tree);
         let facts = indexer.extract_graph(&file_id, source, &tree);
+        let (has_error, unparsed_note) = tree_unparsed(&tree);
         self.trees.insert(path.to_path_buf(), tree);
         self.symbols.insert(path.to_path_buf(), extracted);
         self.store_graph_facts(path, file_id, facts);
@@ -292,6 +323,8 @@ impl IndexService {
                 generation: gen,
                 last_parse_us: elapsed,
                 incremental,
+                has_error,
+                unparsed_note,
             },
         );
         self.cache.remember(key, gen);
@@ -461,6 +494,31 @@ impl GraphIndex for SharedIndex {
     fn call_at(&self, file: &FileId, pos: Position) -> Option<CallSite> {
         self.lock().call_at(file, pos)
     }
+}
+
+/// Newer-than-window / unparsed syntax → ERROR nodes. Server stays up.
+pub fn tree_unparsed(tree: &Tree) -> (bool, Option<String>) {
+    let n = count_error_nodes(tree.root_node());
+    if n == 0 && !tree.root_node().has_error() {
+        return (false, None);
+    }
+    let n = n.max(1);
+    (
+        true,
+        Some(format!("{n} ERROR/MISSING node(s); syntax unparsed")),
+    )
+}
+
+pub fn count_error_nodes(node: tree_sitter::Node) -> u32 {
+    let mut n = 0u32;
+    if node.is_error() || node.is_missing() {
+        n += 1;
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        n = n.saturating_add(count_error_nodes(child));
+    }
+    n
 }
 
 pub fn path_to_uri(path: &Path) -> String {
@@ -680,5 +738,98 @@ mod tests {
         let _ = GraphIndex::package_of_file(&svc, &file);
         let shared = SharedIndex::new(IndexService::new());
         assert!(GraphIndex::package_tier(&shared, &PackageId::new("x")).is_none());
+    }
+
+    #[test]
+    fn disk_cache_cold_start_skips_parse_under_injected_prefix() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let path = Path::new("Cold.java");
+        let src = "class Cold { void m() {} }";
+        {
+            let mut warm = IndexService::with_prefix(&layout);
+            assert_eq!(warm.cache.disk_dir().unwrap(), layout.cache_dir());
+            let first = warm.index_text(path, src, &JavaIndexer, false);
+            assert!(first > 0 || warm.indexed(path).is_some());
+            assert!(!warm.indexed(path).unwrap().has_error);
+            assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
+        }
+        let mut cold = IndexService::with_prefix(&layout);
+        let skipped = cold.index_text(path, src, &JavaIndexer, false);
+        let rec = cold.indexed(path).unwrap();
+        assert_eq!(rec.last_parse_us, 0);
+        assert_eq!(rec.source, src);
+        assert!(skipped < 5_000, "cache hit should skip Tree-sitter ({skipped}µs)");
+        let miss = IndexService::with_cache(IndexCache::new());
+        assert!(miss.cache.disk_dir().is_none());
+    }
+
+    #[test]
+    fn cache_never_lands_in_git_worktree() {
+        let workspace = tempfile::tempdir().unwrap();
+        let prefix = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(workspace.path())
+            .status()
+            .unwrap();
+        progressive_lsp_core::apply_worktree_excludes(workspace.path()).unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let mut svc = IndexService::with_prefix(&layout);
+        svc.index_text(Path::new("A.java"), "class A {}", &JavaIndexer, false);
+        let overlay_cache = workspace.path().join(".progressivelsp/cache");
+        assert!(
+            !overlay_cache.exists()
+                || overlay_cache.read_dir().map(|d| d.count()).unwrap_or(0) == 0
+        );
+        assert!(!workspace.path().join("cache").exists());
+        assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
+        assert_eq!(svc.cache.disk_dir().unwrap(), layout.cache_dir());
+    }
+
+    #[test]
+    fn newer_syntax_sets_unparsed_note_without_panic() {
+        let mut svc = IndexService::new();
+        let src = "class Lag { void m() { ??? } }";
+        svc.index_text(Path::new("Lag.java"), src, &JavaIndexer, false);
+        let rec = svc.indexed(Path::new("Lag.java")).unwrap();
+        assert!(rec.has_error);
+        assert!(rec
+            .unparsed_note
+            .as_deref()
+            .unwrap()
+            .contains("syntax unparsed"));
+        assert_eq!(svc.file_count(), 1);
+        let clean = "class Ok {}";
+        svc.index_text(Path::new("Ok.java"), clean, &JavaIndexer, false);
+        assert!(!svc.indexed(Path::new("Ok.java")).unwrap().has_error);
+        assert!(svc.indexed(Path::new("Ok.java")).unwrap().unparsed_note.is_none());
+    }
+
+    #[test]
+    fn definition_p99_after_index_is_under_50ms() {
+        use progressive_lsp_resolve::{Position, QueryKind, ResolveQuery, Resolver, TreeSitterResolver};
+        let mut svc = IndexService::new();
+        let path = Path::new("Def.java");
+        let src = "class Def { void target() {} void caller() { target(); } }\n";
+        svc.index_text(path, src, &JavaIndexer, false);
+        let shared = SharedIndex::new(svc);
+        let resolver = TreeSitterResolver::new(std::sync::Arc::new(shared.clone()));
+        let pos = Position::new(0, src.find("target()").unwrap() as u32);
+        let q = ResolveQuery::new(FileId::new("Def.java"), pos, QueryKind::Definition);
+        let mut times = Vec::with_capacity(100);
+        for _ in 0..100 {
+            let t = Instant::now();
+            let _ = resolver.resolve(&q);
+            times.push(t.elapsed().as_micros());
+        }
+        times.sort_unstable();
+        let p99 = times[98];
+        assert!(
+            p99 < 50_000,
+            "T1 definition p99 {p99}µs exceeds 50ms (Darwin sample gate)"
+        );
     }
 }

@@ -6,6 +6,7 @@ pub mod error;
 pub mod git_exclude;
 pub mod ids;
 pub mod prefix;
+pub mod rss;
 
 pub use clock::{ClockPort, FakeClock, SystemClock};
 pub use config::{Config, ConfigLoad, ConfigOverlay};
@@ -18,6 +19,9 @@ pub use git_exclude::{
 };
 pub use ids::{FileId, LanguageId, LanguageVersion, PackageId, Tier, WorkspaceId};
 pub use prefix::{PrefixLayout, PREFIX_DIR_NAME};
+pub use rss::{
+    parse_proc_status_vmrss, parse_ps_rss_kb, rss_from_ps_output, rss_sample_label, sample_rss_bytes,
+};
 
 #[cfg(test)]
 mod tests {
@@ -30,5 +34,7 @@ mod tests {
         let _ = Config::empty();
         let _ = PrefixLayout::from_path("/tmp/prefix");
         assert_eq!(PREFIX_DIR_NAME, OVERLAY_DIR_NAME);
+        assert!(rss_sample_label().contains("allocator"));
+        assert_eq!(parse_ps_rss_kb("1"), Some(1024));
     }
 }

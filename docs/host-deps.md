@@ -59,3 +59,15 @@ Rust pinned toolchain, musl cc, optionally Go/Zig/PHP **in a pinned container** 
 ### M4 engine packs (clangd, tsgo, PHPantom, superhtml, biome, gopls, zls)
 
 `xtask dist` **slim** (default, also `--pack slim` / `--slim`) writes python, rust, phpantom, superhtml, biome stubs. **Full** (`--pack full` / `--full`) adds clangd, tsgo, gopls, zls. Slim is the Java-only default and excludes those heavy packs. csharp-ls is **not** a pack (T1/T2 ceiling). Darwin still writes stubs + `DARWIN_CI_GAP.txt` only. Real musl ELFs remain Linux CI / Docker. Fail closed: do not ship `DT_NEEDED`. One-shot `cmake -DCMAKE_EXPORT_COMPILE_COMMANDS` only if `CMakeLists.txt` already exists — we do not invent a build. Project `go` / `zig` on PATH are project artifacts, not bundled SDKs.
+
+## Complete vs implementation (M0–M5)
+
+What actually shipped through M5, mapped to the three buckets. No M6 dist tarballs / dashboard.
+
+| Bucket | Implementation (this tree) | Forbidden / not shipped |
+|---|---|---|
+| **Our artifacts** | `progressive-lsp` bin (composition root). Engine **packs we name**: ty, rust-analyzer, clangd, tsgo, **PHPantom** (PHP T3 winner), superhtml, biome, gopls, zls. `xtask dist` writes Darwin **stubs** + `DARWIN_CI_GAP.txt`; real static ELFs are Linux CI / Docker. Slim default: python, rust, phpantom, superhtml, biome. Full adds clangd, tsgo, gopls, zls. Index cache files under `$PREFIX/cache/` (content-addressed). | csharp-ls pack (spike failed-closed; C# **T1/T2 ceiling**). Static phpactor (not shipped; PHPantom won). Host `.so` we would ship. Dynamic interpreter / `DT_NEEDED` on a shipped ELF. Cache or bins inside a git worktree. |
+| **Project artifacts** | `compile_commands.json` (read; one-shot cmake only if `CMakeLists.txt` exists). Jars / `.class` as disk facts. `node_modules` **as source**. `Cargo.toml` + rustc **sysroot** / proc-macro `.so` from the **user’s** rustc. `*.csproj` outputs. Project `go` / `zig` on PATH. `composer.json`. Manifests listed in [architecture.md](architecture.md). | We do not ship a JDK, Node, CPython, PHP runtime, Go SDK, or Zig toolchain. Missing project artifact → degrade tier and say so. |
+| **Forbidden as our runtime** | Empty. No libstdc++.so, no libphp, no libjvm, no libnode. | Node, JVM, CPython, host `php` on PATH as T3, any `.so` **we** ship. tsserver, JDT-LS, pylsp, pyright, ruff-as-types, intelephense. |
+
+C# stays T1/T2. Java stays T1/T2 (no T3). PHP T3 is PHPantom when the pack is present; else T2. Darwin `xtask dist` stubs are not musl ELF greens and must not be `check-static` greened. Allocator-matrix cells stay mimalloc placeholders until a matching CI arch job records a winner.

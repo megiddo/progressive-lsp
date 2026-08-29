@@ -123,7 +123,7 @@ Scripts cannot insert a step. Tests: a `FakeResolver` at T2 must not be skipped 
 - `DirtySet`: paths + generation.
 - `PriorityIndex`: open > recent > same package > other > vendor.
 - Per-file: generation, content hash, grammar version.
-- `IndexCache` (Repository): key = `(grammar_ver, language_id, file_hash)` under `$PREFIX/cache/`.
+- `IndexCache` (Repository): key = `(grammar_ver, language_id, file_hash)` under `$PREFIX/cache/`. Disk persist is the same type (no CacheManager). Tests inject `PrefixLayout`. Never write cache into the git worktree.
 - Progressive ingest: package completion emits `workDoneProgress` and optional `TierReady`.
 
 ## Watch (`progressive-lsp-watch`)

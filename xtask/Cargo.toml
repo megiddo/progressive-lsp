@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "musl, check-static, bench-alloc"
+description = "musl, check-static, bench-alloc, bench-perf"
 
 [[bin]]
 name = "xtask"
@@ -15,7 +15,11 @@ thiserror.workspace = true
 toml.workspace = true
 progressive-lsp-core.workspace = true
 progressive-lsp-engine.workspace = true
+progressive-lsp-index.workspace = true
 progressive-lsp-install.workspace = true
+progressive-lsp-lang-java.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-watch.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1277,7 +1277,11 @@ version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
  "progressive-lsp-engine",
+ "progressive-lsp-index",
  "progressive-lsp-install",
+ "progressive-lsp-lang-java",
+ "progressive-lsp-resolve",
+ "progressive-lsp-watch",
  "tempfile",
  "thiserror",
  "toml",
