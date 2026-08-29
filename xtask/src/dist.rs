@@ -1,10 +1,12 @@
-//! `xtask dist --pack python,rust`: engines dest + manifest + hash.
-//! Real ty/rust-analyzer musl ELFs are Linux CI / Docker. Darwin writes stubs only.
+//! `xtask dist --pack slim|full|python,rust,...`: engines dest + manifest + hash.
+//! Real musl ELFs are Linux CI / Docker. Darwin writes stubs only.
+//! Slim (default) excludes clangd/tsgo/gopls/zls for Java-only workspaces.
 
 use std::path::{Path, PathBuf};
 
 use progressive_lsp_engine::{
-    hex_of, pack_dir, stub_pack_bytes, PYTHON_PACK, RA_BINARY, RUST_PACK, TY_BINARY,
+    binary_name_for_pack, full_pack_names, hex_of, is_heavy_pack, pack_dir, slim_pack_names,
+    stub_pack_bytes, CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK,
 };
 use progressive_lsp_install::{Manifest, ManifestArtifact};
 
@@ -14,28 +16,38 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--pack" | "--packs" => {
+            "--pack" | "--packs" | "--flavor" => {
                 i += 1;
-                let raw = args.get(i).ok_or("--pack requires python,rust")?;
-                packs = raw
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
+                let raw = args.get(i).ok_or("--pack requires slim, full, or a CSV")?;
+                packs = expand_pack_list(raw);
             }
             "--dest" | "--prefix" => {
                 i += 1;
                 dest = Some(PathBuf::from(args.get(i).ok_or("--dest requires a path")?));
             }
+            "--slim" => packs = slim_pack_names().iter().map(|s| (*s).to_string()).collect(),
+            "--full" => packs = full_pack_names().iter().map(|s| (*s).to_string()).collect(),
             other => return Err(format!("unknown dist flag: {other}")),
         }
         i += 1;
     }
     if packs.is_empty() {
-        return Err("dist requires --pack python,rust".into());
+        packs = slim_pack_names().iter().map(|s| (*s).to_string()).collect();
     }
     let dest = dest.ok_or("dist requires --dest DIR")?;
     write_packs(&dest, &packs)
+}
+
+fn expand_pack_list(raw: &str) -> Vec<String> {
+    match raw.trim() {
+        "slim" => slim_pack_names().iter().map(|s| (*s).to_string()).collect(),
+        "full" => full_pack_names().iter().map(|s| (*s).to_string()).collect(),
+        other => other
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    }
 }
 
 pub fn write_packs(dest: &Path, packs: &[String]) -> Result<(), String> {
@@ -44,21 +56,18 @@ pub fn write_packs(dest: &Path, packs: &[String]) -> Result<(), String> {
         .ensure_dirs()
         .map_err(|e| format!("ensure prefix: {e}"))?;
     let mut note = String::from(
-        "Darwin / local `xtask dist --pack` writes pack stubs + manifest hashes only.\n\
-         Real ty and rust-analyzer musl ELFs (no interpreter, no DT_NEEDED) are built in Linux CI / Docker.\n\
-         Do not treat these stubs as check-static greens.\n",
+        "Darwin / local `xtask dist` writes pack stubs + manifest hashes only.\n\
+         Real engine musl ELFs (no interpreter, no DT_NEEDED) are built in Linux CI / Docker.\n\
+         Do not treat these stubs as check-static greens.\n\
+         Slim default excludes clangd, tsgo, gopls, zls.\n",
     );
     for pack in packs {
-        match pack.as_str() {
-            PYTHON_PACK => {
-                write_one(&prefix, PYTHON_PACK, TY_BINARY)?;
-                note.push_str("pack=python binary=ty\n");
-            }
-            RUST_PACK => {
-                write_one(&prefix, RUST_PACK, RA_BINARY)?;
-                note.push_str("pack=rust binary=rust-analyzer\n");
-            }
-            other => return Err(format!("M3 dist supports python,rust only; got {other}")),
+        let binary = binary_name_for_pack(pack)
+            .ok_or_else(|| format!("unknown pack {pack}; known: slim, full, or named packs"))?;
+        write_one(&prefix, pack, binary)?;
+        note.push_str(&format!("pack={pack} binary={binary}\n"));
+        if is_heavy_pack(pack) {
+            note.push_str(&format!("heavy={pack} (full flavor / CI stub)\n"));
         }
     }
     std::fs::write(prefix.engines_dir().join("DARWIN_CI_GAP.txt"), note)
@@ -93,35 +102,62 @@ fn write_one(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use progressive_lsp_engine::{discover_pack, is_pack_stub};
+    use progressive_lsp_engine::{discover_pack, is_pack_stub, PYTHON_PACK, RUST_PACK};
 
     #[test]
-    fn dist_pack_writes_manifest_and_hash() {
+    fn dist_slim_default_excludes_heavy_packs() {
+        let dir = tempfile::tempdir().unwrap();
+        run(&["--dest".into(), dir.path().display().to_string()]).unwrap();
+        let prefix = progressive_lsp_core::PrefixLayout::from_path(dir.path());
+        assert!(discover_pack(&prefix, PYTHON_PACK).is_ok());
+        assert!(discover_pack(&prefix, RUST_PACK).is_ok());
+        assert!(discover_pack(&prefix, CLANGD_PACK).is_err());
+        assert!(discover_pack(&prefix, TSGO_PACK).is_err());
+        assert!(discover_pack(&prefix, GOPLS_PACK).is_err());
+        assert!(discover_pack(&prefix, ZLS_PACK).is_err());
+        let gap = std::fs::read_to_string(prefix.engines_dir().join("DARWIN_CI_GAP.txt")).unwrap();
+        assert!(gap.contains("Slim default excludes"));
+        assert!(is_pack_stub(
+            &std::fs::read(discover_pack(&prefix, PYTHON_PACK).unwrap().path).unwrap()
+        ));
+    }
+
+    #[test]
+    fn dist_full_includes_heavy_stubs() {
         let dir = tempfile::tempdir().unwrap();
         run(&[
             "--pack".into(),
-            "python,rust".into(),
+            "full".into(),
             "--dest".into(),
             dir.path().display().to_string(),
         ])
         .unwrap();
         let prefix = progressive_lsp_core::PrefixLayout::from_path(dir.path());
-        let py = discover_pack(&prefix, PYTHON_PACK).unwrap();
-        let rs = discover_pack(&prefix, RUST_PACK).unwrap();
-        assert!(is_pack_stub(&std::fs::read(&py.path).unwrap()));
-        assert!(is_pack_stub(&std::fs::read(&rs.path).unwrap()));
-        assert!(prefix.engines_dir().join("DARWIN_CI_GAP.txt").is_file());
-        assert!(run(&[]).is_err());
-        assert!(run(&["--pack".into()]).is_err());
+        for pack in [CLANGD_PACK, TSGO_PACK, GOPLS_PACK, ZLS_PACK] {
+            let found = discover_pack(&prefix, pack).unwrap();
+            assert!(is_pack_stub(&std::fs::read(&found.path).unwrap()));
+        }
         assert!(run(&["--nope".into()]).is_err());
+        assert!(run(&["--pack".into()]).is_err());
+        assert!(run(&["--dest".into()]).is_err());
         assert!(run(&[
             "--pack".into(),
-            "clangd".into(),
+            "csharp-ls".into(),
             "--dest".into(),
             dir.path().display().to_string()
         ])
         .is_err());
-        assert!(run(&["--dest".into()]).is_err());
-        assert!(run(&["--pack".into(), "python".into()]).is_err());
+        run(&[
+            "--slim".into(),
+            "--dest".into(),
+            dir.path().display().to_string(),
+        ])
+        .unwrap();
+        run(&[
+            "--full".into(),
+            "--dest".into(),
+            dir.path().display().to_string(),
+        ])
+        .unwrap();
     }
 }

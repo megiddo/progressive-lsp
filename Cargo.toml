@@ -22,6 +22,9 @@ members = [
     "progressive-lsp-lang-zig",
     "progressive-lsp-lang-python",
     "progressive-lsp-lang-rust",
+    "progressive-lsp-lang-c",
+    "progressive-lsp-lang-cpp",
+    "progressive-lsp-lang-csharp",
     "xtask",
 ]
 
@@ -52,8 +55,14 @@ progressive-lsp-script = { path = "progressive-lsp-script" }
 progressive-lsp-engine = { path = "progressive-lsp-engine" }
 progressive-lsp-lang-python = { path = "progressive-lsp-lang-python" }
 progressive-lsp-lang-rust = { path = "progressive-lsp-lang-rust" }
+progressive-lsp-lang-c = { path = "progressive-lsp-lang-c" }
+progressive-lsp-lang-cpp = { path = "progressive-lsp-lang-cpp" }
+progressive-lsp-lang-csharp = { path = "progressive-lsp-lang-csharp" }
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-c-sharp = "=0.21.3"
 prost = "0.13"
 tree-sitter = "0.24"
 tree-sitter-java = "0.23"
@@ -94,6 +103,9 @@ progressive-lsp-lang-go = { workspace = true, optional = true }
 progressive-lsp-lang-zig = { workspace = true, optional = true }
 progressive-lsp-lang-python = { workspace = true, optional = true }
 progressive-lsp-lang-rust = { workspace = true, optional = true }
+progressive-lsp-lang-c = { workspace = true, optional = true }
+progressive-lsp-lang-cpp = { workspace = true, optional = true }
+progressive-lsp-lang-csharp = { workspace = true, optional = true }
 progressive-lsp-engine.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-protocol.workspace = true
@@ -116,6 +128,9 @@ default = [
     "lang-zig",
     "lang-python",
     "lang-rust",
+    "lang-c",
+    "lang-cpp",
+    "lang-csharp",
 ]
 lang-java = ["dep:progressive-lsp-lang-java"]
 lang-php = ["dep:progressive-lsp-lang-php"]
@@ -126,6 +141,9 @@ lang-go = ["dep:progressive-lsp-lang-go"]
 lang-zig = ["dep:progressive-lsp-lang-zig"]
 lang-python = ["dep:progressive-lsp-lang-python"]
 lang-rust = ["dep:progressive-lsp-lang-rust"]
+lang-c = ["dep:progressive-lsp-lang-c"]
+lang-cpp = ["dep:progressive-lsp-lang-cpp"]
+lang-csharp = ["dep:progressive-lsp-lang-csharp"]
 
 [dev-dependencies]
 serde_json.workspace = true

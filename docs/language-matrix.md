@@ -16,19 +16,19 @@ Window below is **as of 2026-08**. Update the table when LATEST moves; keep fixt
 |---|---|---|---|---|---|---|---|
 | C | C23 | C17 | C11 | Tree-sitter | brief gap / optional TSG later | **clangd** | Needs `compile_commands.json`. One-shot `cmake -DCMAKE_EXPORT_COMPILE_COMMANDS` only if the project already uses CMake — do not invent a build. |
 | C++ | C++26 | C++23 | C++20 | Tree-sitter | same | **clangd** | Same compile_commands rule. |
-| C# | 14 | 13 | 12 | Tree-sitter | heuristics | **csharp-ls** Native AOT `linux-musl-*` | Spike: if AOT+project load fails, **T1/T2 ceiling** in v1. glibc-static csharp-ls may fail closed. |
+| C# | 14 | 13 | 12 | Tree-sitter | heuristics | **T1/T2 ceiling** (no csharp-ls pack) | Spike failed-closed on Darwin: no musl AOT ELF (`spike/csharp-ls.md`). No host `dotnet`. Census does not select csharp-ls. |
 | Rust | edition 2024 | 2021 | 2018 | Tree-sitter | — | **rust-analyzer** | Sysroot / proc-macro `.so` are **project** artifacts. No pack or no sysroot → **T1** + say so in hover/progress (no dedicated Rust T2). |
-| JavaScript | ES2026 | ES2025 | ES2024 | Tree-sitter | **oxc_resolver + oxc_semantic**; optional TSG | **tsgo** | **Not** tsserver/Node. oxc_type_checker does not block tsgo. |
-| TypeScript | current 3-release window | | | Tree-sitter | oxc + optional TSG | **tsgo** | Pin exact TS versions in CI fixtures. |
-| CSS | current | −1 | −2 | Tree-sitter | — | **biome** | No Node CSS LS. |
+| JavaScript | ES2026 | ES2025 | ES2024 | Tree-sitter | **heuristic import/export** (oxc crates not wired) | **tsgo** | **Not** tsserver/Node. oxc_resolver/oxc_semantic evaluated; heuristic T2 Strategy ships. oxc_type_checker does not block tsgo. |
+| TypeScript | current 3-release window | | | Tree-sitter | heuristic import/export | **tsgo** | Same T2 as JS. Fake tsgo covers go-to-type / generics. Pin exact TS versions in CI fixtures. |
+| CSS | current | −1 | −2 | Tree-sitter | — | **biome** | No Node CSS LS. Adapter + T1 fallback. Darwin musl-clean unknown; real ELF is Linux CI. |
 | HTML | current | −1 | −2 | Tree-sitter | — | **superhtml** (Zig) | Fallback T1 if pack absent. |
 | Python | 3.14 | 3.13 | 3.12 | Tree-sitter | optional TSG | **ty** | **Not** CPython, pylsp, pyright, ruff-as-types. Heuristics are not a dedicated Python T2; optional stack-graphs Strategy only. Pin inside ty’s window (ty: 3.10+; best on recent 3.x). |
-| PHP | 8.5 | 8.4 | 8.3 | Tree-sitter | `use` + hierarchy | **PHPantom** preferred; else **static phpactor** only if fully static | **Not** intelephense. **Not** host `php`. Else T2 ceiling. |
+| PHP | 8.5 | 8.4 | 8.3 | Tree-sitter | `use` + hierarchy | **PHPantom** (winner) | **Not** intelephense. **Not** host `php`. T3 when phpantom pack installed; else T2. Static phpactor not shipped. |
 | Java | 26 | 25 | 24 | Tree-sitter | name/arity, import, hierarchy, scope, jar `Proxy` `.class` | **none in v1** | **No JDT-LS / JVM.** kmp-lsp-style heuristics are inspiration, not a fork-by-default. |
 | Go | 1.27 | 1.26 | 1.25 | Tree-sitter | `go.mod`/`go.work` + import paths | **gopls** `CGO_ENABLED=0` | Project `go` on PATH may be required for full types/cgo; else T2. Do not bundle a Go SDK. |
 | Zig | pin with zls | −1 | −2 | Tree-sitter | `build.zig` / `@import` | **zls** | zls tracks Zig tightly; matrix lag expected. No project `zig` → T2. |
 
-Exact compiler/grammar git SHAs belong in `xtask` / lockfiles. This table is the product window. M3 registers Java T1/T2, PHP T1/T2, HTML/CSS/JS T1, Go T1, Zig T1, Python T1/T3 (ty), Rust T1/T3 (rust-analyzer) (`lang-*` default-on). Remaining slots (C/C++/C#) stay `UnsupportedLanguage`. Real ty/RA musl packs are Linux CI / Docker; Darwin `xtask dist --pack` writes stubs + hashes only. Pins are not Cargo-bumped here.
+Exact compiler/grammar git SHAs belong in `xtask` / lockfiles. This table is the product window. M4 registers Java T1/T2, PHP T1/T2/T3 (PHPantom), HTML T1/T3 (superhtml), CSS T1/T3 (biome), JS/TS T1/T2/T3 (tsgo), Go T1/T2/T3 (gopls), Zig T1/T2/T3 (zls), Python T1/T3 (ty), Rust T1/T3 (rust-analyzer), C/C++ T1/T3 (clangd), C# T1/T2 ceiling (`lang-*` default-on). Real engine musl packs are Linux CI / Docker; Darwin `xtask dist` writes stubs + hashes only. Slim default excludes clangd/tsgo/gopls/zls. Pins are not Cargo-bumped here.
 
 **Java TSG (M2.3):** GitHub archived [stack-graphs](https://github.com/github/stack-graphs) (2025-09-09). Vendoring the archived C/Rust tree under `third_party/stack-graphs` is impractical on this milestone and would not beat name/arity/import/hierarchy/scope on the in-tree heuristic fixture. **Heuristics are the shipped T2 Strategy.** `StackGraphResolver` remains a `NotReady` Strategy slot. No `third_party/stack-graphs` vendor.
 

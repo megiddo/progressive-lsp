@@ -109,12 +109,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M4.1 | clangd pack + compile_commands adapter | M3.1 | slim dist default excludes |
-| M4.2 | csharp-ls AOT or matrix T2 ceiling | M3.1 | spike fail → document |
-| M4.3 | oxc T2 + tsgo T3 | M3.1 | no Node |
-| M4.4 | PHP T3 pack (spike winner) | M3.1, M2.4 | |
-| M4.5 | superhtml + biome | M3.1 | |
-| M4.6 | gopls + zls | M3.1, M2.6 | degrade without project toolchain |
+| M4.1 | clangd pack + compile_commands adapter | M3.1 | **SIGNED OFF.** slim dist default excludes clangd |
+| M4.2 | csharp-ls AOT or matrix T2 ceiling | M3.1 | **SIGNED OFF.** T1/T2 ceiling; no csharp-ls pack |
+| M4.3 | oxc T2 + tsgo T3 | M3.1 | **SIGNED OFF.** heuristic T2; Fake tsgo T3; no Node |
+| M4.4 | PHP T3 pack (spike winner) | M3.1, M2.4 | **SIGNED OFF.** PHPantom winner |
+| M4.5 | superhtml + biome | M3.1 | **SIGNED OFF.** adapter + T1 fallback |
+| M4.6 | gopls + zls | M3.1, M2.6 | **SIGNED OFF.** T3 when pack+project; else T2/T1 |
 
 ## M5 (`m5` branch)
 

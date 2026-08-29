@@ -113,6 +113,11 @@ pub trait EngineAdapter: Send + Sync {
     fn is_alive(&self, handle: &ChildHandle) -> bool {
         handle.is_alive()
     }
+
+    /// Sibling languages served by the same pack (clangd → cpp, tsgo → javascript).
+    fn extra_languages(&self) -> Vec<LanguageId> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -205,5 +210,6 @@ mod tests {
             ReadyKind::IndexedPackage(PackageId::new("p")),
             ReadyKind::IndexedPackage(PackageId::new("p"))
         );
+        assert!(a.extra_languages().is_empty());
     }
 }

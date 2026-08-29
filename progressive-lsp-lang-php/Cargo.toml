@@ -8,6 +8,7 @@ description = "PHP LanguageFactory T1/T2 + Composer PSR-4 (no host php)"
 
 [dependencies]
 progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-resolve.workspace = true

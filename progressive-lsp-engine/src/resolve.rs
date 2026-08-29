@@ -34,6 +34,34 @@ impl EngineResolver {
         Self::new(supervisor, LanguageId::new("rust"), PackageId::new("pkg"))
     }
 
+    pub fn clangd(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("c"), PackageId::new("pkg"))
+    }
+
+    pub fn tsgo(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("typescript"), PackageId::new("pkg"))
+    }
+
+    pub fn phpantom(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("php"), PackageId::new("pkg"))
+    }
+
+    pub fn superhtml(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("html"), PackageId::new("pkg"))
+    }
+
+    pub fn biome(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("css"), PackageId::new("pkg"))
+    }
+
+    pub fn gopls(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("go"), PackageId::new("pkg"))
+    }
+
+    pub fn zls(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("zig"), PackageId::new("pkg"))
+    }
+
     fn package(&self, q: &ResolveQuery) -> PackageId {
         let bound = self.supervisor.package_for_file(&q.file);
         if bound.as_str() == "pkg" {
@@ -114,6 +142,17 @@ mod tests {
         }
         let rust = EngineResolver::rust(sup);
         assert!(!rust.resolve(&q).is_ready());
+        let empty = Arc::new(EngineSupervisor::new(
+            Arc::new(FakeClock::at_unix_ms(1)),
+            PrefixLayout::from_path("/tmp/no-m4"),
+        ));
+        assert!(!EngineResolver::clangd(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::tsgo(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::phpantom(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::superhtml(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::biome(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::gopls(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::zls(empty).resolve(&q).is_ready());
     }
 
     #[test]

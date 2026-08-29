@@ -10,7 +10,10 @@ use progressive_lsp_resolve::{
 
 use crate::adapter::{ChildHandle, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx};
 use crate::capabilities::EngineCapabilities;
-use crate::discovery::{discover_pack_opt, PYTHON_PACK};
+use crate::discovery::{
+    discover_pack_opt, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, PHPANTOM_PACK, PYTHON_PACK,
+    SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct FakeAnswers {
@@ -31,6 +34,7 @@ pub struct FakeEngineAdapter {
     answers: Mutex<FakeAnswers>,
     capabilities: EngineCapabilities,
     ready_kind: Mutex<ReadyKind>,
+    extra: Vec<LanguageId>,
 }
 
 impl FakeEngineAdapter {
@@ -46,6 +50,7 @@ impl FakeEngineAdapter {
             answers: Mutex::new(FakeAnswers::default()),
             capabilities: EngineCapabilities::types_full(),
             ready_kind: Mutex::new(ReadyKind::Initialize),
+            extra: Vec::new(),
         }
     }
 
@@ -55,6 +60,38 @@ impl FakeEngineAdapter {
 
     pub fn rust_analyzer() -> Self {
         Self::new(crate::discovery::RUST_PACK, LanguageId::new("rust"))
+    }
+
+    pub fn clangd() -> Self {
+        let mut a = Self::new(CLANGD_PACK, LanguageId::new("c"));
+        a.extra = vec![LanguageId::new("cpp")];
+        a
+    }
+
+    pub fn tsgo() -> Self {
+        let mut a = Self::new(TSGO_PACK, LanguageId::new("typescript"));
+        a.extra = vec![LanguageId::new("javascript")];
+        a
+    }
+
+    pub fn phpantom() -> Self {
+        Self::new(PHPANTOM_PACK, LanguageId::new("php"))
+    }
+
+    pub fn superhtml() -> Self {
+        Self::new(SUPERHTML_PACK, LanguageId::new("html"))
+    }
+
+    pub fn biome() -> Self {
+        Self::new(BIOME_PACK, LanguageId::new("css"))
+    }
+
+    pub fn gopls() -> Self {
+        Self::new(GOPLS_PACK, LanguageId::new("go"))
+    }
+
+    pub fn zls() -> Self {
+        Self::new(ZLS_PACK, LanguageId::new("zig"))
     }
 
     pub fn with_binary(self, binary: EngineBinary) -> Self {
@@ -188,6 +225,10 @@ impl EngineAdapter for FakeEngineAdapter {
     fn is_alive(&self, handle: &ChildHandle) -> bool {
         handle.is_alive() && self.alive.load(Ordering::SeqCst)
     }
+
+    fn extra_languages(&self) -> Vec<LanguageId> {
+        self.extra.clone()
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +288,17 @@ mod tests {
         let ra = FakeEngineAdapter::rust_analyzer();
         assert_eq!(ra.pack_name(), "rust");
         assert_eq!(ra.language_id().as_str(), "rust");
+        assert_eq!(FakeEngineAdapter::clangd().pack_name(), "clangd");
+        assert_eq!(
+            FakeEngineAdapter::clangd().extra_languages(),
+            vec![LanguageId::new("cpp")]
+        );
+        assert_eq!(FakeEngineAdapter::tsgo().language_id().as_str(), "typescript");
+        assert_eq!(FakeEngineAdapter::phpantom().pack_name(), "phpantom");
+        assert_eq!(FakeEngineAdapter::superhtml().language_id().as_str(), "html");
+        assert_eq!(FakeEngineAdapter::biome().language_id().as_str(), "css");
+        assert_eq!(FakeEngineAdapter::gopls().language_id().as_str(), "go");
+        assert_eq!(FakeEngineAdapter::zls().language_id().as_str(), "zig");
     }
 
     #[test]

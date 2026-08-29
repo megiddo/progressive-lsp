@@ -37,7 +37,7 @@ fn print_help() {
 xtask musl [--target TRIPLE] [--both]
 xtask check-static <ELF>...
 xtask bench-alloc
-xtask dist --pack python,rust --dest DIR
+xtask dist [--slim|--full|--pack slim|full|python,rust,...] --dest DIR
 "
     );
 }

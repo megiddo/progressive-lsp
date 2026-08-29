@@ -7,8 +7,56 @@ use crate::adapter::EngineBinary;
 
 pub const PYTHON_PACK: &str = "python";
 pub const RUST_PACK: &str = "rust";
+pub const CLANGD_PACK: &str = "clangd";
+pub const TSGO_PACK: &str = "tsgo";
+pub const PHPANTOM_PACK: &str = "phpantom";
+pub const SUPERHTML_PACK: &str = "superhtml";
+pub const BIOME_PACK: &str = "biome";
+pub const GOPLS_PACK: &str = "gopls";
+pub const ZLS_PACK: &str = "zls";
+
 pub const TY_BINARY: &str = "ty";
 pub const RA_BINARY: &str = "rust-analyzer";
+pub const CLANGD_BINARY: &str = "clangd";
+pub const TSGO_BINARY: &str = "tsgo";
+pub const PHPANTOM_BINARY: &str = "phpantom";
+pub const SUPERHTML_BINARY: &str = "superhtml";
+pub const BIOME_BINARY: &str = "biome";
+pub const GOPLS_BINARY: &str = "gopls";
+pub const ZLS_BINARY: &str = "zls";
+
+/// Slim default: Java-only / light workspaces. Excludes clangd, tsgo, gopls, zls.
+pub fn slim_pack_names() -> &'static [&'static str] {
+    &[
+        PYTHON_PACK,
+        RUST_PACK,
+        PHPANTOM_PACK,
+        SUPERHTML_PACK,
+        BIOME_PACK,
+    ]
+}
+
+/// Full CI flavor: slim plus heavy C/C++/TS/Go/Zig packs (stubs on Darwin).
+pub fn full_pack_names() -> &'static [&'static str] {
+    &[
+        PYTHON_PACK,
+        RUST_PACK,
+        PHPANTOM_PACK,
+        SUPERHTML_PACK,
+        BIOME_PACK,
+        CLANGD_PACK,
+        TSGO_PACK,
+        GOPLS_PACK,
+        ZLS_PACK,
+    ]
+}
+
+pub fn is_heavy_pack(pack_name: &str) -> bool {
+    matches!(
+        pack_name,
+        CLANGD_PACK | TSGO_PACK | GOPLS_PACK | ZLS_PACK
+    )
+}
 
 pub fn pack_dir(prefix: &PrefixLayout, pack_name: &str) -> std::path::PathBuf {
     prefix.engines_dir().join(pack_name)
@@ -18,6 +66,13 @@ pub fn binary_name_for_pack(pack_name: &str) -> Option<&'static str> {
     match pack_name {
         PYTHON_PACK => Some(TY_BINARY),
         RUST_PACK => Some(RA_BINARY),
+        CLANGD_PACK => Some(CLANGD_BINARY),
+        TSGO_PACK => Some(TSGO_BINARY),
+        PHPANTOM_PACK => Some(PHPANTOM_BINARY),
+        SUPERHTML_PACK => Some(SUPERHTML_BINARY),
+        BIOME_PACK => Some(BIOME_BINARY),
+        GOPLS_PACK => Some(GOPLS_BINARY),
+        ZLS_PACK => Some(ZLS_BINARY),
         _ => None,
     }
 }
@@ -72,7 +127,7 @@ pub fn stub_pack_bytes(pack_name: &str, binary_name: &str) -> Vec<u8> {
     format!(
         "progressive-lsp-pack-stub:{binary_name}\n\
          pack={pack_name}\n\
-         # Not a musl ELF. Real ty/rust-analyzer static packs are Linux CI / Docker.\n"
+         # Not a musl ELF. Real engine static packs are Linux CI / Docker.\n"
     )
     .into_bytes()
 }
@@ -114,11 +169,23 @@ mod tests {
         assert!(discover_pack_opt(&prefix, PYTHON_PACK).is_none());
         let err = discover_pack(&prefix, PYTHON_PACK).unwrap_err();
         assert!(matches!(err, EngineError::NotDiscovered(_)));
-        assert!(discover_pack(&prefix, "clangd").is_err());
+        assert!(discover_pack(&prefix, "csharp-ls").is_err());
         assert_eq!(binary_name_for_pack(PYTHON_PACK), Some(TY_BINARY));
         assert_eq!(binary_name_for_pack(RUST_PACK), Some(RA_BINARY));
-        assert!(binary_name_for_pack("gopls").is_none());
+        assert_eq!(binary_name_for_pack(CLANGD_PACK), Some(CLANGD_BINARY));
+        assert_eq!(binary_name_for_pack(TSGO_PACK), Some(TSGO_BINARY));
+        assert_eq!(binary_name_for_pack(PHPANTOM_PACK), Some(PHPANTOM_BINARY));
+        assert_eq!(binary_name_for_pack(SUPERHTML_PACK), Some(SUPERHTML_BINARY));
+        assert_eq!(binary_name_for_pack(BIOME_PACK), Some(BIOME_BINARY));
+        assert_eq!(binary_name_for_pack(GOPLS_PACK), Some(GOPLS_BINARY));
+        assert_eq!(binary_name_for_pack(ZLS_PACK), Some(ZLS_BINARY));
+        assert!(binary_name_for_pack("csharp-ls").is_none());
         assert_eq!(pack_dir(&prefix, "python"), prefix.engines_dir().join("python"));
+        assert!(slim_pack_names().contains(&PYTHON_PACK));
+        assert!(!slim_pack_names().contains(&CLANGD_PACK));
+        assert!(full_pack_names().contains(&CLANGD_PACK));
+        assert!(is_heavy_pack(CLANGD_PACK));
+        assert!(!is_heavy_pack(PYTHON_PACK));
     }
 
     #[test]

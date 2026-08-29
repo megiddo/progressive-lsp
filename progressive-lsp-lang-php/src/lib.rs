@@ -1,8 +1,9 @@
-//! PHP T1/T2. No host php. No intelephense.
+//! PHP T1/T2 + PHPantom T3. No host php. No intelephense.
 
 use std::sync::Arc;
 
-use progressive_lsp_core::{FileId, LanguageId};
+use progressive_lsp_core::{FileId, LanguageId, PackageId};
+use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
@@ -47,14 +48,25 @@ impl LanguageIndexer for PhpIndexer {
 #[derive(Clone)]
 pub struct PhpLanguageFactory {
     graph: Option<Arc<dyn GraphIndex>>,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 
 impl PhpLanguageFactory {
     pub fn new() -> Self {
-        Self { graph: None }
+        Self {
+            graph: None,
+            supervisor: None,
+        }
     }
     pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
-        Self { graph: Some(graph) }
+        Self {
+            graph: Some(graph),
+            supervisor: None,
+        }
+    }
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
     }
 }
 
@@ -73,10 +85,20 @@ impl LanguageFactory for PhpLanguageFactory {
     }
     fn resolver_chain(&self) -> ResolverChain {
         match &self.graph {
-            Some(g) => ResolverChain::new(vec![
-                Box::new(HeuristicResolver::new(g.clone())),
-                Box::new(TreeSitterResolver::new(g.clone())),
-            ]),
+            Some(g) => {
+                let t3 = self.supervisor.as_ref().map(|s| {
+                    Box::new(EngineResolver::new(
+                        s.clone(),
+                        language_id(),
+                        PackageId::new("pkg"),
+                    )) as Box<dyn progressive_lsp_resolve::Resolver>
+                });
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(Box::new(HeuristicResolver::new(g.clone()))),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
+            }
             None => ResolverChain::empty(),
         }
     }
@@ -518,5 +540,51 @@ mod tests {
             }
         }
         panic!("{needle}");
+    }
+
+    #[test]
+    fn php_t3_via_fake_phpantom_else_t2() {
+        use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
+        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use std::path::PathBuf;
+
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let tmp = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(tmp.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = FakeEngineAdapter::phpantom();
+        fake.set_answers(FakeEngineAdapter::typed_fixture("Hello", "file:///Hello.php"));
+        fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
+        let fake = fake.with_binary(EngineBinary {
+            pack_name: "phpantom".into(),
+            path: PathBuf::from("/p/phpantom"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        sup.try_spawn(
+            "phpantom",
+            &LanguageId::new("php"),
+            &PackageId::new("pkg"),
+            PathBuf::from("/ws").as_path(),
+        )
+        .unwrap();
+        let factory =
+            PhpLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())))
+                .with_supervisor(Arc::new(sup));
+        assert_eq!(factory.resolver_chain().len(), 3);
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("Greeter.php"),
+            Position::default(),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Types);
+                assert!(r.locations.iter().any(|l| l.uri.contains("Hello.php")));
+            }
+            other => panic!("{other:?}"),
+        }
+        let t2_only = PhpLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())));
+        assert_eq!(t2_only.resolver_chain().len(), 2);
     }
 }

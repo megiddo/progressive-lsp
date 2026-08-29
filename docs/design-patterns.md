@@ -74,7 +74,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `GraphIndex` | Port | Same store as `SymbolIndex`; package tier is Graph only after ingest |
 | `StackGraphResolver` | Strategy (unused slot) | Always `NotReady` unless a language binds a winning TSG backend |
 | `ComposerAdapter` / `GoModAdapter` / `ZigBuildAdapter` | Adapter | Manifest files only; no host php/go/zig |
-| `PhpLanguageFactory` / `HtmlLanguageFactory` / `CssLanguageFactory` / `JavaScriptLanguageFactory` / `GoLanguageFactory` / `ZigLanguageFactory` | Abstract Factory | `language_id` is stable; empty chain without an index |
+| `PhpLanguageFactory` / `HtmlLanguageFactory` / `CssLanguageFactory` / `JavaScriptLanguageFactory` / `GoLanguageFactory` / `ZigLanguageFactory` | Abstract Factory | `language_id` is stable; T3 when supervisor ready (Go/Zig also require project manifest) |
 | `PhpIndexer` / `HtmlIndexer` / `CssIndexer` / `JavaScriptIndexer` / `GoIndexer` / `ZigIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `HookName` / `ScriptContext` / `ScriptDecision` | Command / DTO | Abort skips the documented side effect; scripts cannot register `textDocument/definition` |
 | `RhaiEngineFactory` / `FakeEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai |
@@ -92,6 +92,13 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `PyprojectAdapter` / `CargoTomlAdapter` | Adapter | Manifest files only; no host CPython/rustc |
 | `RustT1Resolver` | Decorator | Missing sysroot/pack annotates T1 hover; never a dedicated Rust T2 |
+| `CompileCommandsAdapter` | Adapter | Reads `compile_commands.json` only; cmake argv only if `CMakeLists.txt` already exists |
+| `CsprojAdapter` | Adapter | `*.csproj` manifest only; no host `dotnet` |
+| `CLanguageFactory` / `CppLanguageFactory` | Abstract Factory | T1 Tree-sitter; T3 clangd when supervisor ready; same pack serves C and C++ (`extra_languages`) |
+| `CSharpLanguageFactory` | Abstract Factory | T1 + T2 heuristics; no T3 pack (matrix ceiling) |
+| `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
+| `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
+| `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
 
 ## Patterns we do not use (v1)
 

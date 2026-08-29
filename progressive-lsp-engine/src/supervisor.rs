@@ -211,19 +211,28 @@ impl EngineSupervisor {
         st.crash_count.insert(adapter.pack_name().into(), 0);
         st.backoff_until.remove(adapter.pack_name());
         st.last_error.remove(adapter.pack_name());
+        let langs: Vec<LanguageId> = std::iter::once(language.clone())
+            .chain(adapter.extra_languages())
+            .collect();
         match adapter.ready_signal() {
             ReadyKind::Initialize => {
-                st.ready_languages.insert(language.as_str().to_string());
+                for lang in &langs {
+                    st.ready_languages.insert(lang.as_str().to_string());
+                }
             }
             ReadyKind::IndexedPackage(pkg) => {
-                st.ready
-                    .insert((language.as_str().to_string(), pkg.as_str().to_string()));
+                for lang in &langs {
+                    st.ready
+                        .insert((lang.as_str().to_string(), pkg.as_str().to_string()));
+                }
             }
         }
-        st.ready.insert((
-            language.as_str().to_string(),
-            package.as_str().to_string(),
-        ));
+        for lang in &langs {
+            st.ready.insert((
+                lang.as_str().to_string(),
+                package.as_str().to_string(),
+            ));
+        }
         st.children.insert(
             adapter.pack_name().to_string(),
             SupervisedChild {
@@ -327,14 +336,17 @@ impl EngineSupervisor {
         }
         let st = self.inner.lock().expect("sup");
         for (pack, child) in &st.children {
-            if child.language != *language {
+            let Some(adapter) = self.adapters.iter().find(|a| a.pack_name() == pack.as_str()) else {
+                continue;
+            };
+            let serves = child.language == *language
+                || adapter.extra_languages().iter().any(|l| l == language);
+            if !serves {
                 continue;
             }
-            if let Some(adapter) = self.adapters.iter().find(|a| a.pack_name() == pack.as_str()) {
-                match adapter.resolve_query(&child.handle, q) {
-                    ResolveOutcome::Ready(r) => return ResolveOutcome::Ready(r),
-                    ResolveOutcome::NotReady => continue,
-                }
+            match adapter.resolve_query(&child.handle, q) {
+                ResolveOutcome::Ready(r) => return ResolveOutcome::Ready(r),
+                ResolveOutcome::NotReady => continue,
             }
         }
         ResolveOutcome::NotReady
@@ -613,5 +625,33 @@ mod tests {
         assert!(!sup.is_ready(&LanguageId::new("python"), &PackageId::new("pkg")));
         assert_eq!(sup.adapter_names(), vec!["python".to_string()]);
         assert_ne!(sup.adapter_names(), vec!["xyzzy".to_string()]);
+    }
+
+    #[test]
+    fn clangd_pack_marks_cpp_ready() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let fake = FakeEngineAdapter::clangd();
+        fake.set_answers(FakeEngineAdapter::typed_fixture("greet", "file:///greet.c"));
+        let fake = fake.with_binary(EngineBinary {
+            pack_name: "clangd".into(),
+            path: PathBuf::from("/p/clangd"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        sup.try_spawn(
+            "clangd",
+            &LanguageId::new("c"),
+            &PackageId::new("pkg"),
+            Path::new("/ws"),
+        )
+        .unwrap();
+        assert!(sup.is_ready(&LanguageId::new("c"), &PackageId::new("pkg")));
+        assert!(sup.is_ready(&LanguageId::new("cpp"), &PackageId::new("pkg")));
+        let q = ResolveQuery::new(FileId::new("a.cpp"), Position::default(), QueryKind::Definition);
+        assert!(sup
+            .resolve(&LanguageId::new("cpp"), &PackageId::new("pkg"), &q)
+            .is_ready());
     }
 }

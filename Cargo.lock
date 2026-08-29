@@ -354,6 +354,9 @@ dependencies = [
  "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-install",
+ "progressive-lsp-lang-c",
+ "progressive-lsp-lang-cpp",
+ "progressive-lsp-lang-csharp",
  "progressive-lsp-lang-css",
  "progressive-lsp-lang-go",
  "progressive-lsp-lang-html",
@@ -432,13 +435,59 @@ dependencies = [
 ]
 
 [[package]]
-name = "progressive-lsp-lang-css"
+name = "progressive-lsp-lang-c"
+version = "0.0.0"
+dependencies = [
+ "progressive-lsp-core",
+ "progressive-lsp-engine",
+ "progressive-lsp-index",
+ "progressive-lsp-plugin",
+ "progressive-lsp-resolve",
+ "progressive-lsp-workspace",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-c",
+]
+
+[[package]]
+name = "progressive-lsp-lang-cpp"
+version = "0.0.0"
+dependencies = [
+ "progressive-lsp-core",
+ "progressive-lsp-engine",
+ "progressive-lsp-index",
+ "progressive-lsp-plugin",
+ "progressive-lsp-resolve",
+ "progressive-lsp-workspace",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-cpp",
+]
+
+[[package]]
+name = "progressive-lsp-lang-csharp"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",
+ "progressive-lsp-workspace",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-c-sharp",
+]
+
+[[package]]
+name = "progressive-lsp-lang-css"
+version = "0.0.0"
+dependencies = [
+ "progressive-lsp-core",
+ "progressive-lsp-engine",
+ "progressive-lsp-index",
+ "progressive-lsp-plugin",
+ "progressive-lsp-resolve",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-css",
 ]
@@ -448,6 +497,7 @@ name = "progressive-lsp-lang-go"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
+ "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",
@@ -462,9 +512,11 @@ name = "progressive-lsp-lang-html"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
+ "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-html",
 ]
@@ -488,9 +540,11 @@ name = "progressive-lsp-lang-javascript"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
+ "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-javascript",
 ]
@@ -500,6 +554,7 @@ name = "progressive-lsp-lang-php"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
+ "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",
@@ -544,6 +599,7 @@ name = "progressive-lsp-lang-zig"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
+ "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",
@@ -605,6 +661,7 @@ name = "progressive-lsp-workspace"
 version = "0.0.0"
 dependencies = [
  "progressive-lsp-core",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
@@ -967,6 +1024,36 @@ dependencies = [
  "regex",
  "regex-syntax",
  "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-c"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "afd2b1bf1585dc2ef6d69e87d01db8adb059006649dd5f96f31aa789ee6e9c71"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-c-sharp"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8997ad04502208449025114e434c9024a33a74e700513c702a9d2cac6522a771"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-cpp"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
+dependencies = [
+ "cc",
  "tree-sitter-language",
 ]
 

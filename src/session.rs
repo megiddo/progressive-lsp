@@ -35,6 +35,12 @@ use progressive_lsp_lang_zig::ZigIndexer;
 use progressive_lsp_lang_python::PythonIndexer;
 #[cfg(feature = "lang-rust")]
 use progressive_lsp_lang_rust::RustIndexer;
+#[cfg(feature = "lang-c")]
+use progressive_lsp_lang_c::CIndexer;
+#[cfg(feature = "lang-cpp")]
+use progressive_lsp_lang_cpp::CppIndexer;
+#[cfg(feature = "lang-csharp")]
+use progressive_lsp_lang_csharp::CSharpIndexer;
 
 pub struct WorkspaceSession {
     pub index: SharedIndex,
@@ -107,6 +113,9 @@ impl WorkspaceSession {
                 "zig" => "zig",
                 "py" => "python",
                 "rs" => "rust",
+                "c" | "h" => "c",
+                "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
+                "cs" => "csharp",
                 _ => language_id,
             }
         } else {
@@ -131,6 +140,12 @@ impl WorkspaceSession {
             "python" => Some(Box::new(PythonIndexer)),
             #[cfg(feature = "lang-rust")]
             "rust" => Some(Box::new(RustIndexer)),
+            #[cfg(feature = "lang-c")]
+            "c" => Some(Box::new(CIndexer)),
+            #[cfg(feature = "lang-cpp")]
+            "cpp" => Some(Box::new(CppIndexer)),
+            #[cfg(feature = "lang-csharp")]
+            "csharp" => Some(Box::new(CSharpIndexer)),
             _ => None,
         }
     }
@@ -238,6 +253,9 @@ fn guess_lang(files: &[PathBuf]) -> &'static str {
             Some("js") | Some("ts") => return "javascript",
             Some("py") => return "python",
             Some("rs") => return "rust",
+            Some("c") | Some("h") => return "c",
+            Some("cc") | Some("cpp") | Some("cxx") | Some("hpp") => return "cpp",
+            Some("cs") => return "csharp",
             _ => {}
         }
     }
@@ -264,7 +282,7 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
             collect_sources(&path, out, depth + 1);
         } else if matches!(
             path.extension().and_then(|s| s.to_str()),
-            Some("java" | "php" | "html" | "css" | "js" | "ts" | "go" | "zig" | "py" | "rs")
+            Some("java" | "php" | "html" | "css" | "js" | "ts" | "go" | "zig" | "py" | "rs" | "c" | "h" | "cc" | "cpp" | "hpp" | "cs")
         ) {
             out.push(path);
         }
@@ -376,6 +394,27 @@ impl LspIntelligence for WorkspaceSession {
                 return progressive_lsp_lang_rust::tokens_from_tree(&src, &tree);
             }
         }
+        #[cfg(feature = "lang-c")]
+        if matches!(path.extension().and_then(|s| s.to_str()), Some("c" | "h")) {
+            let _ = p.set_language(&progressive_lsp_lang_c::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_c::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-cpp")]
+        if matches!(path.extension().and_then(|s| s.to_str()), Some("cc" | "cpp" | "cxx" | "hpp")) {
+            let _ = p.set_language(&progressive_lsp_lang_cpp::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_cpp::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-csharp")]
+        if path.extension().and_then(|s| s.to_str()) == Some("cs") {
+            let _ = p.set_language(&progressive_lsp_lang_csharp::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_csharp::tokens_from_tree(&src, &tree);
+            }
+        }
         Vec::new()
     }
 
@@ -450,6 +489,18 @@ pub fn register_languages(registry: &mut progressive_lsp_plugin::PluginRegistry)
     #[cfg(feature = "lang-rust")]
     {
         registry.register(Box::new(progressive_lsp_lang_rust::RustLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-c")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_c::CLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-cpp")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_cpp::CppLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-csharp")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_csharp::CSharpLanguageFactory::new()));
     }
 }
 
@@ -609,5 +660,51 @@ mod tests {
         let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty());
         session.did_open("file:///t.rs", "rust", "fn greet() {}\n");
         assert!(!session.semantic_tokens("file:///t.rs").is_empty());
+    }
+
+    #[cfg(feature = "lang-c")]
+    #[test]
+    fn c_session_tokens() {
+        let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty());
+        session.did_open("file:///t.c", "c", "int greet(void) { return 1; }\n");
+        assert!(!session.semantic_tokens("file:///t.c").is_empty());
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn cpp_session_tokens() {
+        let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty());
+        session.did_open(
+            "file:///t.cpp",
+            "cpp",
+            "class Greeter { int greet() { return 1; } };\n",
+        );
+        assert!(!session.semantic_tokens("file:///t.cpp").is_empty());
+    }
+
+    #[cfg(feature = "lang-csharp")]
+    #[test]
+    fn csharp_session_tokens() {
+        let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty());
+        session.did_open("file:///t.cs", "csharp", "class App { void Run() {} }\n");
+        assert!(!session.semantic_tokens("file:///t.cs").is_empty());
+    }
+
+    #[cfg(all(feature = "lang-html", feature = "lang-css", feature = "lang-javascript", feature = "lang-php", feature = "lang-go", feature = "lang-zig"))]
+    #[test]
+    fn m4_session_tokens_for_web_php_go_zig() {
+        let session = WorkspaceSession::new(SharedIndex::new(IndexService::new()), ResolverChain::empty());
+        session.did_open("file:///t.html", "html", "<div id=\"main\">x</div>\n");
+        session.did_open("file:///t.css", "css", "#main { color: red; }\n");
+        session.did_open("file:///t.js", "javascript", "function greet() { return 1; }\n");
+        session.did_open("file:///t.php", "php", "<?php function greet() { return 1; }\n");
+        session.did_open("file:///t.go", "go", "package p\nfunc Greet() {}\n");
+        session.did_open("file:///t.zig", "zig", "pub fn greet() void {}\n");
+        assert!(!session.semantic_tokens("file:///t.html").is_empty());
+        assert!(!session.semantic_tokens("file:///t.css").is_empty());
+        assert!(!session.semantic_tokens("file:///t.js").is_empty());
+        assert!(!session.semantic_tokens("file:///t.php").is_empty());
+        assert!(!session.semantic_tokens("file:///t.go").is_empty());
+        assert!(!session.semantic_tokens("file:///t.zig").is_empty());
     }
 }

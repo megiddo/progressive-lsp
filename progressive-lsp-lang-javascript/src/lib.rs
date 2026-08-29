@@ -1,13 +1,16 @@
-//! JavaScript T1 via tree-sitter-javascript. TypeScript highlighting uses the same grammar.
-//! Not Node/tsserver. oxc T2 / tsgo T3 are M4.
+//! JavaScript/TypeScript T1 via tree-sitter-javascript.
+//! T2: heuristic import/export Strategy (oxc_resolver/oxc_semantic not wired; see language-matrix).
+//! T3: tsgo via EngineSupervisor. Never Node tsserver.
 
 use std::sync::Arc;
 
-use progressive_lsp_core::{FileId, LanguageId};
+use progressive_lsp_core::{FileId, LanguageId, PackageId};
+use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    IndexedSymbol, Position, Range, ResolverChain, SymbolIndex, SymbolKind, TreeSitterResolver,
+    GraphFacts, GraphIndex, HeuristicResolver, ImportDecl, IndexedSymbol, Position, Range,
+    ResolverChain, SymbolKind, TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -39,31 +42,51 @@ impl LanguageIndexer for JavaScriptIndexer {
         walk(tree.root_node(), source.as_bytes(), file, uri, &mut out);
         out
     }
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        let mut facts = GraphFacts::default();
+        walk_graph(tree.root_node(), source.as_bytes(), file, &mut facts);
+        facts
+    }
 }
 
 #[derive(Clone)]
 pub struct JavaScriptLanguageFactory {
-    index: Option<Arc<dyn SymbolIndex>>,
+    graph: Option<Arc<dyn GraphIndex>>,
     typescript: bool,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 impl JavaScriptLanguageFactory {
     pub fn new() -> Self {
         Self {
-            index: None,
+            graph: None,
             typescript: false,
+            supervisor: None,
         }
     }
     pub fn typescript() -> Self {
         Self {
-            index: None,
+            graph: None,
             typescript: true,
+            supervisor: None,
         }
     }
-    pub fn with_index(index: Arc<dyn SymbolIndex>) -> Self {
+    pub fn with_index(graph: Arc<dyn GraphIndex>) -> Self {
+        Self::with_graph(graph)
+    }
+    pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
         Self {
-            index: Some(index),
+            graph: Some(graph),
             typescript: false,
+            supervisor: None,
         }
+    }
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
+    }
+    pub fn attach_graph(mut self, graph: Arc<dyn GraphIndex>) -> Self {
+        self.graph = Some(graph);
+        self
     }
 }
 impl Default for JavaScriptLanguageFactory {
@@ -83,8 +106,21 @@ impl LanguageFactory for JavaScriptLanguageFactory {
         grammar_id()
     }
     fn resolver_chain(&self) -> ResolverChain {
-        match &self.index {
-            Some(i) => ResolverChain::new(vec![Box::new(TreeSitterResolver::new(i.clone()))]),
+        match &self.graph {
+            Some(g) => {
+                let t3 = self.supervisor.as_ref().map(|s| {
+                    Box::new(EngineResolver::new(
+                        s.clone(),
+                        self.language_id(),
+                        PackageId::new("pkg"),
+                    )) as Box<dyn progressive_lsp_resolve::Resolver>
+                });
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(Box::new(HeuristicResolver::new(g.clone()))),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
+            }
             None => ResolverChain::empty(),
         }
     }
@@ -114,6 +150,27 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
     let mut c = node.walk();
     for child in node.children(&mut c) {
         walk(child, src, file, uri, out);
+    }
+}
+
+fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
+    if matches!(node.kind(), "import_statement" | "export_statement") {
+        let text = node.utf8_text(src).unwrap_or("");
+        for part in text.split(|c: char| c == '"' || c == '\'' || c == '`' || c.is_whitespace() || c == '{' || c == '}' || c == ',' || c == ';') {
+            let p = part.trim();
+            if p.is_empty() || matches!(p, "import" | "export" | "from" | "as" | "default" | "*" | "{" | "}") {
+                continue;
+            }
+            if p.starts_with('.') || p.contains('/') {
+                facts.imports.push(ImportDecl::new(file.clone(), p));
+            } else if p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                facts.imports.push(ImportDecl::new(file.clone(), p));
+            }
+        }
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts);
     }
 }
 
@@ -223,7 +280,7 @@ mod tests {
         let mut svc = IndexService::new();
         svc.index_text(std::path::Path::new("a.js"), src, &JavaScriptIndexer, false);
         let factory = JavaScriptLanguageFactory::with_index(Arc::new(SharedIndex::new(svc)));
-        assert_eq!(factory.resolver_chain().len(), 1);
+        assert_eq!(factory.resolver_chain().len(), 2);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("a.js"),
             Position::default(),
@@ -234,6 +291,61 @@ mod tests {
                 assert!(r.symbols.iter().any(|s| s.name == "run"));
             }
             ResolveOutcome::NotReady => panic!("ready"),
+        }
+        let facts = JavaScriptIndexer.extract_graph(&FileId::new("b.js"), "import { greet } from \"./greet.js\";\n", &p.parse("import { greet } from \"./greet.js\";\n", None).unwrap());
+        assert!(!facts.imports.is_empty());
+    }
+
+    #[test]
+    fn ts_t3_go_to_type_via_fake_tsgo() {
+        use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
+        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use progressive_lsp_index::IndexService;
+        use std::path::PathBuf;
+
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let tmp = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(tmp.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = FakeEngineAdapter::tsgo();
+        fake.set_answers(FakeEngineAdapter::typed_fixture("id", "file:///id.ts"));
+        fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
+        let fake = fake.with_binary(EngineBinary {
+            pack_name: "tsgo".into(),
+            path: PathBuf::from("/p/tsgo"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        sup.try_spawn(
+            "tsgo",
+            &LanguageId::new("typescript"),
+            &PackageId::new("pkg"),
+            PathBuf::from("/ws").as_path(),
+        )
+        .unwrap();
+        let factory = JavaScriptLanguageFactory::typescript()
+            .attach_graph(Arc::new(SharedIndex::new(IndexService::new())))
+            .with_supervisor(Arc::new(sup));
+        assert_eq!(factory.resolver_chain().len(), 3);
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("app.ts"),
+            Position::default(),
+            QueryKind::TypeDefinition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Types);
+                assert!(r.locations.iter().any(|l| l.uri.contains("id.ts")));
+            }
+            other => panic!("{other:?}"),
+        }
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("app.ts"),
+            Position::default(),
+            QueryKind::Hover,
+        )) {
+            ResolveOutcome::Ready(r) => assert_eq!(r.hover.unwrap().signature(), "id: int"),
+            other => panic!("{other:?}"),
         }
     }
 }

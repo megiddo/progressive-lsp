@@ -3,7 +3,10 @@
 use progressive_lsp_core::{EngineError, LanguageId, PrefixLayout};
 
 use crate::adapter::{ChildHandle, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx};
-use crate::discovery::{discover_pack_opt, is_pack_stub, PYTHON_PACK, RUST_PACK};
+use crate::discovery::{
+    discover_pack_opt, is_pack_stub, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, PHPANTOM_PACK,
+    PYTHON_PACK, RUST_PACK, SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
+};
 
 pub struct PackAdapter {
     pack_name: String,
@@ -11,18 +14,47 @@ pub struct PackAdapter {
 }
 
 impl PackAdapter {
-    pub fn python() -> Self {
+    pub fn new(pack_name: impl Into<String>, language: impl Into<LanguageId>) -> Self {
         Self {
-            pack_name: PYTHON_PACK.into(),
-            language: LanguageId::new("python"),
+            pack_name: pack_name.into(),
+            language: language.into(),
         }
     }
 
+    pub fn python() -> Self {
+        Self::new(PYTHON_PACK, LanguageId::new("python"))
+    }
+
     pub fn rust() -> Self {
-        Self {
-            pack_name: RUST_PACK.into(),
-            language: LanguageId::new("rust"),
-        }
+        Self::new(RUST_PACK, LanguageId::new("rust"))
+    }
+
+    pub fn clangd() -> Self {
+        Self::new(CLANGD_PACK, LanguageId::new("c"))
+    }
+
+    pub fn tsgo() -> Self {
+        Self::new(TSGO_PACK, LanguageId::new("typescript"))
+    }
+
+    pub fn phpantom() -> Self {
+        Self::new(PHPANTOM_PACK, LanguageId::new("php"))
+    }
+
+    pub fn superhtml() -> Self {
+        Self::new(SUPERHTML_PACK, LanguageId::new("html"))
+    }
+
+    pub fn biome() -> Self {
+        Self::new(BIOME_PACK, LanguageId::new("css"))
+    }
+
+    pub fn gopls() -> Self {
+        Self::new(GOPLS_PACK, LanguageId::new("go"))
+    }
+
+    pub fn zls() -> Self {
+        Self::new(ZLS_PACK, LanguageId::new("zig"))
     }
 }
 
@@ -44,7 +76,7 @@ impl EngineAdapter for PackAdapter {
             .map_err(|e| EngineError::Spawn(format!("read {}: {e}", ctx.binary.path.display())))?;
         if is_pack_stub(&bytes) {
             return Err(EngineError::Spawn(
-                "stub pack; real ty/rust-analyzer musl ELF is Linux CI / Docker".into(),
+                "stub pack; real engine musl ELF is Linux CI / Docker".into(),
             ));
         }
         Err(EngineError::Spawn(
@@ -54,6 +86,14 @@ impl EngineAdapter for PackAdapter {
 
     fn ready_signal(&self) -> ReadyKind {
         ReadyKind::Initialize
+    }
+
+    fn extra_languages(&self) -> Vec<LanguageId> {
+        match self.pack_name.as_str() {
+            CLANGD_PACK => vec![LanguageId::new("cpp")],
+            TSGO_PACK => vec![LanguageId::new("javascript")],
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -104,5 +144,23 @@ mod tests {
         let rust = PackAdapter::rust();
         assert_eq!(rust.pack_name(), "rust");
         assert!(rust.discover(&prefix).is_none());
+        assert_eq!(PackAdapter::clangd().language_id().as_str(), "c");
+        assert_eq!(
+            PackAdapter::clangd().extra_languages(),
+            vec![LanguageId::new("cpp")]
+        );
+        assert_eq!(PackAdapter::tsgo().pack_name(), "tsgo");
+        assert_eq!(
+            PackAdapter::tsgo().extra_languages(),
+            vec![LanguageId::new("javascript")]
+        );
+        assert_eq!(PackAdapter::phpantom().language_id().as_str(), "php");
+        assert_eq!(PackAdapter::superhtml().language_id().as_str(), "html");
+        assert_eq!(PackAdapter::biome().language_id().as_str(), "css");
+        assert_eq!(PackAdapter::gopls().language_id().as_str(), "go");
+        assert_eq!(PackAdapter::zls().language_id().as_str(), "zig");
+        assert!(PackAdapter::new("phpantom", LanguageId::new("php"))
+            .extra_languages()
+            .is_empty());
     }
 }

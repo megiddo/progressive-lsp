@@ -169,6 +169,13 @@ pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
     let mut supervisor = EngineSupervisor::new(Arc::new(SystemClock), layout.clone());
     supervisor.register(Box::new(PackAdapter::python()));
     supervisor.register(Box::new(PackAdapter::rust()));
+    supervisor.register(Box::new(PackAdapter::clangd()));
+    supervisor.register(Box::new(PackAdapter::tsgo()));
+    supervisor.register(Box::new(PackAdapter::phpantom()));
+    supervisor.register(Box::new(PackAdapter::superhtml()));
+    supervisor.register(Box::new(PackAdapter::biome()));
+    supervisor.register(Box::new(PackAdapter::gopls()));
+    supervisor.register(Box::new(PackAdapter::zls()));
     let _supervisor = supervisor;
     let socket = opts
         .control_socket
@@ -322,7 +329,7 @@ mod tests {
             if matches!(
                 *slot,
                 "java" | "php" | "html" | "css" | "javascript" | "typescript" | "go" | "zig"
-                    | "python" | "rust"
+                    | "python" | "rust" | "c" | "cpp" | "csharp"
             ) {
                 continue;
             }
@@ -343,6 +350,18 @@ mod tests {
         #[cfg(feature = "lang-rust")]
         {
             assert!(a.get(&progressive_lsp_core::LanguageId::new("rust")).is_ok());
+        }
+        #[cfg(feature = "lang-c")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("c")).is_ok());
+        }
+        #[cfg(feature = "lang-cpp")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("cpp")).is_ok());
+        }
+        #[cfg(feature = "lang-csharp")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("csharp")).is_ok());
         }
         let _ = b.registered_ids();
     }

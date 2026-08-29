@@ -1,12 +1,14 @@
-//! CSS T1: selectors / id find-usages as AST+string, highlighting. Not biome.
+//! CSS T1 + biome T3 when pack ready. T1 fallback. No Node CSS LS.
+//! Darwin: biome musl-clean unknown; adapter + Fake tests, real ELF is Linux CI.
 
 use std::sync::Arc;
 
-use progressive_lsp_core::{FileId, LanguageId};
+use progressive_lsp_core::{FileId, LanguageId, PackageId};
+use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    IndexedSymbol, Position, Range, ResolverChain, SymbolIndex, SymbolKind, TreeSitterResolver,
+    GraphIndex, IndexedSymbol, Position, Range, ResolverChain, SymbolKind, TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -42,14 +44,25 @@ impl LanguageIndexer for CssIndexer {
 
 #[derive(Clone)]
 pub struct CssLanguageFactory {
-    index: Option<Arc<dyn SymbolIndex>>,
+    graph: Option<Arc<dyn GraphIndex>>,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 impl CssLanguageFactory {
     pub fn new() -> Self {
-        Self { index: None }
+        Self {
+            graph: None,
+            supervisor: None,
+        }
     }
-    pub fn with_index(index: Arc<dyn SymbolIndex>) -> Self {
-        Self { index: Some(index) }
+    pub fn with_index(graph: Arc<dyn GraphIndex>) -> Self {
+        Self {
+            graph: Some(graph),
+            supervisor: None,
+        }
+    }
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
     }
 }
 impl Default for CssLanguageFactory {
@@ -65,8 +78,17 @@ impl LanguageFactory for CssLanguageFactory {
         grammar_id()
     }
     fn resolver_chain(&self) -> ResolverChain {
-        match &self.index {
-            Some(i) => ResolverChain::new(vec![Box::new(TreeSitterResolver::new(i.clone()))]),
+        match &self.graph {
+            Some(g) => {
+                let t3 = self.supervisor.as_ref().map(|s| {
+                    Box::new(EngineResolver::new(
+                        s.clone(),
+                        language_id(),
+                        PackageId::new("pkg"),
+                    )) as Box<dyn progressive_lsp_resolve::Resolver>
+                });
+                ResolverChain::with_tiers(t3, None, Box::new(TreeSitterResolver::new(g.clone())))
+            }
             None => ResolverChain::empty(),
         }
     }
@@ -224,6 +246,45 @@ mod tests {
                 assert!(r.symbols.iter().any(|s| s.name == "foo_bar"));
             }
             ResolveOutcome::NotReady => panic!("ready"),
+        }
+    }
+
+    #[test]
+    fn css_t3_via_fake_biome() {
+        use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
+        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter};
+        use progressive_lsp_index::{IndexService, SharedIndex};
+        use std::path::PathBuf;
+
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let tmp = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(tmp.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = FakeEngineAdapter::biome().with_binary(EngineBinary {
+            pack_name: "biome".into(),
+            path: PathBuf::from("/p/biome"),
+            sha256: [0; 32],
+        });
+        fake.set_answers(FakeEngineAdapter::typed_fixture("main-box", "file:///a.css"));
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        sup.try_spawn(
+            "biome",
+            &LanguageId::new("css"),
+            &PackageId::new("pkg"),
+            PathBuf::from("/ws").as_path(),
+        )
+        .unwrap();
+        let factory = CssLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
+            .with_supervisor(Arc::new(sup));
+        assert_eq!(factory.resolver_chain().len(), 2);
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("a.css"),
+            Position::default(),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
+            other => panic!("{other:?}"),
         }
     }
 }

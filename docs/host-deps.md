@@ -55,3 +55,7 @@ Rust pinned toolchain, musl cc, optionally Go/Zig/PHP **in a pinned container** 
 ### M3 engine packs (ty, rust-analyzer)
 
 `xtask dist --pack python,rust --dest DIR` writes `$PREFIX/engines/python/ty` and `$PREFIX/engines/rust/rust-analyzer` plus `manifest.json` (SHA256). On Darwin this host writes **stub** bytes (`progressive-lsp-pack-stub:…`) and `engines/DARWIN_CI_GAP.txt`. Those stubs are not musl ELFs and must not be `check-static` greened. Building real static ty / rust-analyzer is Linux CI / Docker (same class as `xtask musl`). Tests use `FakeEngineAdapter` and fixture hashes; they do not download LLVM.
+
+### M4 engine packs (clangd, tsgo, PHPantom, superhtml, biome, gopls, zls)
+
+`xtask dist` **slim** (default, also `--pack slim` / `--slim`) writes python, rust, phpantom, superhtml, biome stubs. **Full** (`--pack full` / `--full`) adds clangd, tsgo, gopls, zls. Slim is the Java-only default and excludes those heavy packs. csharp-ls is **not** a pack (T1/T2 ceiling). Darwin still writes stubs + `DARWIN_CI_GAP.txt` only. Real musl ELFs remain Linux CI / Docker. Fail closed: do not ship `DT_NEEDED`. One-shot `cmake -DCMAKE_EXPORT_COMPILE_COMMANDS` only if `CMakeLists.txt` already exists — we do not invent a build. Project `go` / `zig` on PATH are project artifacts, not bundled SDKs.

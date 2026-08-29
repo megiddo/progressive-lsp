@@ -4,12 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "CSS LanguageFactory T1 (selectors, highlighting)"
+description = "CSS LanguageFactory T1 + biome T3 (no Node CSS LS)"
 
 [dependencies]
 progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-resolve.workspace = true
 tree-sitter.workspace = true
 tree-sitter-css.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

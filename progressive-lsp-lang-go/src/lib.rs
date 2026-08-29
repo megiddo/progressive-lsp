@@ -1,13 +1,16 @@
-//! Go T1 + go.mod. Highlight, document symbols, intra-module F12. No gopls.
+//! Go T1/T2 + gopls T3 when pack and project go.mod/go.work are present.
+//! Do not bundle a Go SDK. Missing project toolchain → T2/T1.
 
+use std::path::Path;
 use std::sync::Arc;
 
-use progressive_lsp_core::{FileId, LanguageId};
+use progressive_lsp_core::{FileId, LanguageId, PackageId};
+use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    GraphIndex, HeuristicResolver, IndexedSymbol, Position, Range, ResolverChain,
-    SymbolKind, TreeSitterResolver,
+    GraphIndex, HeuristicResolver, IndexedSymbol, Position, Range, ResolverChain, SymbolKind,
+    TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -19,6 +22,19 @@ pub fn grammar_id() -> &'static str {
 }
 pub fn tree_sitter_language() -> tree_sitter::Language {
     tree_sitter_go::LANGUAGE.into()
+}
+
+pub fn project_go_present(root: &Path) -> bool {
+    root.join("go.mod").is_file() || root.join("go.work").is_file()
+}
+
+pub fn go_degrade_reason(has_pack: bool, has_project: bool) -> Option<&'static str> {
+    match (has_pack, has_project) {
+        (true, true) => None,
+        (false, false) => Some("no gopls pack and no go.mod/go.work; T2/T1"),
+        (false, true) => Some("no gopls pack; T2/T1"),
+        (true, false) => Some("no project go.mod/go.work; T2/T1"),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -44,13 +60,38 @@ impl LanguageIndexer for GoIndexer {
 #[derive(Clone)]
 pub struct GoLanguageFactory {
     graph: Option<Arc<dyn GraphIndex>>,
+    supervisor: Option<Arc<EngineSupervisor>>,
+    has_pack: bool,
+    has_project: bool,
 }
 impl GoLanguageFactory {
     pub fn new() -> Self {
-        Self { graph: None }
+        Self {
+            graph: None,
+            supervisor: None,
+            has_pack: false,
+            has_project: false,
+        }
     }
     pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
-        Self { graph: Some(graph) }
+        Self {
+            graph: Some(graph),
+            supervisor: None,
+            has_pack: false,
+            has_project: false,
+        }
+    }
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
+    }
+    pub fn with_pack(mut self, has: bool) -> Self {
+        self.has_pack = has;
+        self
+    }
+    pub fn with_project(mut self, has: bool) -> Self {
+        self.has_project = has;
+        self
     }
 }
 impl Default for GoLanguageFactory {
@@ -67,10 +108,24 @@ impl LanguageFactory for GoLanguageFactory {
     }
     fn resolver_chain(&self) -> ResolverChain {
         match &self.graph {
-            Some(g) => ResolverChain::new(vec![
-                Box::new(HeuristicResolver::new(g.clone())),
-                Box::new(TreeSitterResolver::new(g.clone())),
-            ]),
+            Some(g) => {
+                let t3 = if self.has_pack && self.has_project {
+                    self.supervisor.as_ref().map(|s| {
+                        Box::new(EngineResolver::new(
+                            s.clone(),
+                            language_id(),
+                            PackageId::new("pkg"),
+                        )) as Box<dyn progressive_lsp_resolve::Resolver>
+                    })
+                } else {
+                    None
+                };
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(Box::new(HeuristicResolver::new(g.clone()))),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
+            }
             None => ResolverChain::empty(),
         }
     }
@@ -253,5 +308,59 @@ mod tests {
             }
         }
         panic!("{needle}");
+    }
+
+    #[test]
+    fn go_t3_when_pack_and_project_else_t2() {
+        use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
+        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use std::path::PathBuf;
+
+        assert!(project_go_present(tempfile::tempdir().unwrap().path()) == false);
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::write(proj.path().join("go.mod"), "module example.com/x\n").unwrap();
+        assert!(project_go_present(proj.path()));
+        assert!(go_degrade_reason(false, true).unwrap().contains("no gopls pack"));
+        assert!(go_degrade_reason(true, false).is_some());
+        assert!(go_degrade_reason(true, true).is_none());
+        assert!(go_degrade_reason(false, false).is_some());
+
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let tmp = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(tmp.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = FakeEngineAdapter::gopls();
+        fake.set_answers(FakeEngineAdapter::typed_fixture("Hello", "file:///greet.go"));
+        fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
+        let fake = fake.with_binary(EngineBinary {
+            pack_name: "gopls".into(),
+            path: PathBuf::from("/p/gopls"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        sup.try_spawn(
+            "gopls",
+            &LanguageId::new("go"),
+            &PackageId::new("pkg"),
+            PathBuf::from("/ws").as_path(),
+        )
+        .unwrap();
+        let index = SharedIndex::new(IndexService::new());
+        let t3 = GoLanguageFactory::with_graph(Arc::new(index.clone()))
+            .with_supervisor(Arc::new(sup))
+            .with_pack(true)
+            .with_project(true);
+        assert_eq!(t3.resolver_chain().len(), 3);
+        match t3.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("main.go"),
+            Position::default(),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
+            other => panic!("{other:?}"),
+        }
+        let degrade = GoLanguageFactory::with_graph(Arc::new(index)).with_pack(true).with_project(false);
+        assert_eq!(degrade.resolver_chain().len(), 2);
     }
 }

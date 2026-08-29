@@ -64,9 +64,8 @@ impl PackSelector for CensusSelector {
         if c.pyproject_toml {
             packs.push(PackId::new("ty"));
         }
-        if c.csproj {
-            packs.push(PackId::new("csharp-ls"));
-        }
+        // C# T1/T2 ceiling in v1: csharp-ls AOT did not produce a musl ELF (spike/csharp-ls.md).
+        let _ = c.csproj;
         if c.tsconfig_json || c.package_json {
             packs.push(PackId::new("tsgo"));
         }
@@ -115,7 +114,6 @@ mod tests {
             ("cc", |c| c.compile_commands = true, "clangd"),
             ("cmake", |c| c.cmake_lists = true, "clangd"),
             ("py", |c| c.pyproject_toml = true, "ty"),
-            ("cs", |c| c.csproj = true, "csharp-ls"),
             ("ts", |c| c.tsconfig_json = true, "tsgo"),
             ("pkg", |c| c.package_json = true, "tsgo"),
             ("php", |c| c.composer_json = true, "phpantom"),
@@ -129,6 +127,8 @@ mod tests {
         }
         let java_only = CensusSelector.select(&probe_with(|c| c.java_markers = true));
         assert!(java_only.is_empty(), "Java has no T3 pack");
+        let csharp = CensusSelector.select(&probe_with(|c| c.csproj = true));
+        assert!(csharp.is_empty(), "C# T1/T2 ceiling: no csharp-ls pack");
     }
 
     #[test]

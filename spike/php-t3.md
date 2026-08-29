@@ -9,3 +9,5 @@
 **Fail closed:** if neither candidate is `check-static` clean → PHP T2 ceiling.
 
 **M0 result:** notes only. Decision recorded when M4.4 lands.
+
+**M4.4 winner: PHPantom.** Rust engine pack (`phpantom`). Fake adapter + T2 `use`/hierarchy fallback when the pack is absent. Static phpactor was not shipped (no fully static ELF on this host). Host `php` remains forbidden.

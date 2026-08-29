@@ -1,19 +1,19 @@
 [package]
-name = "progressive-lsp-lang-html"
+name = "progressive-lsp-lang-csharp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "HTML LanguageFactory T1 + superhtml T3"
+description = "C# LanguageFactory T1/T2 ceiling (no csharp-ls pack in v1)"
 
 [dependencies]
 progressive-lsp-core.workspace = true
-progressive-lsp-engine.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-resolve.workspace = true
+progressive-lsp-workspace.workspace = true
 tree-sitter.workspace = true
-tree-sitter-html.workspace = true
+tree-sitter-c-sharp.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
