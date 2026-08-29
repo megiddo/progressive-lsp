@@ -1,0 +1,14 @@
+/target/
+**/*.rs.bk
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.orig
+coverage/
+lcov.info
+profraw/
+*.profraw
+/tmp/
+/spike/.cache/
