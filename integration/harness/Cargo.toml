@@ -10,3 +10,6 @@ description = "Tiny stdio LSP driver for IT-1 handshake and IT-2 stock backends.
 
 [dependencies]
 serde_json = "1.0"
+progressive-lsp-control = { path = "../../progressive-lsp-control" }
+progressive-lsp-install = { path = "../../progressive-lsp-install" }
+progressive-lsp-engine = { path = "../../progressive-lsp-engine" }

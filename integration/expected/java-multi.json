@@ -1,0 +1,10 @@
+{
+  "corpus": "java-multi",
+  "language": "java",
+  "language_id": "java",
+  "entry": "app/src/main/java/com/example/app/App.java",
+  "find": "Lib",
+  "workspace_symbol": "App",
+  "ghost_sibling": "lib/src/main/java/com/example/lib/Lib.java",
+  "corpus_sha": "in-tree"
+}

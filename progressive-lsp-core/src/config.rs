@@ -29,6 +29,35 @@ impl Config {
         })
     }
 
+    /// Snapshot for `GetConfig`. Only known keys; unknown keys are never invented.
+    pub fn to_toml(&self) -> String {
+        let mut out = String::new();
+        if !self.packs.is_empty() {
+            out.push_str("packs = [");
+            for (i, p) in self.packs.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!("\"{}\"", escape_toml_string(p)));
+            }
+            out.push_str("]\n");
+        }
+        if !self.scripts.is_empty() {
+            out.push_str("scripts = [");
+            for (i, p) in self.scripts.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!("\"{}\"", escape_toml_string(p)));
+            }
+            out.push_str("]\n");
+        }
+        if let Some(prefix) = &self.prefix {
+            out.push_str(&format!("prefix = \"{}\"\n", escape_toml_string(prefix)));
+        }
+        out
+    }
+
     /// Overlay wins for keys it **sets**. Unset keys fall through.
     pub fn merge(&self, overlay: &ConfigOverlay) -> Self {
         Self {
@@ -98,6 +127,10 @@ fn string_array(value: &toml::Value, key: &str) -> Result<Vec<String>, ConfigErr
         out.push(s.to_string());
     }
     Ok(out)
+}
+
+fn escape_toml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn string_value(value: &toml::Value, key: &str) -> Result<String, ConfigError> {
@@ -178,6 +211,26 @@ prefix = "/tmp/x"
         let merged = base.merge(&overlay);
         assert!(merged.packs.is_empty());
         assert_eq!(merged.prefix.as_deref(), Some("/n"));
+    }
+
+    #[test]
+    fn to_toml_round_trips_known_keys() {
+        let cfg = Config {
+            packs: vec!["python".into(), "rust".into()],
+            scripts: vec!["deny.rhai".into(), "watch.rhai".into()],
+            prefix: Some("/tmp/x".into()),
+        };
+        let snap = cfg.to_toml();
+        assert!(snap.contains("\"deny.rhai\", \"watch.rhai\""));
+        let load = Config::from_toml(&snap).unwrap();
+        assert_eq!(load.config, cfg);
+        assert_eq!(Config::empty().to_toml(), "");
+        let quote = Config {
+            packs: vec!["a\"b".into()],
+            scripts: vec![],
+            prefix: None,
+        };
+        assert!(quote.to_toml().contains("\\\""));
     }
 
     #[test]

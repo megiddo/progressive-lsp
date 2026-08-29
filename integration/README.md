@@ -22,7 +22,7 @@ These are **not** the crate unit/mutation suite (`docs/testing.md` in the produc
 
 ## Harness sketch (for the implementer)
 
-Layout in this directory (IT-1 on `pd1`; IT-2 on `pd2`; IT-3 stays empty until `pd3`):
+Layout in this directory (IT-1 on `pd1`; IT-2 on `pd2`; IT-3 on `pd3`):
 
 ```text
 integration/
@@ -31,7 +31,7 @@ integration/
   02-lsp-backends.md
   03-extended-protocol.md
   compose.yaml          # Arch / Rocky / Debian / Ubuntu userspaces
-  harness/              # plsp-it1 handshake + backend + run-it1.sh / run-it2.sh
+  harness/              # plsp-it1 handshake + backend + progressive + run-it1.sh / run-it2.sh / run-it3.sh
   artifacts/            # CI drops the musl ELF here (not committed)
   corpora/              # pins.json + fetch-at-SHA (PD2); csharp-mini snippet
   expected/             # golden find / ghost siblings per corpus
@@ -40,6 +40,8 @@ integration/
 **Darwin:** `harness/run-it1.sh auto` is host_smoke + a gap note when Docker or a musl ELF is missing. Do not treat that as IT-1.1. Linux CI bind-mounts a `check-static` musl ELF and runs the four distros.
 
 **IT-2 Darwin:** `harness/run-it2.sh auto` runs stock stdio against native Mach-O on in-tree supplements + fetched corpora. T3 rows are `skip_pack_missing` when packs are stubs. That is **not** a typed hover green. Linux CI with real musl packs is the T3 gate.
+
+**IT-3 Darwin:** `harness/run-it3.sh auto` runs P-java / P-py / P-ts against native Mach-O with `--control-socket` and Envelope dispatch. T3 types rows are `skip_pack_missing` on stubs. `--mux` is `pending_mux` — do not silently retest the socket. Linux CI with real musl packs is the T3 gate.
 
 **Client:** a tiny stdio LSP driver (initialize → didOpen → request → shutdown). Progressive tests add a Unix-socket protobuf client using `progressive-lsp-control`. Do not use Neovim as the only gate; a headless driver is reproducible.
 

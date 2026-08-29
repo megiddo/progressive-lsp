@@ -106,3 +106,11 @@ message ReloadScriptsRequest {}
 message ReloadScriptsResponse {
   Status status = 1;
 }
+
+// Public dispatch contract (docs/user/progressive-v1-api.md).
+// Every control frame after the u32be length prefix is this envelope.
+message Envelope {
+  string method = 1;      // RPC or push name: "GetConfig", "WatchBatch", …
+  uint64 request_id = 2;  // echoed on the matching reply. 0 on server pushes.
+  bytes body = 3;         // protobuf of the message named by method
+}

@@ -88,6 +88,7 @@ Separate from this unit/mutation gate. Spec: [../integration/README.md](../integ
 - Nightly / release, not every library PR.
 - Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate.
 - IT-2 may wait on `workDoneProgress` with a deadline (poll protocol, not `sleep(5)`). T3 rows are `skip_pack_missing` when packs are Darwin stubs — not typed-hover greens.
+- IT-3 may deadline-poll the control socket for `WatchBatch` / `TierReady`. `--mux` is `pending_mux` if unimplemented. T3 types rows stay `skip_pack_missing` on Darwin stubs.
 
 ## Milestone sign-off (every WP)
 

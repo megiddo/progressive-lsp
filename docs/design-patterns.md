@@ -112,6 +112,12 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `ExpectedGolden` | Schema / DTO | 0-based `find` → line/character; integration only |
 | `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |
 | `It2ReportRow` | DTO | `language`, `corpus_sha`, `pack`, `tier_observed`, `definition_ok`, `tokens_ok`, `ghost_edit_ok`, `notes`; T3 stub → `skip_pack_missing` |
+| `Envelope` | DTO / public dispatch | `method` + `request_id` + `body`; replies echo id; pushes use `request_id == 0`; never `$/` |
+| `ControlPlane` | Port | Proto RPCs call the composition-root host; control crate does not own config/watch/install internals |
+| `ControlServer::dispatch_envelope` | Command | Case-sensitive method names match the API RPC table; unknown method → non-zero `Status` |
+| `bind_control_socket` / `spawn_control_accept` | Adapter | Unix socket beside stdio LSP; length-prefixed Envelope; stock serve without `--control-socket` still works |
+| `It3ProgressiveDriver` (`plsp-it1 progressive`) | Adapter | LSP stdio + Envelope socket; IT-3.1–3.7; `--mux` is `pending_mux` (do not silently retest socket) |
+| `It3ReportRow` | DTO | `backend`, `rpc`, `result`, `notes`; T3 stub → `skip_pack_missing`; mux → `pending_mux` |
 
 ## Patterns we do not use (v1)
 

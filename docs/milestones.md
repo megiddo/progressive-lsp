@@ -285,11 +285,30 @@ Each language on a **pinned SHA** real corpus. Stock stdio LSP only. Spec: [inte
 
 ## PD3 — IT-3 extended protocol
 
-**Status:** not started. Branch `pd3` on `pd2`.
+**Status: SIGNED OFF** on branch `pd3`. Do not start PD4 until this section stays signed off.
 
 Java / Python+ty / TypeScript+tsgo progressive client. Envelope + FilesSince / WatchBatch / TierReady / InstallPacks. Spec: [integration/03-extended-protocol.md](../integration/03-extended-protocol.md), API: [user/progressive-v1-api.md](user/progressive-v1-api.md).
 
 **Exit:** IT-3.1–3.7 as specified; mux `pending_mux` if unimplemented.
+
+**Sign-off checklist (PD3)**
+
+- [x] Exit criteria for this WP met (Envelope dispatch + IT-3.1–3.7 on P-java / P-py / P-ts; mux is `pending_mux`)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **95.97% lines**
+- [x] 80% mutants on listed crates that exist — control **83 caught / 93 scored (89.2%)**, 1 unviable; core **119 caught / 133 scored (89.5%)**, 10 unviable
+- [x] No `sleep` in crate unit tests (IT-3 may deadline-poll the control socket)
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `Envelope` / `ControlPlane` / `dispatch_envelope` / control-socket Adapter / `It3ProgressiveDriver` / `It3ReportRow`
+- [x] Docs in this tree updated if a locked decision was refined (`InstallPacks` requires restart `serve` to attach an engine)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD3 unit gate on macOS.
+- `integration/harness/run-it3.sh auto` runs P-java / P-py / P-ts against native Mach-O with `--control-socket` and Envelope frames. Default `serve` without `--control-socket` stays stock (IT-2).
+- T3 types rows (`ty`, `tsgo`) are `skip_pack_missing` when the prefix holds Darwin stubs. That is **not** a typed hover green.
+- `--mux` is `pending_mux` — do not silently retest the socket.
+- Linux CI with real musl packs is the T3 gate — same class as the M0 musl gap.
 
 ## PD4 — T2 Strategy bake-off
 

@@ -1,12 +1,13 @@
-# IT-1 / IT-2 harness
+# IT-1 / IT-2 / IT-3 harness
 
 Tiny stdio LSP driver:
 
 - `plsp-it1 handshake` — initialize → shutdown (IT-1)
 - `plsp-it1 backend` — stock definition / hover / tokens / didChange / ghost / no `$/` FilesSince (IT-2)
 - `plsp-it1 fetch` — URL+SHA corpora into a gitignored cache (no submodule mirrors)
+- `plsp-it1 progressive` — stdio LSP + Envelope control socket (IT-3). `--mux` is `pending_mux`.
 
-`run-it1.sh` covers the four-distro compose matrix. `run-it2.sh` covers per-language stock LSP.
+`run-it1.sh` covers the four-distro compose matrix. `run-it2.sh` covers per-language stock LSP. `run-it3.sh` covers P-java / P-py / P-ts progressive cases.
 
 This crate is **not** a workspace member. It does not enter the 95% llvm-cov denominator.
 

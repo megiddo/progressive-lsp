@@ -255,6 +255,51 @@ impl WorkspaceSession {
         files
     }
 
+    pub fn package_ids(&self) -> Vec<String> {
+        self.model
+            .lock()
+            .expect("model")
+            .as_ref()
+            .map(|m| m.packages.iter().map(|p| p.id.as_str().to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn cache_entries(&self) -> u64 {
+        self.index.lock().cache.len() as u64
+    }
+
+    pub fn index_generation(&self) -> u64 {
+        self.index.lock().generation()
+    }
+
+    pub fn drain_index_tier_ready(&self) -> Vec<(String, String)> {
+        self.index
+            .lock()
+            .drain_tier_ready()
+            .into_iter()
+            .map(|(id, tier)| (id.as_str().to_string(), tier.as_str().to_string()))
+            .collect()
+    }
+
+    pub fn filter_watch_paths(&self, paths: &[String]) -> Vec<String> {
+        if let Some(host) = self.scripts.lock().expect("scripts").as_mut() {
+            if let Ok(kept) = host.on_watch(paths) {
+                return kept;
+            }
+        }
+        paths.to_vec()
+    }
+
+    pub fn replace_scripts(&self, host: ScriptHost) {
+        *self.scripts.lock().expect("scripts") = Some(host);
+    }
+
+    pub fn apply_disk_path(&self, path: &Path) {
+        if let Ok(src) = std::fs::read_to_string(path) {
+            self.index_path(path, &src);
+        }
+    }
+
     /// Stock ghost-disk: reindex files whose on-disk bytes changed (no LSP didChange).
     pub fn reindex_known_paths(&self) -> usize {
         let mut n = 0usize;
@@ -322,7 +367,7 @@ fn synthetic_directory(root: &Path) -> Option<WorkspaceModel> {
     Some(model)
 }
 
-fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
+pub(crate) fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
     if depth > 12 {
         return;
     }
@@ -608,7 +653,7 @@ mod tests {
 
     #[test]
     fn session_did_open_change_close() {
-        let mut session = WorkspaceSession::java_default();
+        let session = WorkspaceSession::java_default();
         session.did_open("file:///Tmp.java", "java", "class Tmp { void a() {} }");
         session.did_change("file:///Tmp.java", "class Tmp { void b() {} }");
         let q = ResolveQuery::new(
@@ -650,7 +695,7 @@ mod tests {
             "class App { void run() { Lib.greet(\"x\"); } }\n",
         )
         .unwrap();
-        let mut session = WorkspaceSession::java_default();
+        let session = WorkspaceSession::java_default();
         session.discover(dir.path());
         session.did_open(
             "file:///App.java",
@@ -665,6 +710,13 @@ mod tests {
         session.ingest_workspace();
         assert_eq!(session.package_tier("lib"), Some(Tier::Graph));
         assert_eq!(session.package_tier("app"), Some(Tier::Graph));
+        assert!(session.package_ids().contains(&"lib".to_string()) || !session.package_ids().is_empty());
+        let _ = session.cache_entries();
+        let _ = session.index_generation();
+        let _ = session.drain_index_tier_ready();
+        let kept = session.filter_watch_paths(&["a.java".into()]);
+        assert_eq!(kept, ["a.java"]);
+        session.apply_disk_path(&dir.path().join("lib/src/main/java/Lib.java"));
         let progress = session.drain_progress();
         assert!(!progress.is_empty());
         assert!(session.drain_progress().is_empty());

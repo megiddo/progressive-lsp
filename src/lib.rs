@@ -18,6 +18,7 @@ use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
 use progressive_lsp_script::ScriptHost;
 
+mod control_socket;
 mod serve_host;
 mod session;
 pub use serve_host::{root_from_params, ServeDiskWatch, ServeHost};
@@ -199,13 +200,22 @@ where
     supervisor.register(Box::new(PackAdapter::gopls()));
     supervisor.register(Box::new(PackAdapter::zls()));
     let _supervisor = supervisor;
-    let host = ServeHost::new(layout)?;
-    let socket = opts
-        .control_socket
-        .as_ref()
-        .map(|p| p.display().to_string());
+    let host = Arc::new(ServeHost::new(layout)?);
+    let advertised = opts.control_socket.as_ref().map(|p| {
+        control_socket::advertised_socket_path(p)
+            .display()
+            .to_string()
+    });
+    if let Some(path) = &opts.control_socket {
+        let abs = control_socket::advertised_socket_path(path);
+        let listener = control_socket::bind_control_socket(&abs)?;
+        let srv = ControlServer::new("")
+            .with_plane(Arc::clone(&host) as Arc<dyn progressive_lsp_control::ControlPlane>)
+            .with_progressive(true);
+        control_socket::spawn_control_accept(listener, Arc::new(srv), Arc::clone(&host));
+    }
     let _ = opts.control_fd;
-    let facade = LspFacade::new(socket, opts.mux).with_intelligence(Arc::new(host));
+    let facade = LspFacade::new(advertised, opts.mux).with_intelligence(Arc::clone(&host) as _);
     if opts.mux {
         let srv = ControlServer::new("").with_progressive(true);
         let mut reader = reader;
@@ -569,6 +579,33 @@ mod tests {
             .serve(std::io::Cursor::new(handshake_bytes(None)), &mut out)
             .unwrap();
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn serve_with_io_control_socket_is_advertised() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let sock = prefix.path().join("run/control.sock");
+        let mut out = Vec::new();
+        serve_with_io(
+            ServeOpts {
+                prefix: Some(prefix.path().to_path_buf()),
+                control_socket: Some(sock.clone()),
+                control_fd: None,
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(Some(workspace.path()))),
+            &mut out,
+        )
+        .unwrap();
+        let texts = framing::decode_all(&out).unwrap();
+        let resp: serde_json::Value = serde_json::from_slice(&texts[0]).unwrap();
+        let cap = &resp["result"]["capabilities"]["experimental"]["progressiveLsp"];
+        assert_eq!(cap["version"], "v1");
+        assert_eq!(cap["mux"], false);
+        let advertised = cap["socket"].as_str().unwrap();
+        assert!(advertised.ends_with("control.sock"), "{advertised}");
+        assert!(!advertised.is_empty());
     }
 
     #[test]

@@ -167,7 +167,7 @@ Unless noted, every response carries `Status`. `code == 0` means the write (if a
 
 **Success / error.** `code == 0` — packs are in place. Non-zero (including hash failure) — no exec of the bad blob; previous binaries stay as they were.
 
-**Relates to.** CLI `install` in the [README](README.md). After a successful install, wait for `TierReady` when that language’s engine comes up. `TierStatus` / `IndexStatus` show the new ceiling. Does not replace `textDocument/definition` — it only makes a richer engine available.
+**Relates to.** CLI `install` in the [README](README.md). After a successful install, **restart `serve` to attach the engine** (v1 does not hot-spawn a newly written pack in the same process). Then wait for `TierReady` when that language’s engine comes up. `TierStatus` / `IndexStatus` show the new ceiling. Does not replace `textDocument/definition` — it only makes a richer engine available. Darwin stub packs never attach a types engine; Linux CI with real musl packs is the T3 gate.
 
 ### WatchSubscribe
 
@@ -311,7 +311,7 @@ Open buffers still use LSP `didChange`. This recipe is for disk edits and reconn
 
 1. `InstallPacks` with the pack ids (same names as `progressive-lsp install --packs`).
 2. On hash failure, keep the old binary; do not restart.
-3. On success, keep the LSP session up. Expect `TierReady` when that language’s engine comes up (`tier` becomes `types` for packages that can use it).
+3. On success, keep the LSP session up, then **restart `serve` to attach the engine**. After restart, expect `TierReady` when that language’s engine comes up (`tier` becomes `types` for packages that can use it).
 4. Refresh tokens / navigation for those packages. `GetConfig` will show the new `packs` if you also persisted them via `SetConfig`.
 
 ---

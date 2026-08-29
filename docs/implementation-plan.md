@@ -176,10 +176,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## PD3 (`pd3` branch)
 
+**Status: SIGNED OFF.** Do not open `pd4` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| PD3.1 | Control Envelope if missing | PD2 | [docs/user/progressive-v1-api.md](user/progressive-v1-api.md) |
-| PD3.2 | IT-3 Java / Python / TS progressive | PD3.1 | [integration/03-extended-protocol.md](../integration/03-extended-protocol.md) |
+| PD3.1 | Control Envelope if missing | PD2 | **SIGNED OFF.** Public `Envelope` dispatch (`method` + `request_id` + `body`) |
+| PD3.2 | IT-3 Java / Python / TS progressive | PD3.1 | **SIGNED OFF.** [integration/03-extended-protocol.md](../integration/03-extended-protocol.md). Mux `pending_mux`. T3 stubs → `skip_pack_missing` |
 
 ## PD4 (`pd4` branch)
 

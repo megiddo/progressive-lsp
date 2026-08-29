@@ -1,5 +1,7 @@
-//! Tiny stdio LSP driver for IT-1 handshake and IT-2 stock backends.
+//! Tiny stdio LSP driver for IT-1 handshake, IT-2 stock backends, and IT-3 Envelope.
 //! Integration only. No `$/` FilesSince. Not a workspace member.
+
+mod progressive;
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -14,6 +16,7 @@ const USAGE: &str = "\
 plsp-it1 handshake [--root-uri URI] [--deadline-ms N] [--assert-stock] -- <server> [args...]
 plsp-it1 backend --expected JSON --root DIR [--deadline-ms N] [--t3-pack NAME] -- <server> [args...]
 plsp-it1 fetch --pins JSON --cache DIR [--id ID]
+plsp-it1 progressive --backend ID --root DIR --expected JSON --prefix DIR --control-socket PATH [--deadline-ms N] [--mux] -- <server> [args...]
 ";
 
 fn main() {
@@ -50,6 +53,15 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "fetch" => {
             let opts = parse_fetch(&args[1..])?;
             fetch_pins(&opts)?;
+            Ok(())
+        }
+        "progressive" => {
+            let opts = progressive::parse_progressive(&args[1..])?;
+            let row = progressive::run_progressive(&opts)?;
+            println!("{}", serde_json::to_string_pretty(&row).map_err(|e| e.to_string())?);
+            if row["result"] == "fail" {
+                return Err(format!("progressive fail: {}", row["notes"]));
+            }
             Ok(())
         }
         other => Err(format!("unknown command: {other}\n{USAGE}")),
@@ -300,19 +312,19 @@ fn assert_stock_caps(result: &Value) -> Result<(), String> {
     Ok(())
 }
 
-struct ExpectedGolden {
-    corpus: String,
+pub(crate) struct ExpectedGolden {
+    pub(crate) corpus: String,
     language: String,
-    language_id: String,
-    entry: String,
-    find: String,
+    pub(crate) language_id: String,
+    pub(crate) entry: String,
+    pub(crate) find: String,
     workspace_symbol: String,
     ghost_sibling: Option<String>,
     expected_ceiling: bool,
     corpus_sha: String,
 }
 
-fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
+pub(crate) fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let v: Value = serde_json::from_str(&raw).map_err(|e| format!("golden json: {e}"))?;
     Ok(ExpectedGolden {
@@ -332,7 +344,7 @@ fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
     })
 }
 
-fn find_position(src: &str, needle: &str) -> Result<(u32, u32), String> {
+pub(crate) fn find_position(src: &str, needle: &str) -> Result<(u32, u32), String> {
     if needle.is_empty() {
         return Ok((0, 0));
     }
@@ -697,7 +709,7 @@ fn row(
     })
 }
 
-fn location_ok(v: &Value) -> bool {
+pub(crate) fn location_ok(v: &Value) -> bool {
     v.as_array().map(|a| !a.is_empty()).unwrap_or(false)
 }
 
@@ -715,7 +727,7 @@ fn hover_ok(v: &Value) -> bool {
     contents.as_array().map(|a| !a.is_empty()).unwrap_or(false)
 }
 
-fn recv_id(
+pub(crate) fn recv_id(
     rx: &mpsc::Receiver<Result<Value, String>>,
     id: i64,
     deadline: Duration,
@@ -736,7 +748,7 @@ fn recv_id(
     }
 }
 
-fn wait_progress(
+pub(crate) fn wait_progress(
     rx: &mpsc::Receiver<Result<Value, String>>,
     deadline: Duration,
     start: Instant,
@@ -877,7 +889,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_rpc<W: Write>(w: &mut W, body: &Value) -> Result<(), String> {
+pub(crate) fn write_rpc<W: Write>(w: &mut W, body: &Value) -> Result<(), String> {
     let bytes = serde_json::to_vec(body).map_err(|e| e.to_string())?;
     write!(w, "Content-Length: {}\r\n\r\n", bytes.len()).map_err(|e| e.to_string())?;
     w.write_all(&bytes).map_err(|e| e.to_string())?;
@@ -894,14 +906,14 @@ fn read_rpc_until<R: BufRead>(
     serde_json::from_slice(&bytes).map_err(|e| format!("json: {e}"))
 }
 
-fn remaining(deadline: Duration, start: Instant) -> Result<Duration, String> {
+pub(crate) fn remaining(deadline: Duration, start: Instant) -> Result<Duration, String> {
     deadline
         .checked_sub(start.elapsed())
         .filter(|d| !d.is_zero())
         .ok_or_else(|| "deadline exceeded waiting for LSP response".into())
 }
 
-fn read_message<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, String> {
+pub(crate) fn read_message<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, String> {
     let mut content_length = None;
     loop {
         let mut line = String::new();
@@ -1045,6 +1057,7 @@ mod tests {
         let err = run(vec!["help".into()]).unwrap_err();
         assert!(err.contains("handshake"));
         assert!(err.contains("backend"));
+        assert!(err.contains("progressive"));
         assert!(run(vec!["nope".into()]).is_err());
     }
 
