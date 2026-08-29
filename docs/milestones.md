@@ -199,7 +199,7 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M6 — Deploy, contracts as standard (~3 weeks)
 
-**Status: SIGNED OFF** on branch `m6`. v1 is complete. There is no M7. Do not open a next milestone branch.
+**Status: SIGNED OFF** on branch `m6` (merged to `main`). v1 product exits are complete. Post-dev work is **PD0–PD4**, stacked on `main` — not M7.
 
 - `xtask dist` per-triple tarballs + `manifest.json` + SHA256; slim vs full.
 - Install CLI: `install` / `serve` / `--control-socket` / `--control-fd` / `--mux`; `on_install_verify`; FakeRemoteTransport hash mismatch + atomic replace.
@@ -211,6 +211,131 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 **Darwin vs CI:** this host’s `xtask dist` tarballs contain **stubs**, not musl ELFs. Do not claim `check-static` green on them. The real dist is Linux CI per-triple musl (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`).
 
-## Post-v1 (not scheduled)
+## PD0 — Ingest post-dev docs
+
+**Status: SIGNED OFF** on branch `pd0`. Design + user docs in-tree. Do not start PD1 crates until this section is signed off (it is).
+
+**Scope:** copy user README/API, integration designs, T2 spike notes. No integration harness yet.
+
+**Exit**
+
+- [x] [docs/user/README.md](user/README.md) and [docs/user/progressive-v1-api.md](user/progressive-v1-api.md) in-tree
+- [x] [integration/](../integration/README.md) IT-1/IT-2/IT-3 designs
+- [x] [docs/spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md)
+- [x] branching / implementation-plan list PD1–PD4
+
+**Sign-off checklist (PD0)**
+
+- [x] Exit criteria met
+- [x] Tests / llvm-cov / mutants / `sleep` / `check-static` — **N/A** (docs only)
+- [x] Docs in this tree updated
+
+## PD1 — IT-1 deploy and config
+
+**Status: SIGNED OFF** on branch `pd1`. Do not start PD2 until this section stays signed off.
+
+Headless install/`serve`/`initialize` on Arch, Rocky/UBI, Debian, Ubuntu containers using a **prebuilt** static core (Linux CI). No Node/JVM/CPython in the image. Prefix, overlay config, git exclude. Spec: [integration/01-deploy-config.md](../integration/01-deploy-config.md).
+
+**Exit:** IT-1.1–1.7 pass on CI Linux for musl core (no engine packs required). Darwin: do not fake musl greens; skip or document Docker-unavailable as a CI gap.
+
+**Sign-off checklist (PD1)**
+
+- [x] Exit criteria for this WP met (harness + compose + IT-1.1–1.7 cases; Linux CI is the distro gate)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **96.43% lines**
+- [x] 80% mutants on listed crates that exist — **N/A** (no listed crate source change; composition root + integration harness only)
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `ServeHost` / `LspStdioDriver`
+- [x] Docs in this tree updated if a locked decision was refined
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD1 unit gate on macOS.
+- `integration/harness/run-it1.sh auto` on this host runs **host_smoke** only (Mach-O `serve` handshake, prefix, overlay, git exclude, help). That is **not** IT-1.1.
+- Real IT-1.1–1.6 need a prebuilt musl ELF bind-mounted into Arch / Rocky / Debian / Ubuntu (`integration/compose.yaml`). This Darwin host has no Docker daemon and no musl ELF — same class as the M0 musl gap. Linux CI is the distro gate.
+- `xtask check-static` on a Mach-O or dist stub is a refuse, not a green.
+
+## PD2 — IT-2 vanilla LSP backends
+
+**Status: SIGNED OFF** on branch `pd2`. Do not start PD3 until this section stays signed off.
+
+Each language on a **pinned SHA** real corpus. Stock stdio LSP only. Spec: [integration/02-lsp-backends.md](../integration/02-lsp-backends.md).
+
+**Exit:** report rows per language; T3 rows `skip_pack_missing` when packs are stubs. No `$/` FilesSince.
+
+**Sign-off checklist (PD2)**
+
+- [x] Exit criteria for this WP met (corpora pins + goldens + `plsp-it1 backend`; T3 stub rows are `skip_pack_missing`)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **96.55% lines**
+- [x] 80% mutants on listed crates that exist — **N/A** (composition root + integration harness only; no listed crate source change)
+- [x] No `sleep` in crate unit tests (IT-2 waits on `workDoneProgress` with a deadline)
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `ServeDiskWatch` / `CorpusPin` / `ExpectedGolden` / `It2BackendDriver` / `It2ReportRow`
+- [x] Docs in this tree updated if a locked decision was refined
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD2 unit gate on macOS.
+- `integration/harness/run-it2.sh auto` fetches URL+SHA corpora (no submodule mirrors) and runs stock stdio on the native Mach-O. In-tree fixtures + `csharp-mini` are supplements, not the only Java/C# proof.
+- T3 rows (`ty`, `rust-analyzer`, `clangd`, `tsgo`, `phpantom`, `biome`, `superhtml`, `gopls`, `zls`) are `skip_pack_missing` when the prefix holds Darwin stubs. That is **not** a typed hover green and must not be reported as clangd/ty T3 pass.
+- C# is `expected_ceiling` T1/T2. Java has no T3. `$/` / `workspace/filesSince` must be method-not-found.
+- Linux CI with real musl packs is the T3 gate — same class as the M0 musl gap.
+
+## PD3 — IT-3 extended protocol
+
+**Status: SIGNED OFF** on branch `pd3`. Do not start PD4 until this section stays signed off.
+
+Java / Python+ty / TypeScript+tsgo progressive client. Envelope + FilesSince / WatchBatch / TierReady / InstallPacks. Spec: [integration/03-extended-protocol.md](../integration/03-extended-protocol.md), API: [user/progressive-v1-api.md](user/progressive-v1-api.md).
+
+**Exit:** IT-3.1–3.7 as specified; mux `pending_mux` if unimplemented.
+
+**Sign-off checklist (PD3)**
+
+- [x] Exit criteria for this WP met (Envelope dispatch + IT-3.1–3.7 on P-java / P-py / P-ts; mux is `pending_mux`)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **95.97% lines**
+- [x] 80% mutants on listed crates that exist — control **83 caught / 93 scored (89.2%)**, 1 unviable; core **119 caught / 133 scored (89.5%)**, 10 unviable
+- [x] No `sleep` in crate unit tests (IT-3 may deadline-poll the control socket)
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `Envelope` / `ControlPlane` / `dispatch_envelope` / control-socket Adapter / `It3ProgressiveDriver` / `It3ReportRow`
+- [x] Docs in this tree updated if a locked decision was refined (`InstallPacks` requires restart `serve` to attach an engine)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD3 unit gate on macOS.
+- `integration/harness/run-it3.sh auto` runs P-java / P-py / P-ts against native Mach-O with `--control-socket` and Envelope frames. Default `serve` without `--control-socket` stays stock (IT-2).
+- T3 types rows (`ty`, `tsgo`) are `skip_pack_missing` when the prefix holds Darwin stubs. That is **not** a typed hover green.
+- `--mux` is `pending_mux` — do not silently retest the socket.
+- Linux CI with real musl packs is the T3 gate — same class as the M0 musl gap.
+
+## PD4 — T2 Strategy bake-off
+
+**Status: SIGNED OFF** on branch `pd4`. Post-dev stack (PD0–PD4) is complete. There is no PD5 in the plan.
+
+Plugin seam: T2 Strategy selectable per language; **default remains heuristics**. Pin stack-graphs by git SHA; measure vs held-out corpus. Spec: [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md). Results: [spikes/t2-bakeoff-results.md](spikes/t2-bakeoff-results.md).
+
+**Exit:** seam + config pick; bake-off table committed. Default `heuristic` (winner rule did not fire). TSG stitch column is `skip_runtime` (pin fetched; `build_stack_graph_into` panics on tree-sitter-java 0.23.5 vs pin `=0.23.4`).
+
+**Sign-off checklist (PD4)**
+
+- [x] Exit criteria for this WP met (T2 config pick; `StackGraphResolver` loads pinned Java TSG when selected; bake-off table; default stays heuristic)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **95.24% lines**
+- [x] 80% mutants on listed crates that changed — core **141 caught / 147 scored (95.9%)**, 8 unviable; resolve **117 caught / 141 scored (83.0%)**, 27 unviable; lang-java **82 caught / 94 scored (87.2%)**, 10 unviable
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `T2Backend` / `T2Table` / `T2Strategy` / `TsgPin` / `TsgLoadState`
+- [x] Docs in this tree updated if a locked decision was refined (heuristics remain default; plugin-sdk + language-matrix + spike agree)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD4 unit gate on macOS.
+- Stack-graphs pin `https://github.com/github/stack-graphs.git` @ `fcb7705d5b38ae13b3665a9b2c882e5a97243d44` fetched. No `third_party/` dump.
+- Optional `--features t2-stack-graphs` compiles the runtime. Slim default omits it. Do not treat Darwin RSS as a musl green.
+- Post-dev stack ends here. Do not open a `pd5` branch.
+
+## Later post-v1 (not in PD0–PD4)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

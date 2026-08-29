@@ -188,6 +188,60 @@ pub struct ReloadScriptsResponse {
     pub status: Option<Status>,
 }
 
+/// Public dispatch contract. Wrap every control frame in this envelope.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct Envelope {
+    #[prost(string, tag = "1")]
+    pub method: String,
+    #[prost(uint64, tag = "2")]
+    pub request_id: u64,
+    #[prost(bytes = "vec", tag = "3")]
+    pub body: Vec<u8>,
+}
+
+impl Envelope {
+    pub fn request(method: impl Into<String>, request_id: u64, body: impl Message) -> Self {
+        Self {
+            method: method.into(),
+            request_id,
+            body: body.encode_to_vec(),
+        }
+    }
+
+    pub fn reply(method: impl Into<String>, request_id: u64, body: impl Message) -> Self {
+        Self::request(method, request_id, body)
+    }
+
+    pub fn push(method: impl Into<String>, body: impl Message) -> Self {
+        Self::request(method, 0, body)
+    }
+
+    pub fn decode_body<T: Message + Default>(&self) -> Result<T, prost::DecodeError> {
+        T::decode(self.body.as_slice())
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, prost::DecodeError> {
+        Self::decode(bytes)
+    }
+}
+
+/// RPC / push names. Case-sensitive; match the API RPC table exactly.
+pub const METHOD_GET_CONFIG: &str = "GetConfig";
+pub const METHOD_SET_CONFIG: &str = "SetConfig";
+pub const METHOD_RELOAD_CONFIG: &str = "ReloadConfig";
+pub const METHOD_INSTALL_PACKS: &str = "InstallPacks";
+pub const METHOD_WATCH_SUBSCRIBE: &str = "WatchSubscribe";
+pub const METHOD_WATCH_BATCH: &str = "WatchBatch";
+pub const METHOD_FILES_SINCE: &str = "FilesSince";
+pub const METHOD_INDEX_STATUS: &str = "IndexStatus";
+pub const METHOD_TIER_STATUS: &str = "TierStatus";
+pub const METHOD_TIER_READY: &str = "TierReady";
+pub const METHOD_RELOAD_SCRIPTS: &str = "ReloadScripts";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +259,30 @@ mod tests {
         assert_ne!(ok, err);
         assert_ne!(err, Status::default());
         assert_eq!(Status::ok(), Status::default());
+    }
+
+    #[test]
+    fn envelope_request_reply_push_and_decode() {
+        let req = Envelope::request(METHOD_GET_CONFIG, 7, GetConfigRequest {});
+        assert_eq!(req.method, METHOD_GET_CONFIG);
+        assert_eq!(req.request_id, 7);
+        assert!(req.decode_body::<GetConfigRequest>().is_ok());
+        let push = Envelope::push(
+            METHOD_WATCH_BATCH,
+            WatchBatch {
+                events: vec![],
+                overflow: false,
+                need_rescan: false,
+                generation: 1,
+            },
+        );
+        assert_eq!(push.request_id, 0);
+        assert_eq!(push.method, METHOD_WATCH_BATCH);
+        let reply = Envelope::reply(METHOD_GET_CONFIG, 7, GetConfigResponse::default());
+        assert_eq!(reply.request_id, 7);
+        assert_ne!(req.encode_to_vec(), push.encode_to_vec());
+        assert_eq!(req.to_bytes(), req.encode_to_vec());
+        assert_eq!(Envelope::from_bytes(&req.to_bytes()).unwrap(), req);
     }
 
     #[test]

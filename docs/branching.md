@@ -14,10 +14,21 @@ main
                                             └── m6
 ```
 
+v1 merged to `main`. Post-dev stack starts from **current `main`**, not from `m6`:
+
+```text
+main
+  └── pd0             # ingest user docs, integration designs, T2 spike notes
+        └── pd1       # IT-1 deploy/config (containers)
+              └── pd2 # IT-2 vanilla LSP corpora
+                    └── pd3  # IT-3 progressive.v1
+                          └── pd4  # T2 Strategy seam + bake-off
+```
+
 ## Rules
 
 1. **Scope:** a branch contains that milestone’s work packages only ([implementation-plan.md](implementation-plan.md)). No extra language packs on `m1`.
-2. **Sign-off before stacking the next branch:** [milestones.md](milestones.md) exit **and** [testing.md](testing.md) hygiene (95% on crates that exist; 80% mutants on listed crates for that milestone; no `sleep`; `check-static` if a bin changed).
+2. **Sign-off before stacking the next branch:** [milestones.md](milestones.md) exit **and** [testing.md](testing.md) hygiene (95% on crates that exist; 80% mutants on listed crates for that milestone; no `sleep` in the **unit** suite; `check-static` if a bin changed). Integration tests ([../integration/README.md](../integration/README.md)) are a separate harness (containers/deadlines allowed there only).
 3. **Tests are not deferred to `m6`.** Write them on the milestone branch.
 4. **Merge to `main`:** sequential (`docs-0`, then `m0`, …) or rebase the stack. Either way **do not open `mN+1` until `mN` is signed off**.
 5. **Spikes:** `spike/*` or notes. A spike that ships `DT_NEEDED` does not merge. Hygiene applies on merge to a milestone branch.
@@ -25,4 +36,4 @@ main
 
 ## Suggested branch names
 
-`docs-0`, `m0`, `m1`, `m2`, `m3`, `m4`, `m5`, `m6` stacked as above. Feature slices inside a milestone may be stacked on that milestone (`m1-watch`, `m1-java`) but must merge back to `m1` before `m2` starts.
+`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`, `pd1`, `pd2`, `pd3`, `pd4` stacked on `main`. Feature slices inside a milestone may be stacked on that milestone (`pd1-arch`, `pd1-rhel`) but must merge back to `pd1` before `pd2` starts.

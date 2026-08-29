@@ -1,0 +1,11 @@
+{
+  "corpus": "bullseye",
+  "language": "csharp",
+  "language_id": "csharp",
+  "entry": "Bullseye/Targets.cs",
+  "find": "Targets",
+  "workspace_symbol": "Targets",
+  "ghost_sibling": "Bullseye/Target.cs",
+  "expected_ceiling": true,
+  "corpus_sha": "93112e6530355b1592f3c54d4fca6e5486e92018"
+}

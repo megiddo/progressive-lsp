@@ -1,0 +1,10 @@
+{
+  "corpus": "php-fig-log",
+  "language": "php",
+  "language_id": "php",
+  "entry": "src/LoggerInterface.php",
+  "find": "LoggerInterface",
+  "workspace_symbol": "LoggerInterface",
+  "ghost_sibling": "src/LogLevel.php",
+  "corpus_sha": "f16e1d5863e37f8d8c2a01719f5b34baa2b714d3"
+}

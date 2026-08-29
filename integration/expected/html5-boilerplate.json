@@ -1,0 +1,10 @@
+{
+  "corpus": "html5-boilerplate",
+  "language": "html",
+  "language_id": "html",
+  "entry": "dist/index.html",
+  "find": "html",
+  "workspace_symbol": "html",
+  "ghost_sibling": "dist/404.html",
+  "corpus_sha": "90066899f33e83c0866f8e078e97f9b82999db58"
+}

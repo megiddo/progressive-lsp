@@ -1,0 +1,10 @@
+{
+  "corpus": "known-folders",
+  "language": "zig",
+  "language_id": "zig",
+  "entry": "known-folders.zig",
+  "find": "KnownFolder",
+  "workspace_symbol": "KnownFolder",
+  "ghost_sibling": "",
+  "corpus_sha": "e1193f9ef5b3aad7a6071e9f5721934fe04a020e"
+}

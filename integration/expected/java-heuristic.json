@@ -1,0 +1,10 @@
+{
+  "corpus": "java-heuristic",
+  "language": "java",
+  "language_id": "java",
+  "entry": "src/main/java/com/example/app/App.java",
+  "find": "Lib",
+  "workspace_symbol": "App",
+  "ghost_sibling": "src/main/java/com/example/lib/Lib.java",
+  "corpus_sha": "in-tree"
+}

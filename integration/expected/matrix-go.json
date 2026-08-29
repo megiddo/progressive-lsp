@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-go",
+  "language": "go",
+  "language_id": "go",
+  "entry": "main.go",
+  "find": "Add",
+  "workspace_symbol": "Add",
+  "ghost_sibling": "main.go",
+  "corpus_sha": "in-tree"
+}

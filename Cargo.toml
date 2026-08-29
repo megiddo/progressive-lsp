@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["integration/harness"]
 members = [
     ".",
     "progressive-lsp-core",
@@ -144,6 +145,7 @@ lang-rust = ["dep:progressive-lsp-lang-rust"]
 lang-c = ["dep:progressive-lsp-lang-c"]
 lang-cpp = ["dep:progressive-lsp-lang-cpp"]
 lang-csharp = ["dep:progressive-lsp-lang-csharp"]
+t2-stack-graphs = ["progressive-lsp-resolve/t2-stack-graphs"]
 
 [dev-dependencies]
 serde_json.workspace = true

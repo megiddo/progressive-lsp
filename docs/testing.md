@@ -79,6 +79,18 @@ T3 latency is per-engine and not a core fail if ty is slow.
 - Abort on `on_install_verify` refuses the new binary (no rename, no exec).
 - Scripts cannot register `textDocument/definition`.
 
+## Integration suite (PD1–PD4)
+
+Separate from this unit/mutation gate. Spec: [../integration/README.md](../integration/README.md).
+
+- May use containers, real engines, and a **deadline** wait on `workDoneProgress` / `TierReady` (poll protocol, not `sleep(5)`).
+- Must not weaken the crate suite: still no `thread::sleep` in `crates/` tests.
+- Nightly / release, not every library PR.
+- Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate.
+- IT-2 may wait on `workDoneProgress` with a deadline (poll protocol, not `sleep(5)`). T3 rows are `skip_pack_missing` when packs are Darwin stubs — not typed-hover greens.
+- IT-3 may deadline-poll the control socket for `WatchBatch` / `TierReady`. `--mux` is `pending_mux` if unimplemented. T3 types rows stay `skip_pack_missing` on Darwin stubs.
+- PD4 T2 bake-off may fetch the stack-graphs pin and junit4 at SHA (cache under `target/`). Default T2 stays heuristic unless the winner rule fires. Do not treat Darwin RSS as a musl green.
+
 ## Milestone sign-off (every WP)
 
 - [ ] Tests for this WP live on this branch

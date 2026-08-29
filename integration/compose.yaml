@@ -1,0 +1,28 @@
+# IT-1 distro userspaces. Copy a prebuilt static musl ELF in; do not cargo-build here.
+# Images are pulled on the CI host first, then run with network_mode: none.
+# Pin digests on Linux CI (`docker compose pull` + `docker inspect`). Tags below
+# are the IT-1 matrix; Darwin without Docker/musl does not substitute a Mach-O.
+
+name: plsp-it1
+
+x-it1: &it1
+  network_mode: none
+  working_dir: /it1
+  command: ["sleep", "infinity"]
+  volumes:
+    - ${PLSP_ELF:?set PLSP_ELF to a Linux static progressive-lsp ELF}:/opt/plsp/progressive-lsp:ro
+    - ${IT1_WORK:?set IT1_WORK}:/it1
+
+services:
+  arch:
+    <<: *it1
+    image: archlinux:base
+  rhel:
+    <<: *it1
+    image: rockylinux:9
+  debian:
+    <<: *it1
+    image: debian:bookworm-slim
+  ubuntu:
+    <<: *it1
+    image: ubuntu:24.04

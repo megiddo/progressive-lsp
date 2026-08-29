@@ -1,0 +1,10 @@
+{
+  "corpus": "cxxopts",
+  "language": "cpp",
+  "language_id": "cpp",
+  "entry": "include/cxxopts.hpp",
+  "find": "Options",
+  "workspace_symbol": "Options",
+  "ghost_sibling": "src/example.cpp",
+  "corpus_sha": "4bf61f08697b110d9e3991864650a405b3dd515d"
+}

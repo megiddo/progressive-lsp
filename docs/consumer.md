@@ -40,7 +40,7 @@ progressive-lsp serve [--prefix DIR] [--control-socket PATH] [--control-fd N] [-
 progressive-lsp install --prefix DIR --packs python,rust,...
 ```
 
-Env: `PROGRESSIVE_LSP_HOME` same as `--prefix`.
+Env: `PROGRESSIVE_LSP_HOME` same meaning as `--prefix`. When both are set, `--prefix` wins.
 
 `progressive-lsp install --prefix DIR --packs python` produces a **verified** prefix: each pack binary and `manifest.json` is written via `Installer` (hash tmp, then atomic rename). Hash mismatch or `on_install_verify` Abort → no rename, no exec. No network fetch. SSH is not implemented in `progressive-lsp-install`; consumers implement `ArtifactTransport` (tests use `FakeRemoteTransport` for remote-like put/chmod/rename/hash).
 

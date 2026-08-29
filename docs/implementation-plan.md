@@ -14,6 +14,13 @@ main
                                 └── m4
                                       └── m5
                                             └── m6
+
+main   # after v1 merge
+  └── pd0
+        └── pd1
+              └── pd2
+                    └── pd3
+                          └── pd4
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -130,7 +137,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M6 (`m6` branch)
 
-**Status: SIGNED OFF.** v1 complete. There is no M7. Do not open a next milestone branch.
+**Status: SIGNED OFF.** v1 complete (merged to `main`). Next stack is PD0–PD4, not M7.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
@@ -140,6 +147,51 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | M6.4 | Conformance dashboard | M5.2 | **SIGNED OFF.** [conformance.md](conformance.md); C# T1/T2 only; Java no T3; T3 0% on Darwin stubs |
 | M6.5 | Versioning: core semver vs engine SHAs | M6.1 | **SIGNED OFF.** Workspace **0.1.0** (first published v1; not 1.0.0 — native macOS/Windows hosts are post-v1). Proto `progressive.v1`. Engine SHAs in pack manifests only. Hygiene: llvm-cov **96.26%** lines (ignore xtask/main/tree-sitter). Mutants on install+script+control+protocol: **333 caught / 392 scored (84.9%)**, 30 unviable, 4 timeouts. |
 
+## PD0 (`pd0` branch)
+
+**Status: SIGNED OFF** on `pd0`. Parent is `main`. PD1 may start after this WP.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PD0.1 | Ingest user docs, integration designs, T2 spike | M6 signed off / `main` | **SIGNED OFF.** Docs only. |
+
+## PD1 (`pd1` branch)
+
+**Status: SIGNED OFF.** Do not open `pd2` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PD1.1 | Integration harness (LSP stdio client) | PD0 | **SIGNED OFF.** `integration/harness` (`plsp-it1 handshake`); not a workspace member |
+| PD1.2 | Distro compose: Arch, Rocky/UBI, Debian, Ubuntu | PD1.1 | **SIGNED OFF.** `integration/compose.yaml`; prebuilt musl ELF from CI; Darwin gap documented |
+| PD1.3 | IT-1.1–1.7 deploy/config cases | PD1.2 | **SIGNED OFF.** [integration/01-deploy-config.md](../integration/01-deploy-config.md). Linux CI is the distro gate; Darwin host_smoke is not IT-1.1 |
+
+## PD2 (`pd2` branch)
+
+**Status: SIGNED OFF.** Do not open `pd3` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PD2.1 | Corpora fetch-at-SHA + expected goldens | PD1 | **SIGNED OFF.** `integration/corpora/pins.json` + `plsp-it1 fetch`; no submodule mirrors |
+| PD2.2 | IT-2 per-language stock LSP | PD2.1 | **SIGNED OFF.** [integration/02-lsp-backends.md](../integration/02-lsp-backends.md). T3 stubs → `skip_pack_missing` |
+
+## PD3 (`pd3` branch)
+
+**Status: SIGNED OFF.** Do not open `pd4` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PD3.1 | Control Envelope if missing | PD2 | **SIGNED OFF.** Public `Envelope` dispatch (`method` + `request_id` + `body`) |
+| PD3.2 | IT-3 Java / Python / TS progressive | PD3.1 | **SIGNED OFF.** [integration/03-extended-protocol.md](../integration/03-extended-protocol.md). Mux `pending_mux`. T3 stubs → `skip_pack_missing` |
+
+## PD4 (`pd4` branch)
+
+**Status: SIGNED OFF.** Post-dev stack complete. There is no PD5.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PD4.1 | T2 Strategy config pick; default heuristic | PD3 | **SIGNED OFF.** `[t2] java = "heuristic"` default; tests inject fake T2 |
+| PD4.2 | Pin stack-graphs git SHA; bake-off table | PD4.1 | **SIGNED OFF.** Pin `fcb7705`; winner rule did not fire; [t2-bakeoff-results.md](spikes/t2-bakeoff-results.md) |
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -148,6 +200,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | csharp-ls AOT+musl | `spike/` notes | fail → C# T2 ceiling in matrix |
 | PHPantom vs static phpactor | `spike/` | no host `php`; no Node |
 | clangd static archive graph | notes | miss → document; do not ship `.so` |
+| T2 Strategy bake-off | [docs/spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md) | PD4; heuristics stay default until numbers |
 
 ## Agent instructions
 
@@ -155,4 +208,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 2. Implement only that WP’s crates/files.
 3. Map new types in [design-patterns.md](design-patterns.md).
 4. Do not add Node/JVM/CPython, `$/` FilesSince, or SSH in the install crate.
-5. Stop at sign-off; do not start the next milestone branch.
+5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off).

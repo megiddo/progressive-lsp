@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-ts",
+  "language": "typescript",
+  "language_id": "typescript",
+  "entry": "index.ts",
+  "find": "id",
+  "workspace_symbol": "id",
+  "ghost_sibling": "index.ts",
+  "corpus_sha": "in-tree"
+}

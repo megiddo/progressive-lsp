@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-c",
+  "language": "c",
+  "language_id": "c",
+  "entry": "sample.c",
+  "find": "sample",
+  "workspace_symbol": "sample",
+  "ghost_sibling": "sample.c",
+  "corpus_sha": "in-tree"
+}

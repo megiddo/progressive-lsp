@@ -1,7 +1,9 @@
 # progressive-lsp
 
-A host-side multi-language language-intelligence server: parse, index, resolve, and answer LSP questions on a Linux host with static artifacts and no Node / JVM / CPython runtime.
+**Language intelligence for many languages on Linux** — go-to-definition, references, hover, symbols, and highlighting — as one Language Server Protocol process.
 
-**Source of truth:** [docs/README.md](docs/README.md). Implement from that tree, not from chat transcripts or the archived sketch.
+It is **not** an IDE, SSH, git, a file tree, or a terminal. Point your editor at `progressive-lsp serve` (stdio). One static Linux binary; optional engine packs add richer types.
 
-Stacked branches: `main` → `docs-0` → `m0` → `m1` → … → `m6`. See [docs/branching.md](docs/branching.md) and [docs/milestones.md](docs/milestones.md).
+**Up and running:** [docs/user/README.md](docs/user/README.md). Progressive hosts: [docs/user/progressive-v1-api.md](docs/user/progressive-v1-api.md).
+
+Internal design (implementers): [docs/README.md](docs/README.md). Stacked branches: v1 was `docs-0` → `m0`–`m6` (merged). Post-dev: `pd0` → `pd1`–`pd4`. See [docs/branching.md](docs/branching.md).

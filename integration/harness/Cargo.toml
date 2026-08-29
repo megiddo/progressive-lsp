@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "plsp-it1"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Tiny stdio LSP driver for IT-1 handshake and IT-2 stock backends. Not a workspace member."
+
+[dependencies]
+serde_json = "1.0"
+progressive-lsp-control = { path = "../../progressive-lsp-control" }
+progressive-lsp-install = { path = "../../progressive-lsp-install" }
+progressive-lsp-engine = { path = "../../progressive-lsp-engine" }

@@ -9,6 +9,17 @@ description = "Resolver trait, chain, TreeSitterResolver, FakeResolver"
 [dependencies]
 progressive-lsp-core.workspace = true
 thiserror.workspace = true
+stack-graphs = { git = "https://github.com/github/stack-graphs", rev = "fcb7705d5b38ae13b3665a9b2c882e5a97243d44", optional = true }
+tree-sitter-stack-graphs = { git = "https://github.com/github/stack-graphs", rev = "fcb7705d5b38ae13b3665a9b2c882e5a97243d44", optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+
+[features]
+default = []
+t2-stack-graphs = [
+    "dep:stack-graphs",
+    "dep:tree-sitter-stack-graphs",
+    "dep:tree-sitter-java",
+]
 
 [dev-dependencies]
 tempfile.workspace = true

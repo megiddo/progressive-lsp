@@ -14,7 +14,7 @@ This directory is the **source of truth** for the product. Implement from these 
 | Types, traits, errors | [detailed-design.md](detailed-design.md) |
 | Pattern map (mandatory) | [design-patterns.md](design-patterns.md) |
 | Coverage, mutants, alloc matrix | [testing.md](testing.md) |
-| Product exits M0–M6 | [milestones.md](milestones.md) |
+| Product exits M0–M6; post-dev PD0–PD4 | [milestones.md](milestones.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |
 
@@ -28,11 +28,15 @@ This directory is the **source of truth** for the product. Implement from these 
 | LATEST+2 pins and lag | [language-matrix.md](language-matrix.md) |
 | What may exist on the host | [host-deps.md](host-deps.md) |
 | How an IDE consumes this | [consumer.md](consumer.md) |
+| 5-minute user README | [user/README.md](user/README.md) |
+| Extended protocol API | [user/progressive-v1-api.md](user/progressive-v1-api.md) |
+| Integration test designs | [../integration/README.md](../integration/README.md) |
+| T2 bake-off spike | [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md) |
 | Per-language per-tier pass % | [conformance.md](conformance.md) |
 
 ## Agent rules
 
-1. Do not start milestone `mN+1` until `mN` is signed off ([branching.md](branching.md), [implementation-plan.md](implementation-plan.md)).
+1. Do not start milestone `mN+1` / `pdN+1` until the previous is signed off ([branching.md](branching.md), [implementation-plan.md](implementation-plan.md)).
 2. Every new type maps to a named pattern in [design-patterns.md](design-patterns.md). Ad-hoc layers are a defect.
 3. 95% line coverage and 80% mutation kill rate on listed crates from the first library that lands ([testing.md](testing.md)).
 4. Shipped ELFs: no dynamic interpreter, no `DT_NEEDED` ([host-deps.md](host-deps.md)).

@@ -17,7 +17,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
-| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn |
+| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language |
 | `apply_worktree_excludes` / `GitExcludeReport` | Command | Writes `.git/info/exclude` + overlay belt `.gitignore`; never edits the project’s committed `.gitignore` |
 | `ProgressiveLspCap` | Value object / DTO | `version` is `v1`; `socket` may be null; stock clients ignore it |
 | `InstallPlan` | Command | `apply` hashes tmp before rename; mismatch deletes tmp |
@@ -27,6 +27,11 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | Typed errors (`UnsupportedLanguage`, `EngineNotReady`, `InstallError`, `StaticLinkError`, `ScriptAbort`, `ScriptSandbox`, `ConfigError`, `WatchOverflow`, `InitializeFailed`, `EngineError`) | Domain Result | User paths never `unwrap`; T3 `EngineNotReady` falls back, does not panic |
 | `Resolver` chain (`TreeSitterResolver` → `HeuristicResolver` / `StackGraphResolver` → T3 adapter) | Chain of Responsibility | First capable handler wins; T3 `NotReady` does not drop T2 |
 | `HeuristicResolver` vs `StackGraphResolver` | Strategy | Same `Resolver` trait; pick is config/eval, not a fork of definition; heuristics are the default |
+| `T2Backend` | Value object | `heuristic` (default) or `stack-graphs`; omit = heuristic; unknown backend warns |
+| `T2Table` | Value object | Per-language map on `Config`; missing language → heuristic |
+| `T2Strategy` | Strategy factory | `LanguageFactory` asks `from_backend` / `inject`; tests inject `FakeResolver`; scripts cannot register definition |
+| `TsgPin` | Value object | Git URL + SHA + rel path; fetch-at-SHA; never a `third_party/` dump |
+| `TsgLoadState` | Value object | `Unused` vs `SourceLoaded` / `RuntimeReady` / `FetchFailed`; selected backend is never the unused slot |
 | `ResolveQuery`, `QueryKind`, `ResolveResult`, `LspLocation` | Query / Command | Protocol crate builds a query; resolvers do not parse JSON-RPC; `LspLocation.data.tier` when we set `data` |
 | `WorkspaceSource` adapters | Adapter | Disk/build files → `WorkspaceModel`; no compiler invocation except documented one-shots |
 | `WorkspaceModel` | Domain model / DTO | Roots and classpath-like entries **exist on disk**; scripts cannot invent jars |
@@ -48,7 +53,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `NotifyWatcher` | Adapter | Maps notify-style kinds; coalescer never calls OS APIs |
 | `SharedIndex` | Adapter | `IndexService` behind a mutex is a `SymbolIndex` |
 | `LanguageIndexer` / `JavaIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
-| `JavaLanguageFactory` | Abstract Factory | `language_id` = java; chain is T1 `TreeSitterResolver` |
+| `JavaLanguageFactory` | Abstract Factory | `language_id` = java; T2 Strategy from config (`heuristic` default) then T1 |
 | `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues |
 | `NotReadyResolver` | Test double | T3 skip; must not drop a later T2 `FakeResolver` |
 | `DirectoryAdapter` / `MavenAdapter` / `GradleAdapter` / `EclipseAdapter` | Adapter | Detect from files only; no host JDK |
@@ -77,7 +82,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WorkDoneProgress` / `ProgressKind` | Event / DTO | Standard LSP `$/progress` begin/report/end; not a `$/` FilesSince shim |
 | `GraphFacts` / `ImportDecl` / `TypeEdge` / `CallSite` | Value objects | LanguageIndexer Visitor fills them; resolvers do not parse JSON-RPC |
 | `GraphIndex` | Port | Same store as `SymbolIndex`; package tier is Graph only after ingest |
-| `StackGraphResolver` | Strategy (unused slot) | Always `NotReady` unless a language binds a winning TSG backend |
+| `StackGraphResolver` | Strategy | `unused()` is NotReady; `load_java` / `with_tsg_source` loads pinned Java TSG when selected |
 | `ComposerAdapter` / `GoModAdapter` / `ZigBuildAdapter` | Adapter | Manifest files only; no host php/go/zig |
 | `PhpLanguageFactory` / `HtmlLanguageFactory` / `CssLanguageFactory` / `JavaScriptLanguageFactory` / `GoLanguageFactory` / `ZigLanguageFactory` | Abstract Factory | `language_id` is stable; T3 when supervisor ready (Go/Zig also require project manifest) |
 | `PhpIndexer` / `HtmlIndexer` / `CssIndexer` / `JavaScriptIndexer` / `GoIndexer` / `ZigIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
@@ -104,6 +109,20 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
 | `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
+| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail |
+| `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
+| `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
+| `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |
+| `CorpusPin` (`integration/corpora/pins.json`) | Value object / Schema | URL + peeled SHA + entry; fetch-at-SHA; never a submodule mirror |
+| `ExpectedGolden` | Schema / DTO | 0-based `find` → line/character; integration only |
+| `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |
+| `It2ReportRow` | DTO | `language`, `corpus_sha`, `pack`, `tier_observed`, `definition_ok`, `tokens_ok`, `ghost_edit_ok`, `notes`; T3 stub → `skip_pack_missing` |
+| `Envelope` | DTO / public dispatch | `method` + `request_id` + `body`; replies echo id; pushes use `request_id == 0`; never `$/` |
+| `ControlPlane` | Port | Proto RPCs call the composition-root host; control crate does not own config/watch/install internals |
+| `ControlServer::dispatch_envelope` | Command | Case-sensitive method names match the API RPC table; unknown method → non-zero `Status` |
+| `bind_control_socket` / `spawn_control_accept` | Adapter | Unix socket beside stdio LSP; length-prefixed Envelope; stock serve without `--control-socket` still works |
+| `It3ProgressiveDriver` (`plsp-it1 progressive`) | Adapter | LSP stdio + Envelope socket; IT-3.1–3.7; `--mux` is `pending_mux` (do not silently retest socket) |
+| `It3ReportRow` | DTO | `backend`, `rpc`, `result`, `notes`; T3 stub → `skip_pack_missing`; mux → `pending_mux` |
 
 ## Patterns we do not use (v1)
 

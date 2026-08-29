@@ -1,0 +1,10 @@
+{
+  "corpus": "matrix-rust",
+  "language": "rust",
+  "language_id": "rust",
+  "entry": "lib.rs",
+  "find": "add",
+  "workspace_symbol": "add",
+  "ghost_sibling": "lib.rs",
+  "corpus_sha": "in-tree"
+}

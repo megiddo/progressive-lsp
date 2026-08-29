@@ -1,0 +1,10 @@
+{
+  "corpus": "zod",
+  "language": "typescript",
+  "language_id": "typescript",
+  "entry": "src/index.ts",
+  "find": "ZodType",
+  "workspace_symbol": "ZodType",
+  "ghost_sibling": "src/types.ts",
+  "corpus_sha": "e30870369d5b8f31ff4d0130d4439fd997deb523"
+}
