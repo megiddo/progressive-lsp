@@ -1,0 +1,87 @@
+# Allocator bake-off results. `xtask dist` only reads this file.
+# Pick rule: docs/testing.md. Empty cell → placeholder mimalloc.
+# Record numbers only from matching CI arch jobs (no laptop numbers).
+
+[[cell]]
+backend = "core"
+arch = "x86_64"
+libc = "musl"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "core"
+arch = "aarch64"
+libc = "musl"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "core"
+arch = "x86_64"
+libc = "glibc-static"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "core"
+arch = "aarch64"
+libc = "glibc-static"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "clangd"
+arch = "x86_64"
+libc = "musl"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "clangd"
+arch = "aarch64"
+libc = "musl"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "clangd"
+arch = "x86_64"
+libc = "glibc-static"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "clangd"
+arch = "aarch64"
+libc = "glibc-static"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "rust-engine"
+arch = "x86_64"
+libc = "musl"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "rust-engine"
+arch = "aarch64"
+libc = "musl"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "rust-engine"
+arch = "x86_64"
+libc = "glibc-static"
+allocator = "mimalloc"
+source = "placeholder"
+
+[[cell]]
+backend = "rust-engine"
+arch = "aarch64"
+libc = "glibc-static"
+allocator = "mimalloc"
+source = "placeholder"

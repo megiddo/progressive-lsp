@@ -1,0 +1,10 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>java-multi</artifactId>
+  <packaging>pom</packaging>
+  <modules>
+    <module>lib</module>
+    <module>app</module>
+  </modules>
+</project>

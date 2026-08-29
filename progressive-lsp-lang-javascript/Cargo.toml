@@ -1,0 +1,19 @@
+[package]
+name = "progressive-lsp-lang-javascript"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "JavaScript/TypeScript T1 + heuristic T2 + tsgo T3 (not tsserver)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-resolve.workspace = true
+tree-sitter.workspace = true
+tree-sitter-javascript.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

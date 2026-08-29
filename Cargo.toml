@@ -1,0 +1,154 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "progressive-lsp-core",
+    "progressive-lsp-plugin",
+    "progressive-lsp-protocol",
+    "progressive-lsp-control",
+    "progressive-lsp-install",
+    "progressive-lsp-watch",
+    "progressive-lsp-index",
+    "progressive-lsp-resolve",
+    "progressive-lsp-workspace",
+    "progressive-lsp-script",
+    "progressive-lsp-engine",
+    "progressive-lsp-lang-java",
+    "progressive-lsp-lang-php",
+    "progressive-lsp-lang-html",
+    "progressive-lsp-lang-css",
+    "progressive-lsp-lang-javascript",
+    "progressive-lsp-lang-go",
+    "progressive-lsp-lang-zig",
+    "progressive-lsp-lang-python",
+    "progressive-lsp-lang-rust",
+    "progressive-lsp-lang-c",
+    "progressive-lsp-lang-cpp",
+    "progressive-lsp-lang-csharp",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+
+[workspace.dependencies]
+progressive-lsp-core = { path = "progressive-lsp-core" }
+progressive-lsp-plugin = { path = "progressive-lsp-plugin" }
+progressive-lsp-protocol = { path = "progressive-lsp-protocol" }
+progressive-lsp-control = { path = "progressive-lsp-control" }
+progressive-lsp-install = { path = "progressive-lsp-install" }
+progressive-lsp-watch = { path = "progressive-lsp-watch" }
+progressive-lsp-index = { path = "progressive-lsp-index" }
+progressive-lsp-resolve = { path = "progressive-lsp-resolve" }
+progressive-lsp-workspace = { path = "progressive-lsp-workspace" }
+progressive-lsp-lang-java = { path = "progressive-lsp-lang-java" }
+progressive-lsp-lang-php = { path = "progressive-lsp-lang-php" }
+progressive-lsp-lang-html = { path = "progressive-lsp-lang-html" }
+progressive-lsp-lang-css = { path = "progressive-lsp-lang-css" }
+progressive-lsp-lang-javascript = { path = "progressive-lsp-lang-javascript" }
+progressive-lsp-lang-go = { path = "progressive-lsp-lang-go" }
+progressive-lsp-lang-zig = { path = "progressive-lsp-lang-zig" }
+progressive-lsp-script = { path = "progressive-lsp-script" }
+progressive-lsp-engine = { path = "progressive-lsp-engine" }
+progressive-lsp-lang-python = { path = "progressive-lsp-lang-python" }
+progressive-lsp-lang-rust = { path = "progressive-lsp-lang-rust" }
+progressive-lsp-lang-c = { path = "progressive-lsp-lang-c" }
+progressive-lsp-lang-cpp = { path = "progressive-lsp-lang-cpp" }
+progressive-lsp-lang-csharp = { path = "progressive-lsp-lang-csharp" }
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-c-sharp = "=0.21.3"
+prost = "0.13"
+tree-sitter = "0.24"
+tree-sitter-java = "0.23"
+tree-sitter-php = "0.23.11"
+tree-sitter-html = "0.23.2"
+tree-sitter-css = "0.23.2"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-go = "0.23.4"
+tree-sitter-zig = "1.1.2"
+rhai = { version = "1.21", features = ["sync"] }
+semver = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+toml = "0.8"
+tempfile = "3.20"
+
+[package]
+name = "progressive-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Composition root: serve + install"
+
+[dependencies]
+progressive-lsp-control.workspace = true
+progressive-lsp-core.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-install.workspace = true
+progressive-lsp-lang-java = { workspace = true, optional = true }
+progressive-lsp-lang-php = { workspace = true, optional = true }
+progressive-lsp-lang-html = { workspace = true, optional = true }
+progressive-lsp-lang-css = { workspace = true, optional = true }
+progressive-lsp-lang-javascript = { workspace = true, optional = true }
+progressive-lsp-lang-go = { workspace = true, optional = true }
+progressive-lsp-lang-zig = { workspace = true, optional = true }
+progressive-lsp-lang-python = { workspace = true, optional = true }
+progressive-lsp-lang-rust = { workspace = true, optional = true }
+progressive-lsp-lang-c = { workspace = true, optional = true }
+progressive-lsp-lang-cpp = { workspace = true, optional = true }
+progressive-lsp-lang-csharp = { workspace = true, optional = true }
+progressive-lsp-engine.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-protocol.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-script.workspace = true
+progressive-lsp-watch.workspace = true
+progressive-lsp-workspace.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+
+[features]
+default = [
+    "lang-java",
+    "lang-php",
+    "lang-html",
+    "lang-css",
+    "lang-javascript",
+    "lang-go",
+    "lang-zig",
+    "lang-python",
+    "lang-rust",
+    "lang-c",
+    "lang-cpp",
+    "lang-csharp",
+]
+lang-java = ["dep:progressive-lsp-lang-java"]
+lang-php = ["dep:progressive-lsp-lang-php"]
+lang-html = ["dep:progressive-lsp-lang-html"]
+lang-css = ["dep:progressive-lsp-lang-css"]
+lang-javascript = ["dep:progressive-lsp-lang-javascript"]
+lang-go = ["dep:progressive-lsp-lang-go"]
+lang-zig = ["dep:progressive-lsp-lang-zig"]
+lang-python = ["dep:progressive-lsp-lang-python"]
+lang-rust = ["dep:progressive-lsp-lang-rust"]
+lang-c = ["dep:progressive-lsp-lang-c"]
+lang-cpp = ["dep:progressive-lsp-lang-cpp"]
+lang-csharp = ["dep:progressive-lsp-lang-csharp"]
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[[bin]]
+name = "progressive-lsp"
+path = "src/main.rs"

@@ -1,0 +1,20 @@
+[package]
+name = "progressive-lsp-lang-go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Go LanguageFactory T1/T2 + gopls T3 when pack+project (no Go SDK)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-workspace.workspace = true
+tree-sitter.workspace = true
+tree-sitter-go.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

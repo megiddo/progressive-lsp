@@ -1,0 +1,20 @@
+[package]
+name = "progressive-lsp-lang-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Python LanguageFactory T1 + optional ty T3 (no CPython, pylsp, pyright)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-workspace.workspace = true
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

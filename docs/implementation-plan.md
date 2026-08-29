@@ -1,0 +1,158 @@
+# Implementation plan
+
+Work packages for agents. **Do not start a WP until its Depends-on milestone/WP is signed off.** Hygiene: [testing.md](testing.md). Exits: [milestones.md](milestones.md). Branches: [branching.md](branching.md).
+
+## Stacked branches
+
+```text
+main
+  └── docs-0
+        └── m0
+              └── m1
+                    └── m2
+                          └── m3
+                                └── m4
+                                      └── m5
+                                            └── m6
+```
+
+A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
+
+## Sign-off checklist (copy onto every WP)
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that exist
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed
+- [ ] [design-patterns.md](design-patterns.md) table updated if types added
+- [ ] Docs in this tree updated if a locked decision was refined (do not contradict [requirements.md](requirements.md) without an explicit change)
+
+## Docs-0
+
+**Status: SIGNED OFF** on branch `docs-0`. M0.1 may start on `m0` after this WP; do not open `m0` from this branch.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| D0 | Write `docs/` set (this tree) | — | **SIGNED OFF.** No crates; tests / 95% llvm-cov / 80% mutants / `sleep` / `check-static` are **N/A**. |
+
+**Sign-off checklist (D0)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — **N/A** (no crates)
+- [x] 95% llvm-cov on crates that exist — **N/A** (none)
+- [x] 80% mutants on listed crates that exist — **N/A** (none)
+- [x] No `sleep` — **N/A** (no tests)
+- [x] `check-static` if ELF changed — **N/A** (no ELFs)
+- [x] [design-patterns.md](design-patterns.md) table names every type in [detailed-design.md](detailed-design.md)
+- [x] Docs in this tree updated if a locked decision was refined
+
+## M0 (`m0` branch)
+
+**Status: SIGNED OFF.** Do not open `m1` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M0.1 | Cargo workspace, `rust-toolchain.toml`, tiny bin `main` | D0 | **SIGNED OFF.** Composition root only |
+| M0.2 | `progressive-lsp-core`: ids, errors, `ClockPort`, prefix | M0.1 | **SIGNED OFF.** FakeClock tests |
+| M0.3 | `PluginRegistry` + empty `LanguageFactory` slots | M0.2 | **SIGNED OFF.** `UnsupportedLanguage` tests |
+| M0.4 | `progressive-lsp-protocol`: initialize/shutdown | M0.3 | **SIGNED OFF.** experimental cap, socket null OK |
+| M0.5 | proto + `progressive-lsp-control` codec | M0.2 | **SIGNED OFF.** round-trip; empty RPCs OK |
+| M0.6 | `.progressivelsp` layout + git exclude helper | M0.2 | **SIGNED OFF.** fixture repo; never edit project `.gitignore` |
+| M0.7 | `progressive-lsp-install`: LocalFs, hash, manifest schema | M0.2 | **SIGNED OFF.** no network |
+| M0.8 | `xtask musl`, `check-static`, Docker stub | M0.1 | **SIGNED OFF.** both arches via Docker; fixture ELF tests on Darwin |
+| M0.9 | `xtask bench-alloc` + `allocator-matrix.toml` placeholders | M0.8 | **SIGNED OFF.** mimalloc until CI rows |
+| M0.10 | Spike notes under `spike/` (glibc-static, csharp-ls, PHP T3, …) | M0.8 | **SIGNED OFF.** notes; fail closed, do not ship `DT_NEEDED` |
+
+## M1 (`m1` branch)
+
+**Status: SIGNED OFF.** Do not open `m2` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M1.1 | `WatchCoalescer` + FakeWatcher | M0 signed | **SIGNED OFF.** 10k → 1 batch |
+| M1.2 | FilesSince + overflow/`truncated` | M1.1, M0.5 | **SIGNED OFF.** control plane |
+| M1.3 | Incremental Tree-sitter + dirty-set priority | M1.1 | **SIGNED OFF.** ~10 ms class |
+| M1.4 | `WatchFilter` identity | M1.1 | **SIGNED OFF.** |
+| M1.5 | `progressive-lsp-lang-java` T1 + tokens | M1.3 | **SIGNED OFF.** no JDK |
+| M1.6 | Directory + Maven/Gradle/Eclipse adapters | M1.5 | **SIGNED OFF.** multi-package fixture |
+| M1.7 | Server-side `notify` ghost edit reindex | M1.1, M1.5 | **SIGNED OFF.** no progressive client required |
+
+## M2 (`m2` branch)
+
+**Status: SIGNED OFF.** Do not open `m3` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M2.1 | Package-stream ingest + `workDoneProgress` + `data.tier` | M1 | **SIGNED OFF.** ingest never blocks didChange |
+| M2.2 | Control `TierReady` | M2.1, M0.5 | **SIGNED OFF.** push when progressive connected |
+| M2.3 | Java T2 heuristics; optional TSG eval | M2.1, M1.5 | **SIGNED OFF.** TSG dropped; `StackGraphResolver` slot unused |
+| M2.4 | PHP T1/T2 + Composer adapter | M2.1 | **SIGNED OFF.** no interpreter |
+| M2.5 | HTML/CSS/JS T1 | M2.1 | **SIGNED OFF.** split crates |
+| M2.6 | Go T1 + `go.mod`; Zig T1 + `build.zig` | M2.1 | **SIGNED OFF.** no gopls/zls |
+| M2.7 | Rhai `ScriptHost` + catalog subset | M0.2 | **SIGNED OFF.** sandbox + Abort tests |
+
+## M3 (`m3` branch)
+
+**Status: SIGNED OFF.** Do not open `m4` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M3.1 | `EngineSupervisor` + `EngineAdapter` trait | M2 | **SIGNED OFF.** crash/backoff tests; FakeClock; no sleep |
+| M3.2 | Pack discovery `$PREFIX/engines/` | M3.1, M0.6 | **SIGNED OFF.** missing pack / bad hash → no spawn |
+| M3.3 | ty pack + Python T3 handoff | M3.1 | **SIGNED OFF.** T1 without pack; Fake ty for T3; no CPython/pylsp/pyright |
+| M3.4 | rust-analyzer pack + Rust T3 | M3.1 | **SIGNED OFF.** no pack / no sysroot → T1 (no dedicated Rust T2) |
+| M3.5 | `on_engine_spawn` / `on_tier_ready` | M2.7, M3.1 | **SIGNED OFF.** Abort spawn skips engine; on_tier_ready cannot Abort intelligence |
+
+## M4 (`m4` branch)
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M4.1 | clangd pack + compile_commands adapter | M3.1 | **SIGNED OFF.** slim dist default excludes clangd |
+| M4.2 | csharp-ls AOT or matrix T2 ceiling | M3.1 | **SIGNED OFF.** T1/T2 ceiling; no csharp-ls pack |
+| M4.3 | oxc T2 + tsgo T3 | M3.1 | **SIGNED OFF.** heuristic T2; Fake tsgo T3; no Node |
+| M4.4 | PHP T3 pack (spike winner) | M3.1, M2.4 | **SIGNED OFF.** PHPantom winner |
+| M4.5 | superhtml + biome | M3.1 | **SIGNED OFF.** adapter + T1 fallback |
+| M4.6 | gopls + zls | M3.1, M2.6 | **SIGNED OFF.** T3 when pack+project; else T2/T1 |
+
+## M5 (`m5` branch)
+
+**Status: SIGNED OFF.** Do not open `m6` until this table stays signed off. No dist tarballs, conformance dashboard, or `on_install_verify` productization on this branch.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M5.1 | Content-addressed index cache | M2.1 | **SIGNED OFF.** `$PREFIX/cache/`; tests inject prefix |
+| M5.2 | LATEST+2 fixtures + mixed workspace | M4 languages as landed | **SIGNED OFF.** [language-matrix.md](language-matrix.md) 2026-08 window |
+| M5.3 | Burst + FilesSince overflow catch-up | M1.2 | **SIGNED OFF.** 10k FakeWatcher; truncated tested |
+| M5.4 | Lag fixtures (newer syntax, no panic) | M5.2 | **SIGNED OFF.** Java/PHP/JS/Python/Rust/C |
+| M5.5 | RSS / p99 gates recorded | M5.1 | **SIGNED OFF.** Darwin samples; T3 not charged to core. Mutants: index 82.7%, watch 98.0%, core 88.0% |
+
+## M6 (`m6` branch)
+
+**Status: SIGNED OFF.** v1 complete. There is no M7. Do not open a next milestone branch.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| M6.1 | `xtask dist` tarballs + SHA256 + slim/full | M0.8, M4 packs | **SIGNED OFF.** Per-triple musl tarballs + SHA256 + `manifest.json`. Darwin writes stub payloads; Linux CI is the real musl dist. Slim/full as M4. Dist only reads `xtask/allocator-matrix.toml`. |
+| M6.2 | Install CLI + `on_install_verify` | M0.7, M2.7 | **SIGNED OFF.** Verified prefix (hash + atomic replace). `FakeRemoteTransport` (ssh-like put/chmod/rename/hash; no SSH types). Abort refuses the new binary. |
+| M6.3 | Refresh control/lsp/plugin/consumer docs vs impl | M6.1 | **SIGNED OFF.** docs remain source of truth |
+| M6.4 | Conformance dashboard | M5.2 | **SIGNED OFF.** [conformance.md](conformance.md); C# T1/T2 only; Java no T3; T3 0% on Darwin stubs |
+| M6.5 | Versioning: core semver vs engine SHAs | M6.1 | **SIGNED OFF.** Workspace **0.1.0** (first published v1; not 1.0.0 — native macOS/Windows hosts are post-v1). Proto `progressive.v1`. Engine SHAs in pack manifests only. Hygiene: llvm-cov **96.26%** lines (ignore xtask/main/tree-sitter). Mutants on install+script+control+protocol: **333 caught / 392 scored (84.9%)**, 30 unviable, 4 timeouts. |
+
+## Spikes (do not skip hygiene on merge)
+
+| Spike | Lives | Merge rule |
+|---|---|---|
+| glibc-static POC | `spike/glibc-static` | fold into M0 xtask only if `check-static` clean |
+| csharp-ls AOT+musl | `spike/` notes | fail → C# T2 ceiling in matrix |
+| PHPantom vs static phpactor | `spike/` | no host `php`; no Node |
+| clangd static archive graph | notes | miss → document; do not ship `.so` |
+
+## Agent instructions
+
+1. Read [README.md](README.md), then the docs for your WP.
+2. Implement only that WP’s crates/files.
+3. Map new types in [design-patterns.md](design-patterns.md).
+4. Do not add Node/JVM/CPython, `$/` FilesSince, or SSH in the install crate.
+5. Stop at sign-off; do not start the next milestone branch.
