@@ -4,26 +4,49 @@ use std::sync::Arc;
 
 use progressive_lsp_core::LanguageId;
 use progressive_lsp_plugin::LanguageFactory;
-use progressive_lsp_resolve::{ResolverChain, SymbolIndex, TreeSitterResolver};
+use progressive_lsp_resolve::{
+    GraphIndex, HeuristicResolver, ResolverChain, SymbolIndex, TreeSitterResolver,
+};
 
 use crate::{grammar_id, language_id};
 
 #[derive(Clone)]
 pub struct JavaLanguageFactory {
     index: Option<Arc<dyn SymbolIndex>>,
+    graph: Option<Arc<dyn GraphIndex>>,
 }
 
 impl JavaLanguageFactory {
     pub fn new() -> Self {
-        Self { index: None }
+        Self {
+            index: None,
+            graph: None,
+        }
     }
 
     pub fn with_index(index: Arc<dyn SymbolIndex>) -> Self {
-        Self { index: Some(index) }
+        Self {
+            index: Some(index),
+            graph: None,
+        }
+    }
+
+    pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
+        Self {
+            index: Some(graph.clone()),
+            graph: Some(graph),
+        }
     }
 
     pub fn bind(&self, index: Arc<dyn SymbolIndex>) -> ResolverChain {
         ResolverChain::new(vec![Box::new(TreeSitterResolver::new(index))])
+    }
+
+    pub fn bind_t2(&self, graph: Arc<dyn GraphIndex>) -> ResolverChain {
+        ResolverChain::new(vec![
+            Box::new(HeuristicResolver::new(graph.clone())),
+            Box::new(TreeSitterResolver::new(graph)),
+        ])
     }
 }
 
@@ -43,6 +66,9 @@ impl LanguageFactory for JavaLanguageFactory {
     }
 
     fn resolver_chain(&self) -> ResolverChain {
+        if let Some(g) = &self.graph {
+            return self.bind_t2(g.clone());
+        }
         match &self.index {
             Some(idx) => self.bind(idx.clone()),
             None => ResolverChain::empty(),
@@ -74,5 +100,9 @@ mod tests {
         assert_eq!(chain.len(), 1);
         let q = progressive_lsp_resolve::ResolveQuery::workspace_symbol("x");
         assert!(chain.resolve(&q).is_ready());
+        let g: Arc<dyn GraphIndex> = Arc::new(progressive_lsp_resolve::EmptyIndex);
+        let t2 = JavaLanguageFactory::with_graph(g);
+        assert_eq!(t2.resolver_chain().len(), 2);
+        assert_eq!(t2.bind_t2(Arc::new(progressive_lsp_resolve::EmptyIndex)).len(), 2);
     }
 }

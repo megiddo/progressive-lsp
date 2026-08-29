@@ -2,11 +2,13 @@
 
 pub mod cache;
 pub mod dirty;
+pub mod ingest;
 pub mod priority;
 pub mod service;
 
 pub use cache::{CacheKey, IndexCache};
 pub use dirty::DirtySet;
+pub use ingest::{IngestReport, PackageIngest, ProgressKind, WorkDoneProgress};
 pub use priority::{IndexClass, PriorityIndex};
 pub use service::{IndexedFile, InputChange, LanguageIndexer, IndexService, SharedIndex};
 

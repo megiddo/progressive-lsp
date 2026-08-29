@@ -18,7 +18,9 @@ Related: [design-patterns.md](design-patterns.md), [detailed-design.md](detailed
 
 Produces grammar id, `LanguageId`, and the resolver chain (T1 required; T2/T3 optional). Empty slot → `UnsupportedLanguage`.
 
-`LanguageFactory::resolver_chain` returns a `ResolverChain` (T1 `TreeSitterResolver` for Java). Empty slot → `UnsupportedLanguage`. Composition-root `register_builtins` / `register_languages` installs Java when feature `lang-java` is on (default). Other `KNOWN_LANGUAGE_SLOTS` stay empty. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
+`LanguageFactory::resolver_chain` returns a `ResolverChain` (T1 `TreeSitterResolver`; T2 `HeuristicResolver` when the package has finished ingest). Empty slot → `UnsupportedLanguage`. Composition-root `register_languages` installs Java, PHP, HTML, CSS, JavaScript (and TypeScript T1 via the JS grammar), Go, and Zig when their `lang-*` features are on (default-on for M2). C/C++/C#/Rust/Python stay empty. No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
+
+M2 implements `on_bootstrap`, `on_workspace_discover`, `on_pre_index`, `on_post_index`, `on_watch` only. `on_engine_spawn` / `on_tier_ready` / `on_install_verify` remain M3/M6.
 
 ### `WorkspaceSource`
 
@@ -42,7 +44,7 @@ Install crate. Not “language plugins,” but the same Factory/Strategy rules. 
 
 ## Rhai hook catalog (v1)
 
-Scripts live on the `.progressivelsp` merge chain. Sandbox: ops limit, string cap, no I/O unless `allow_shell` **and** the hook opted in. `now()` from `ClockPort`.
+Scripts live on the `.progressivelsp` merge chain. Sandbox: ops limit, string cap, no I/O unless `allow_shell` **and** the hook opted in. `now()` from `ClockPort`. Hook context binds `path`, `root`, and `pkg` (Rhai reserves `package`).
 
 | Hook | When | Abort means |
 |---|---|---|

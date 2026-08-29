@@ -4,9 +4,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use progressive_lsp_core::{FileId, LanguageId};
-use progressive_lsp_resolve::IndexedSymbol;
+use progressive_lsp_core::{FileId, LanguageId, PackageId, Tier};
+use progressive_lsp_resolve::{
+    CallSite, GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, TypeEdge,
+};
 use progressive_lsp_watch::{WatchBatch, WatchFilter};
+
+use crate::ingest::{IngestReport, PackageIngest};
 use sha2::{Digest, Sha256};
 use tree_sitter::{InputEdit, Parser, Point, Tree};
 
@@ -96,6 +100,11 @@ pub trait LanguageIndexer: Send + Sync {
     fn grammar_id(&self) -> &'static str;
     fn tree_sitter_language(&self) -> tree_sitter::Language;
     fn extract(&self, file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol>;
+    /// Optional T2 facts. Default is empty (T1-only languages).
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        let _ = (file, source, tree);
+        GraphFacts::default()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +129,13 @@ pub struct IndexService {
     symbols: HashMap<PathBuf, Vec<IndexedSymbol>>,
     parsers: HashMap<String, Parser>,
     generation: u64,
+    imports: HashMap<PathBuf, Vec<ImportDecl>>,
+    edges: Vec<TypeEdge>,
+    calls: HashMap<PathBuf, Vec<CallSite>>,
+    file_packages: HashMap<PathBuf, PackageId>,
+    package_tiers: HashMap<PackageId, Tier>,
+    pending_progress: Vec<crate::ingest::WorkDoneProgress>,
+    pending_tier_ready: Vec<(PackageId, Tier)>,
 }
 
 impl Default for IndexService {
@@ -139,6 +155,13 @@ impl IndexService {
             symbols: HashMap::new(),
             parsers: HashMap::new(),
             generation: 0,
+            imports: HashMap::new(),
+            edges: Vec::new(),
+            calls: HashMap::new(),
+            file_packages: HashMap::new(),
+            package_tiers: HashMap::new(),
+            pending_progress: Vec::new(),
+            pending_tier_ready: Vec::new(),
         }
     }
 
@@ -253,8 +276,10 @@ impl IndexService {
         let file_id = FileId::new(path.to_string_lossy().as_ref());
         let uri = path_to_uri(path);
         let extracted = indexer.extract(&file_id, &uri, source, &tree);
+        let facts = indexer.extract_graph(&file_id, source, &tree);
         self.trees.insert(path.to_path_buf(), tree);
         self.symbols.insert(path.to_path_buf(), extracted);
+        self.store_graph_facts(path, file_id, facts);
         let elapsed = started.elapsed().as_micros();
         self.files.insert(
             path.to_path_buf(),
@@ -299,6 +324,89 @@ impl IndexService {
     pub fn last_parse_us(&self, path: &Path) -> Option<u128> {
         self.files.get(path).map(|f| f.last_parse_us)
     }
+
+    fn store_graph_facts(&mut self, path: &Path, _file: FileId, facts: GraphFacts) {
+        if !facts.imports.is_empty() {
+            self.imports.insert(path.to_path_buf(), facts.imports);
+        }
+        self.edges.extend(facts.edges);
+        if !facts.calls.is_empty() {
+            self.calls.insert(path.to_path_buf(), facts.calls);
+        }
+    }
+
+    pub fn bind_file_package(&mut self, path: impl Into<PathBuf>, package: PackageId) {
+        self.file_packages.insert(path.into(), package);
+    }
+
+    pub fn package_tier(&self, package: &PackageId) -> Option<Tier> {
+        self.package_tiers.get(package).copied()
+    }
+
+    pub fn mark_package_tier(&mut self, package: PackageId, tier: Tier) {
+        self.package_tiers.insert(package, tier);
+    }
+
+    /// Finish T2 for one package. Does not run during `apply_change`.
+    pub fn ingest_package(
+        &mut self,
+        job: &PackageIngest,
+        indexer: &dyn LanguageIndexer,
+    ) -> IngestReport {
+        let mut n = 0usize;
+        for path in &job.files {
+            if let Ok(src) = std::fs::read_to_string(path) {
+                self.bind_file_package(path, job.package.clone());
+                self.index_text(path, &src, indexer, false);
+                n += 1;
+            }
+        }
+        self.package_tiers.insert(job.package.clone(), Tier::Graph);
+        let token = format!("ingest-{}", job.package.as_str());
+        let report = IngestReport::graph(job.package.clone(), n, &token);
+        self.pending_progress.extend(report.progress.clone());
+        self.pending_tier_ready
+            .push((job.package.clone(), Tier::Graph));
+        report
+    }
+
+    pub fn drain_progress(&mut self) -> Vec<crate::ingest::WorkDoneProgress> {
+        std::mem::take(&mut self.pending_progress)
+    }
+
+    pub fn drain_tier_ready(&mut self) -> Vec<(PackageId, Tier)> {
+        std::mem::take(&mut self.pending_tier_ready)
+    }
+}
+
+impl GraphIndex for IndexService {
+    fn imports_in(&self, file: &FileId) -> Vec<ImportDecl> {
+        let key = PathBuf::from(file.as_str());
+        self.imports.get(&key).cloned().unwrap_or_default()
+    }
+
+    fn parents_of(&self, type_fqn: &str) -> Vec<String> {
+        self.edges
+            .iter()
+            .filter(|e| e.child_fqn == type_fqn)
+            .map(|e| e.parent_fqn.clone())
+            .collect()
+    }
+
+    fn package_tier(&self, package: &PackageId) -> Option<Tier> {
+        self.package_tiers.get(package).copied()
+    }
+
+    fn package_of_file(&self, file: &FileId) -> Option<PackageId> {
+        self.file_packages.get(Path::new(file.as_str())).cloned()
+    }
+
+    fn call_at(&self, file: &FileId, pos: Position) -> Option<CallSite> {
+        let key = PathBuf::from(file.as_str());
+        self.calls
+            .get(&key)
+            .and_then(|cs| cs.iter().find(|c| c.covers(pos)).cloned())
+    }
 }
 
 /// Mutex-backed `SymbolIndex` so resolvers can share the facade.
@@ -334,6 +442,24 @@ impl progressive_lsp_resolve::SymbolIndex for SharedIndex {
 
     fn all_symbols(&self) -> Vec<IndexedSymbol> {
         self.lock().all_indexed_symbols()
+    }
+}
+
+impl GraphIndex for SharedIndex {
+    fn imports_in(&self, file: &FileId) -> Vec<ImportDecl> {
+        self.lock().imports_in(file)
+    }
+    fn parents_of(&self, type_fqn: &str) -> Vec<String> {
+        self.lock().parents_of(type_fqn)
+    }
+    fn package_tier(&self, package: &PackageId) -> Option<Tier> {
+        self.lock().package_tier(package)
+    }
+    fn package_of_file(&self, file: &FileId) -> Option<PackageId> {
+        self.lock().package_of_file(file)
+    }
+    fn call_at(&self, file: &FileId, pos: Position) -> Option<CallSite> {
+        self.lock().call_at(file, pos)
     }
 }
 
@@ -520,5 +646,39 @@ mod tests {
         assert!(!svc.dirty.contains(&path));
         svc.dirty.mark(dir.path().join("missing.java"), 1);
         assert_eq!(svc.reindex_dirty(&JavaIndexer), 0);
+    }
+
+    #[test]
+    fn ingest_marks_graph_and_does_not_run_inside_apply_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Pkg.java");
+        std::fs::write(&path, "class Pkg { void a() {} }").unwrap();
+        let mut svc = IndexService::new();
+        let open = Path::new("Open.java");
+        svc.index_text(open, "class Open { int x = 1; }", &JavaIndexer, false);
+        let change = InputChange::replace_all("class Open { int x = 1; }", "class Open { int x = 2; }");
+        let _ = svc.apply_change(open, &change, &JavaIndexer);
+        assert!(svc.source(open).unwrap().contains("x = 2"));
+        assert!(svc.package_tier(&PackageId::new("lib")).is_none());
+        let job = PackageIngest::new("lib", "java").with_file(&path);
+        let report = svc.ingest_package(&job, &JavaIndexer);
+        assert_eq!(report.tier, Tier::Graph);
+        assert_eq!(svc.package_tier(&PackageId::new("lib")), Some(Tier::Graph));
+        let progress = svc.drain_progress();
+        assert_eq!(progress.len(), 3);
+        assert_eq!(svc.drain_progress().len(), 0);
+        let ready = svc.drain_tier_ready();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].1, Tier::Graph);
+        assert!(svc.drain_tier_ready().is_empty());
+        svc.mark_package_tier(PackageId::new("other"), Tier::Syntax);
+        assert_eq!(svc.package_tier(&PackageId::new("other")), Some(Tier::Syntax));
+        let file = FileId::new(path.to_string_lossy().as_ref());
+        let _ = GraphIndex::imports_in(&svc, &file);
+        let _ = GraphIndex::parents_of(&svc, "Pkg");
+        let _ = GraphIndex::call_at(&svc, &file, Position::default());
+        let _ = GraphIndex::package_of_file(&svc, &file);
+        let shared = SharedIndex::new(IndexService::new());
+        assert!(GraphIndex::package_tier(&shared, &PackageId::new("x")).is_none());
     }
 }

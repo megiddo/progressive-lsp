@@ -12,6 +12,12 @@ pub trait LspIntelligence: Send + Sync {
     fn did_change(&self, uri: &str, text: &str);
     fn did_close(&self, uri: &str);
     fn semantic_tokens(&self, uri: &str) -> Vec<u32>;
+    fn drain_progress(&self) -> Vec<crate::progress::WorkDoneProgress> {
+        Vec::new()
+    }
+    fn on_initialize(&self, _params: &serde_json::Value) -> Result<(), progressive_lsp_core::InitializeFailed> {
+        Ok(())
+    }
 }
 
 pub const SEMANTIC_TOKEN_TYPES: &[&str] = &[

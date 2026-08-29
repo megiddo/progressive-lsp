@@ -2,6 +2,7 @@
 
 pub mod framing;
 pub mod intelligence;
+pub mod progress;
 pub mod rpc;
 
 use std::io::{BufRead, Write};
@@ -18,6 +19,7 @@ use crate::intelligence::{
 use crate::rpc::{JsonRpcError, JsonRpcRequest};
 
 pub use intelligence::LspIntelligence;
+pub use progress::{WorkDoneProgress, PROGRESS_METHOD, WORK_DONE_CREATE};
 
 pub const SERVER_NAME: &str = "progressive-lsp";
 pub const SERVER_VERSION: &str = "0.0.0";
@@ -99,6 +101,7 @@ impl LspFacade {
                     "full": true
                 },
                 "workspace": { "workspaceFolders": { "supported": true } },
+                "window": { "workDoneProgress": true },
                 "experimental": {
                     "progressiveLsp": self.cap.to_json()
                 }
@@ -112,7 +115,20 @@ impl LspFacade {
 
     pub fn handle_request(&self, req: &JsonRpcRequest) -> Option<Value> {
         match req.method.as_str() {
-            "initialize" => Some(rpc::success(req.id.clone(), self.initialize_result())),
+            "initialize" => {
+                if let Some(intel) = &self.intelligence {
+                    if let Err(e) = intel.on_initialize(&req.params) {
+                        return Some(rpc::failure(
+                            req.id.clone(),
+                            JsonRpcError {
+                                code: -32002,
+                                message: e.to_string(),
+                            },
+                        ));
+                    }
+                }
+                Some(rpc::success(req.id.clone(), self.initialize_result()))
+            }
             "shutdown" => Some(rpc::success(req.id.clone(), Value::Null)),
             "exit" | "initialized" => None,
             "textDocument/didOpen" => {
@@ -231,6 +247,11 @@ impl LspFacade {
             if let Some(resp) = self.handle_request(&req) {
                 Self::write_json(&mut writer, &resp)?;
             }
+            if let Some(intel) = &self.intelligence {
+                for ev in intel.drain_progress() {
+                    Self::write_json(&mut writer, &ev.to_notification())?;
+                }
+            }
         }
     }
 }
@@ -259,6 +280,10 @@ mod tests {
         assert!(cap["socket"].is_null());
         assert_eq!(cap["mux"], false);
         assert_eq!(facade.cap().socket, None);
+        assert_eq!(
+            facade.initialize_result()["capabilities"]["window"]["workDoneProgress"],
+            true
+        );
     }
 
     #[test]

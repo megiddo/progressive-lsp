@@ -2,6 +2,8 @@
 
 pub mod extract;
 pub mod factory;
+#[cfg(test)]
+mod heuristic;
 pub mod tokens;
 
 #[cfg(test)]

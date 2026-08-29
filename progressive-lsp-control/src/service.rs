@@ -15,6 +15,8 @@ pub trait FilesSincePort: Send + Sync {
 pub struct ControlServer {
     pub config_toml: String,
     files_since: Option<Arc<dyn FilesSincePort>>,
+    pending_tier_ready: Arc<std::sync::Mutex<Vec<TierReady>>>,
+    progressive_connected: bool,
 }
 
 impl std::fmt::Debug for ControlServer {
@@ -22,6 +24,7 @@ impl std::fmt::Debug for ControlServer {
         f.debug_struct("ControlServer")
             .field("config_toml", &self.config_toml)
             .field("has_files_since", &self.files_since.is_some())
+            .field("progressive_connected", &self.progressive_connected)
             .finish()
     }
 }
@@ -40,12 +43,42 @@ impl ControlServer {
         Self {
             config_toml: config_toml.into(),
             files_since: None,
+            pending_tier_ready: Arc::new(std::sync::Mutex::new(Vec::new())),
+            progressive_connected: false,
         }
     }
 
     pub fn with_files_since(mut self, port: Arc<dyn FilesSincePort>) -> Self {
         self.files_since = Some(port);
         self
+    }
+
+    pub fn with_progressive(mut self, connected: bool) -> Self {
+        self.progressive_connected = connected;
+        self
+    }
+
+    pub fn is_progressive_connected(&self) -> bool {
+        self.progressive_connected
+    }
+
+    /// Push only when a progressive client is connected. Proto only — not `$/`.
+    pub fn push_tier_ready(&self, package_id: impl Into<String>, tier: impl Into<String>) -> bool {
+        if !self.progressive_connected {
+            return false;
+        }
+        self.pending_tier_ready
+            .lock()
+            .expect("tier ready lock")
+            .push(TierReady {
+                package_id: package_id.into(),
+                tier: tier.into(),
+            });
+        true
+    }
+
+    pub fn take_tier_ready(&self) -> Vec<TierReady> {
+        std::mem::take(&mut *self.pending_tier_ready.lock().expect("tier ready lock"))
     }
 
     pub fn get_config(&self, _req: &GetConfigRequest) -> GetConfigResponse {
@@ -187,14 +220,20 @@ mod tests {
         assert!(srv.reload_scripts(&ReloadScriptsRequest {}).status.unwrap().is_ok());
         assert_eq!(ControlServer::default().config_toml, "");
         assert!(srv.last_watch_batch().events.is_empty());
-        assert_eq!(
-            ControlServer::new("a"),
-            ControlServer {
-                config_toml: "a".into(),
-                files_since: None
-            }
-        );
+        assert_eq!(ControlServer::new("a"), ControlServer::new("a"));
         let _ = format!("{:?}", srv);
+        let stock = ControlServer::new("");
+        assert!(!stock.is_progressive_connected());
+        assert!(!stock.push_tier_ready("p", "graph"));
+        assert!(stock.take_tier_ready().is_empty());
+        let prog = ControlServer::new("").with_progressive(true);
+        assert!(prog.is_progressive_connected());
+        assert!(prog.push_tier_ready("lib", "graph"));
+        let pushed = prog.take_tier_ready();
+        assert_eq!(pushed.len(), 1);
+        assert_eq!(pushed[0].package_id, "lib");
+        assert_eq!(pushed[0].tier, "graph");
+        assert!(prog.take_tier_ready().is_empty());
     }
 
     #[test]

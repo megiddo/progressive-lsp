@@ -11,7 +11,14 @@ members = [
     "progressive-lsp-index",
     "progressive-lsp-resolve",
     "progressive-lsp-workspace",
+    "progressive-lsp-script",
     "progressive-lsp-lang-java",
+    "progressive-lsp-lang-php",
+    "progressive-lsp-lang-html",
+    "progressive-lsp-lang-css",
+    "progressive-lsp-lang-javascript",
+    "progressive-lsp-lang-go",
+    "progressive-lsp-lang-zig",
     "xtask",
 ]
 
@@ -32,9 +39,23 @@ progressive-lsp-index = { path = "progressive-lsp-index" }
 progressive-lsp-resolve = { path = "progressive-lsp-resolve" }
 progressive-lsp-workspace = { path = "progressive-lsp-workspace" }
 progressive-lsp-lang-java = { path = "progressive-lsp-lang-java" }
+progressive-lsp-lang-php = { path = "progressive-lsp-lang-php" }
+progressive-lsp-lang-html = { path = "progressive-lsp-lang-html" }
+progressive-lsp-lang-css = { path = "progressive-lsp-lang-css" }
+progressive-lsp-lang-javascript = { path = "progressive-lsp-lang-javascript" }
+progressive-lsp-lang-go = { path = "progressive-lsp-lang-go" }
+progressive-lsp-lang-zig = { path = "progressive-lsp-lang-zig" }
+progressive-lsp-script = { path = "progressive-lsp-script" }
 prost = "0.13"
 tree-sitter = "0.24"
 tree-sitter-java = "0.23"
+tree-sitter-php = "0.23.11"
+tree-sitter-html = "0.23.2"
+tree-sitter-css = "0.23.2"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-go = "0.23.4"
+tree-sitter-zig = "1.1.2"
+rhai = { version = "1.21", features = ["sync"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -57,17 +78,39 @@ progressive-lsp-core.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-install.workspace = true
 progressive-lsp-lang-java = { workspace = true, optional = true }
+progressive-lsp-lang-php = { workspace = true, optional = true }
+progressive-lsp-lang-html = { workspace = true, optional = true }
+progressive-lsp-lang-css = { workspace = true, optional = true }
+progressive-lsp-lang-javascript = { workspace = true, optional = true }
+progressive-lsp-lang-go = { workspace = true, optional = true }
+progressive-lsp-lang-zig = { workspace = true, optional = true }
 progressive-lsp-plugin.workspace = true
 progressive-lsp-protocol.workspace = true
 progressive-lsp-resolve.workspace = true
+progressive-lsp-script.workspace = true
 progressive-lsp-watch.workspace = true
 progressive-lsp-workspace.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
 
 [features]
-default = ["lang-java"]
+default = [
+    "lang-java",
+    "lang-php",
+    "lang-html",
+    "lang-css",
+    "lang-javascript",
+    "lang-go",
+    "lang-zig",
+]
 lang-java = ["dep:progressive-lsp-lang-java"]
+lang-php = ["dep:progressive-lsp-lang-php"]
+lang-html = ["dep:progressive-lsp-lang-html"]
+lang-css = ["dep:progressive-lsp-lang-css"]
+lang-javascript = ["dep:progressive-lsp-lang-javascript"]
+lang-go = ["dep:progressive-lsp-lang-go"]
+lang-zig = ["dep:progressive-lsp-lang-zig"]
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -26,6 +26,22 @@ impl LanguageIndexer for JavaIndexer {
     fn extract(&self, file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
         extract_symbols(file, uri, source, tree)
     }
+
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> progressive_lsp_resolve::GraphFacts {
+        extract_graph_facts(file, source, tree)
+    }
+}
+
+pub fn extract_graph_facts(
+    file: &FileId,
+    source: &str,
+    tree: &Tree,
+) -> progressive_lsp_resolve::GraphFacts {
+    let mut facts = progressive_lsp_resolve::GraphFacts::default();
+    let bytes = source.as_bytes();
+    facts.package = package_name(tree.root_node(), bytes);
+    walk_graph(tree.root_node(), bytes, file, &mut facts, None);
+    facts
 }
 
 pub fn extract_symbols(file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
@@ -163,6 +179,105 @@ fn walk(
     for child in node.children(&mut c) {
         walk(child, src, file, uri, package, container, out);
     }
+}
+
+fn walk_graph(
+    node: Node,
+    src: &[u8],
+    file: &FileId,
+    facts: &mut progressive_lsp_resolve::GraphFacts,
+    current_type: Option<&str>,
+) {
+    match node.kind() {
+        "import_declaration" => {
+            let raw = text(node, src);
+            let path = raw
+                .trim()
+                .trim_start_matches("import")
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .trim_start_matches("static ")
+                .trim();
+            if path.ends_with(".*") {
+                let p = path.trim_end_matches(".*").to_string();
+                facts
+                    .imports
+                    .push(progressive_lsp_resolve::ImportDecl::wildcard(file.clone(), p));
+            } else if !path.is_empty() {
+                facts
+                    .imports
+                    .push(progressive_lsp_resolve::ImportDecl::new(file.clone(), path));
+            }
+        }
+        "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" => {
+            let name = node
+                .child_by_field_name("name")
+                .map(|n| text(n, src))
+                .unwrap_or_default();
+            let fqn = match (&facts.package, name.as_str()) {
+                (Some(p), n) if !n.is_empty() => format!("{p}.{n}"),
+                (_, n) => n.to_string(),
+            };
+            if let Some(sc) = node.child_by_field_name("superclass") {
+                let parent = text(sc, src).trim().to_string();
+                if !parent.is_empty() {
+                    facts
+                        .edges
+                        .push(progressive_lsp_resolve::TypeEdge::new(fqn.clone(), parent));
+                }
+            }
+            if let Some(ifaces) = node.child_by_field_name("interfaces") {
+                let raw = text(ifaces, src);
+                for part in raw.split(',') {
+                    let p = part.trim().trim_start_matches("implements").trim();
+                    if !p.is_empty() {
+                        facts
+                            .edges
+                            .push(progressive_lsp_resolve::TypeEdge::new(fqn.clone(), p));
+                    }
+                }
+            }
+            let mut c = node.walk();
+            for child in node.children(&mut c) {
+                walk_graph(child, src, file, facts, Some(&fqn));
+            }
+            return;
+        }
+        "method_invocation" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name = text(name_node, src);
+                let arity = argument_arity(node);
+                let start = name_node.start_position();
+                facts.calls.push(progressive_lsp_resolve::CallSite::new(
+                    file.clone(),
+                    name,
+                    arity,
+                    start.row as u32,
+                    start.column as u32,
+                ));
+            }
+        }
+        _ => {}
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts, current_type);
+    }
+}
+
+fn argument_arity(invoke: Node) -> u32 {
+    let Some(args) = invoke.child_by_field_name("arguments") else {
+        return 0;
+    };
+    let mut n = 0u32;
+    let mut c = args.walk();
+    for child in args.children(&mut c) {
+        if child.is_named() && child.kind() != "argument_list" {
+            n += 1;
+        }
+    }
+    n
 }
 
 fn parameter_arity(method: Node) -> u32 {
@@ -304,5 +419,29 @@ class C { C(int a) {} }
         if let Some(sum) = sum {
             assert_eq!(sum.arity, Some(1));
         }
+    }
+
+    #[test]
+    fn extract_graph_imports_hierarchy_and_calls() {
+        let src = r#"
+package com.example.app;
+import com.example.lib.Lib;
+import com.example.util.*;
+class Child extends Base implements Face {
+    void run() { Lib.greet("x"); }
+}
+"#;
+        let tree = parse(src);
+        let file = FileId::new("Child.java");
+        let facts = extract_graph_facts(&file, src, &tree);
+        assert_eq!(facts.package.as_deref(), Some("com.example.app"));
+        assert!(facts.imports.iter().any(|i| i.simple == "Lib"));
+        assert!(facts.imports.iter().any(|i| i.wildcard));
+        assert!(facts.edges.iter().any(|e| e.parent_fqn.contains("Base")));
+        assert!(facts.calls.iter().any(|c| c.name == "greet"));
+        assert_eq!(
+            JavaIndexer.extract_graph(&file, src, &tree).imports.len(),
+            facts.imports.len()
+        );
     }
 }

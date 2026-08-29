@@ -1,28 +1,44 @@
-//! Composition-time session: watch + index + resolver. Not a god LspServer.
+//! Composition-time session: watch + index + resolve + ingest + scripts. Not a god LspServer.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use progressive_lsp_core::FakeClock;
-use progressive_lsp_index::{IndexService, InputChange, SharedIndex};
-use progressive_lsp_protocol::LspIntelligence;
+use progressive_lsp_core::{FakeClock, InitializeFailed, PackageId, Tier};
+use progressive_lsp_index::{IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex};
+use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
 use progressive_lsp_resolve::{
-    ResolveQuery, ResolveResult, Resolver, ResolverChain, TreeSitterResolver,
+    HeuristicResolver, ResolveQuery, ResolveResult, Resolver, ResolverChain, TreeSitterResolver,
 };
+use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
+use progressive_lsp_workspace::{detect_workspace, WorkspaceModel};
 
 #[cfg(test)]
 use progressive_lsp_watch::FakeWatcher;
-use progressive_lsp_workspace::{detect_workspace, WorkspaceModel};
 
 #[cfg(feature = "lang-java")]
-use progressive_lsp_lang_java::{tokens, JavaIndexer};
+use progressive_lsp_lang_java::{tokens as java_tokens, JavaIndexer};
+#[cfg(feature = "lang-php")]
+use progressive_lsp_lang_php::PhpIndexer;
+#[cfg(feature = "lang-html")]
+use progressive_lsp_lang_html::HtmlIndexer;
+#[cfg(feature = "lang-css")]
+use progressive_lsp_lang_css::CssIndexer;
+#[cfg(feature = "lang-javascript")]
+use progressive_lsp_lang_javascript::JavaScriptIndexer;
+#[cfg(feature = "lang-go")]
+use progressive_lsp_lang_go::GoIndexer;
+#[cfg(feature = "lang-zig")]
+use progressive_lsp_lang_zig::ZigIndexer;
 
 pub struct WorkspaceSession {
     pub index: SharedIndex,
     pub chain: ResolverChain,
     pub filter: Box<dyn WatchFilter>,
     pub model: Option<WorkspaceModel>,
+    scripts: Mutex<Option<ScriptHost>>,
+    progress: Mutex<Vec<WorkDoneProgress>>,
+    skipped_packages: Mutex<Vec<PackageId>>,
 }
 
 impl WorkspaceSession {
@@ -32,44 +48,205 @@ impl WorkspaceSession {
             chain,
             filter: Box::new(DefaultIgnoreFilter),
             model: None,
+            scripts: Mutex::new(None),
+            progress: Mutex::new(Vec::new()),
+            skipped_packages: Mutex::new(Vec::new()),
         }
+    }
+
+    pub fn with_scripts(self, host: ScriptHost) -> Self {
+        *self.scripts.lock().expect("scripts") = Some(host);
+        self
     }
 
     pub fn java_default() -> Self {
         let index = SharedIndex::new(IndexService::new());
-        let chain = ResolverChain::new(vec![Box::new(TreeSitterResolver::new(Arc::new(
-            index.clone(),
-        )))]);
+        let chain = ResolverChain::new(vec![
+            Box::new(HeuristicResolver::new(Arc::new(index.clone()))),
+            Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
+        ]);
         Self::new(index, chain)
     }
 
     pub fn discover(&mut self, root: &Path) {
         self.model = detect_workspace(root);
+        if let Some(model) = self.model.clone() {
+            if let Some(host) = self.scripts.lock().expect("scripts").as_mut() {
+                let roots: Vec<PathBuf> = model.packages.iter().map(|p| p.root.clone()).collect();
+                if let Ok(kept) = host.on_workspace_discover(&roots) {
+                    if let Some(m) = &mut self.model {
+                        m.packages.retain(|p| kept.iter().any(|k| k == &p.root));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn indexer_for(&self, path: &Path, language_id: &str) -> Option<Box<dyn LanguageIndexer>> {
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        let lang = if language_id.is_empty() {
+            match ext {
+                "java" => "java",
+                "php" => "php",
+                "html" | "htm" => "html",
+                "css" => "css",
+                "js" | "mjs" | "cjs" | "ts" => "javascript",
+                "go" => "go",
+                "zig" => "zig",
+                _ => language_id,
+            }
+        } else {
+            language_id
+        };
+        match lang {
+            #[cfg(feature = "lang-java")]
+            "java" => Some(Box::new(JavaIndexer)),
+            #[cfg(feature = "lang-php")]
+            "php" => Some(Box::new(PhpIndexer)),
+            #[cfg(feature = "lang-html")]
+            "html" => Some(Box::new(HtmlIndexer)),
+            #[cfg(feature = "lang-css")]
+            "css" => Some(Box::new(CssIndexer)),
+            #[cfg(feature = "lang-javascript")]
+            "javascript" | "typescript" => Some(Box::new(JavaScriptIndexer)),
+            #[cfg(feature = "lang-go")]
+            "go" => Some(Box::new(GoIndexer)),
+            #[cfg(feature = "lang-zig")]
+            "zig" => Some(Box::new(ZigIndexer)),
+            _ => None,
+        }
     }
 
     pub fn index_path(&self, path: &Path, source: &str) {
-        #[cfg(feature = "lang-java")]
-        {
-            self.index
+        if let Some(indexer) = self.indexer_for(path, "") {
+            self.index.lock().index_text(path, source, indexer.as_ref(), false);
+        }
+    }
+
+    /// Package-stream ingest. Completing a package marks Graph and emits progress.
+    /// Never called from [`LspIntelligence::did_change`].
+    pub fn ingest_workspace(&self) {
+        let Some(model) = &self.model else {
+            return;
+        };
+        for pkg in &model.packages {
+            if self
+                .skipped_packages
                 .lock()
-                .index_text(path, source, &JavaIndexer, false);
+                .expect("skip")
+                .iter()
+                .any(|p| p == &pkg.id)
+            {
+                continue;
+            }
+            if let Some(host) = self.scripts.lock().expect("scripts").as_mut() {
+                if let Ok(false) = host.on_pre_index(pkg.id.as_str()) {
+                    self.skipped_packages.lock().expect("skip").push(pkg.id.clone());
+                    continue;
+                }
+            }
+            let mut files = Vec::new();
+            for root in &pkg.source_roots {
+                collect_sources(root, &mut files, 0);
+            }
+            if files.is_empty() {
+                collect_sources(&pkg.root, &mut files, 0);
+            }
+            let lang = guess_lang(&files);
+            if let Some(indexer) = self.indexer_for(files.first().map(PathBuf::as_path).unwrap_or(Path::new("")), lang)
+            {
+                let mut job = PackageIngest::new(pkg.id.as_str(), lang);
+                for f in files {
+                    job = job.with_file(f);
+                }
+                let report = self.index.lock().ingest_package(&job, indexer.as_ref());
+                let mut prog = self.progress.lock().expect("progress");
+                for ev in report.progress {
+                    prog.push(to_lsp_progress(&ev));
+                }
+            }
+            if let Some(host) = self.scripts.lock().expect("scripts").as_mut() {
+                let _ = host.on_post_index(pkg.id.as_str());
+            }
         }
-        #[cfg(not(feature = "lang-java"))]
-        {
-            let _ = (path, source);
-        }
+    }
+
+    pub fn package_tier(&self, id: &str) -> Option<Tier> {
+        self.index.lock().package_tier(&PackageId::new(id))
     }
 
     pub fn apply_watch(&self, backend: &mut dyn WatchBackend, clock: &FakeClock, coalescer: &mut WatchCoalescer) {
         coalescer.poll_backend(backend);
         clock.advance_ms(progressive_lsp_watch::DEFAULT_WINDOW_MS);
         if let Some(batch) = coalescer.flush_due() {
+            let mut filtered = batch;
+            if let Some(host) = self.scripts.lock().expect("scripts").as_mut() {
+                let paths: Vec<String> = filtered.events.iter().map(|e| e.path.clone()).collect();
+                if let Ok(kept) = host.on_watch(&paths) {
+                    filtered.events.retain(|e| kept.iter().any(|k| k == &e.path));
+                }
+            }
             let mut idx = self.index.lock();
-            idx.apply_watch_batch(&batch, self.filter.as_ref());
+            idx.apply_watch_batch(&filtered, self.filter.as_ref());
             #[cfg(feature = "lang-java")]
             {
                 idx.reindex_dirty(&JavaIndexer);
             }
+        }
+    }
+}
+
+fn to_lsp_progress(ev: &progressive_lsp_index::WorkDoneProgress) -> WorkDoneProgress {
+    match ev.kind {
+        progressive_lsp_index::ProgressKind::Begin => {
+            WorkDoneProgress::begin(&ev.token, ev.title.clone().unwrap_or_default())
+        }
+        progressive_lsp_index::ProgressKind::Report => {
+            WorkDoneProgress::report(&ev.token, ev.message.clone().unwrap_or_default(), ev.percentage.unwrap_or(0))
+        }
+        progressive_lsp_index::ProgressKind::End => WorkDoneProgress::end(&ev.token),
+    }
+}
+
+fn guess_lang(files: &[PathBuf]) -> &'static str {
+    for f in files {
+        match f.extension().and_then(|s| s.to_str()) {
+            Some("java") => return "java",
+            Some("php") => return "php",
+            Some("go") => return "go",
+            Some("zig") => return "zig",
+            Some("html") => return "html",
+            Some("css") => return "css",
+            Some("js") | Some("ts") => return "javascript",
+            _ => {}
+        }
+    }
+    ""
+}
+
+fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
+    if depth > 8 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        if dir.is_file() {
+            out.push(dir.to_path_buf());
+        }
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name == "node_modules" || name == ".git" || name == "target" || name == "vendor" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_sources(&path, out, depth + 1);
+        } else if matches!(
+            path.extension().and_then(|s| s.to_str()),
+            Some("java" | "php" | "html" | "css" | "js" | "ts" | "go" | "zig")
+        ) {
+            out.push(path);
         }
     }
 }
@@ -84,30 +261,20 @@ impl LspIntelligence for WorkspaceSession {
         }
     }
 
-    fn did_open(&self, uri: &str, _language_id: &str, text: &str) {
+    fn did_open(&self, uri: &str, language_id: &str, text: &str) {
         let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
         self.index.lock().open_buffer(&path);
-        self.index_path(&path, text);
+        if let Some(indexer) = self.indexer_for(&path, language_id) {
+            self.index.lock().index_text(&path, text, indexer.as_ref(), false);
+        }
     }
 
     fn did_change(&self, uri: &str, text: &str) {
         let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
-        #[cfg(feature = "lang-java")]
-        {
-            let old = self
-                .index
-                .lock()
-                .source(&path)
-                .unwrap_or("")
-                .to_string();
+        if let Some(indexer) = self.indexer_for(&path, "") {
+            let old = self.index.lock().source(&path).unwrap_or("").to_string();
             let change = InputChange::replace_all(&old, text);
-            self.index
-                .lock()
-                .apply_change(&path, &change, &JavaIndexer);
-        }
-        #[cfg(not(feature = "lang-java"))]
-        {
-            let _ = (path, text);
+            self.index.lock().apply_change(&path, &change, indexer.as_ref());
         }
     }
 
@@ -117,25 +284,90 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn semantic_tokens(&self, uri: &str) -> Vec<u32> {
+        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let src = self.index.lock().source(&path).unwrap_or("").to_string();
+        if src.is_empty() {
+            return Vec::new();
+        }
+        let mut p = tree_sitter::Parser::new();
         #[cfg(feature = "lang-java")]
-        {
-            let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
-            let src = self.index.lock().source(&path).unwrap_or("").to_string();
-            if src.is_empty() {
-                return Vec::new();
-            }
-            let mut p = tree_sitter::Parser::new();
+        if path.extension().and_then(|s| s.to_str()) == Some("java") {
             let _ = p.set_language(&progressive_lsp_lang_java::tree_sitter_language());
             if let Some(tree) = p.parse(&src, None) {
-                return tokens::encode_lsp_data(&tokens::tokens_from_tree(&src, &tree));
+                return java_tokens::encode_lsp_data(&java_tokens::tokens_from_tree(&src, &tree));
             }
-            Vec::new()
         }
-        #[cfg(not(feature = "lang-java"))]
-        {
-            let _ = uri;
-            Vec::new()
+        #[cfg(feature = "lang-php")]
+        if path.extension().and_then(|s| s.to_str()) == Some("php") {
+            let _ = p.set_language(&progressive_lsp_lang_php::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_php::tokens_from_tree(&src, &tree);
+            }
         }
+        #[cfg(feature = "lang-html")]
+        if matches!(path.extension().and_then(|s| s.to_str()), Some("html" | "htm")) {
+            let _ = p.set_language(&progressive_lsp_lang_html::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_html::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-css")]
+        if path.extension().and_then(|s| s.to_str()) == Some("css") {
+            let _ = p.set_language(&progressive_lsp_lang_css::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_css::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-javascript")]
+        if matches!(path.extension().and_then(|s| s.to_str()), Some("js" | "ts" | "mjs")) {
+            let _ = p.set_language(&progressive_lsp_lang_javascript::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_javascript::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-go")]
+        if path.extension().and_then(|s| s.to_str()) == Some("go") {
+            let _ = p.set_language(&progressive_lsp_lang_go::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_go::tokens_from_tree(&src, &tree);
+            }
+        }
+        #[cfg(feature = "lang-zig")]
+        if path.extension().and_then(|s| s.to_str()) == Some("zig") {
+            let _ = p.set_language(&progressive_lsp_lang_zig::tree_sitter_language());
+            if let Some(tree) = p.parse(&src, None) {
+                return progressive_lsp_lang_zig::tokens_from_tree(&src, &tree);
+            }
+        }
+        Vec::new()
+    }
+
+    fn drain_progress(&self) -> Vec<WorkDoneProgress> {
+        std::mem::take(&mut *self.progress.lock().expect("progress"))
+    }
+
+    fn on_initialize(&self, params: &serde_json::Value) -> Result<(), InitializeFailed> {
+        let scripts = params
+            .get("initializationOptions")
+            .and_then(|o| o.get("scripts"))
+            .and_then(|s| s.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if scripts.is_empty() {
+            return Ok(());
+        }
+        let mut host = ScriptHost::new(
+            Box::new(RhaiEngineFactory),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        );
+        for s in scripts {
+            if let Some(path) = s.as_str() {
+                host.load_path(Path::new(path)).map_err(|e| InitializeFailed(e.0))?;
+            }
+        }
+        host.on_bootstrap(&ScriptContext::default())?;
+        *self.scripts.lock().expect("scripts") = Some(host);
+        Ok(())
     }
 }
 
@@ -143,18 +375,41 @@ pub fn register_languages(registry: &mut progressive_lsp_plugin::PluginRegistry)
     progressive_lsp_plugin::register_builtins(registry);
     #[cfg(feature = "lang-java")]
     {
+        registry.register(Box::new(progressive_lsp_lang_java::JavaLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-php")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_php::PhpLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-html")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_html::HtmlLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-css")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_css::CssLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-javascript")]
+    {
         registry.register(Box::new(
-            progressive_lsp_lang_java::JavaLanguageFactory::new(),
+            progressive_lsp_lang_javascript::JavaScriptLanguageFactory::new(),
         ));
+        registry.register(Box::new(
+            progressive_lsp_lang_javascript::JavaScriptLanguageFactory::typescript(),
+        ));
+    }
+    #[cfg(feature = "lang-go")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_go::GoLanguageFactory::new()));
+    }
+    #[cfg(feature = "lang-zig")]
+    {
+        registry.register(Box::new(progressive_lsp_lang_zig::ZigLanguageFactory::new()));
     }
 }
 
 #[cfg(test)]
-pub fn ghost_reindex_unopened(
-    session: &WorkspaceSession,
-    path: &Path,
-    new_source: &str,
-) -> bool {
+pub fn ghost_reindex_unopened(session: &WorkspaceSession, path: &Path, new_source: &str) -> bool {
     std::fs::write(path, new_source).is_ok() && {
         let clock = Arc::new(FakeClock::at_unix_ms(5_000));
         let mut coalescer = WatchCoalescer::new(clock.clone());
@@ -188,7 +443,11 @@ mod tests {
         assert!(!session.index.lock().is_open(&path));
         let q = ResolveQuery::workspace_symbol("ghost");
         let r = session.resolve(&q);
-        assert!(r.locations.iter().any(|l| l.uri.contains("Ghost.java")) || !r.locations.is_empty() || session.index.lock().all_indexed_symbols().iter().any(|s| s.name == "ghost"));
+        assert!(
+            r.locations.iter().any(|l| l.uri.contains("Ghost.java"))
+                || !r.locations.is_empty()
+                || session.index.lock().all_indexed_symbols().iter().any(|s| s.name == "ghost")
+        );
     }
 
     #[test]
@@ -206,5 +465,65 @@ mod tests {
         session.did_close("file:///Tmp.java");
         session.discover(tempfile::tempdir().unwrap().path());
         assert_eq!(progressive_lsp_core::LanguageId::new("java").as_str(), "java");
+    }
+
+    #[test]
+    fn ingest_never_blocks_did_change_highlighting() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pom.xml"),
+            "<project><modules><module>lib</module><module>app</module></modules></project>\n",
+        )
+        .unwrap();
+        for name in ["lib", "app"] {
+            let src = dir.path().join(name).join("src/main/java");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(
+                dir.path().join(name).join("pom.xml"),
+                format!("<project><artifactId>{name}</artifactId></project>\n"),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("lib/src/main/java/Lib.java"),
+            "class Lib { static String greet(String n) { return n; } }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("app/src/main/java/App.java"),
+            "class App { void run() { Lib.greet(\"x\"); } }\n",
+        )
+        .unwrap();
+        let mut session = WorkspaceSession::java_default();
+        session.discover(dir.path());
+        session.did_open(
+            "file:///App.java",
+            "java",
+            "class App { void run() { int x = 1; } }",
+        );
+        assert!(session.package_tier("lib").is_none());
+        session.did_change("file:///App.java", "class App { void changed() { int y = 2; } }");
+        let tokens = session.semantic_tokens("file:///App.java");
+        assert!(!tokens.is_empty(), "didChange highlighting must work before ingest finishes");
+        assert!(session.package_tier("lib").is_none());
+        session.ingest_workspace();
+        assert_eq!(session.package_tier("lib"), Some(Tier::Graph));
+        assert_eq!(session.package_tier("app"), Some(Tier::Graph));
+        let progress = session.drain_progress();
+        assert!(!progress.is_empty());
+        assert!(session.drain_progress().is_empty());
+    }
+
+    #[test]
+    fn fixture_script_denies_path_and_aborts_initialize() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("deny.rhai");
+        std::fs::write(&script, "fn on_bootstrap() { abort(\"denied-path\"); }\n").unwrap();
+        let session = WorkspaceSession::java_default();
+        let params = serde_json::json!({
+            "initializationOptions": { "scripts": [script.to_string_lossy()] }
+        });
+        let err = session.on_initialize(&params).unwrap_err();
+        assert!(err.0.contains("denied-path"), "{err}");
     }
 }

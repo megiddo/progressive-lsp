@@ -81,15 +81,17 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## M2 (`m2` branch)
 
+**Status: SIGNED OFF.** Do not open `m3` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| M2.1 | Package-stream ingest + `workDoneProgress` + `data.tier` | M1 | |
-| M2.2 | Control `TierReady` | M2.1, M0.5 | |
-| M2.3 | Java T2 heuristics; optional TSG eval | M2.1, M1.5 | keep TSG only if it wins |
-| M2.4 | PHP T1/T2 + Composer adapter | M2.1 | no interpreter |
-| M2.5 | HTML/CSS/JS T1 | M2.1 | |
-| M2.6 | Go T1 + `go.mod`; Zig T1 + `build.zig` | M2.1 | no gopls/zls yet |
-| M2.7 | Rhai `ScriptHost` + catalog subset | M0.2 | sandbox + Abort tests |
+| M2.1 | Package-stream ingest + `workDoneProgress` + `data.tier` | M1 | **SIGNED OFF.** ingest never blocks didChange |
+| M2.2 | Control `TierReady` | M2.1, M0.5 | **SIGNED OFF.** push when progressive connected |
+| M2.3 | Java T2 heuristics; optional TSG eval | M2.1, M1.5 | **SIGNED OFF.** TSG dropped; `StackGraphResolver` slot unused |
+| M2.4 | PHP T1/T2 + Composer adapter | M2.1 | **SIGNED OFF.** no interpreter |
+| M2.5 | HTML/CSS/JS T1 | M2.1 | **SIGNED OFF.** split crates |
+| M2.6 | Go T1 + `go.mod`; Zig T1 + `build.zig` | M2.1 | **SIGNED OFF.** no gopls/zls |
+| M2.7 | Rhai `ScriptHost` + catalog subset | M0.2 | **SIGNED OFF.** sandbox + Abort tests |
 
 ## M3 (`m3` branch)
 

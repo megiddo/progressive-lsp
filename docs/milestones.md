@@ -86,14 +86,27 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M2 — Progressive ingest, T2, web + PHP, host scripts (~4 weeks)
 
+**Status: SIGNED OFF** on branch `m2`. Do not start M3 until this section stays signed off. No `EngineSupervisor`, no ty/RA packs.
+
 - Package-stream ingest, `workDoneProgress`, `TierReady` when progressive connected, `data.tier` on locations.
-- Java T2 heuristics; stack-graphs Java TSG evaluated behind the same Strategy; keep only if it wins.
+- Java T2 heuristics; stack-graphs Java TSG evaluated behind the same Strategy; **dropped** (archived upstream; heuristics win on the fixture). Strategy slot `StackGraphResolver` remains `NotReady`.
 - PHP T1 + Composer PSR-4; PHP T2 (`use` + hierarchy) as far as fixtures allow.
-- HTML/CSS/JS T1: symbols, selector/`id` find-usages as AST+string, highlighting.
+- HTML/CSS/JS T1: symbols, selector/`id` find-usages as AST+string, highlighting. Split crates (`lang-html` / `lang-css` / `lang-javascript`); TypeScript T1 uses the JS grammar.
 - Go T1 + `go.mod` adapter. Zig T1 + `build.zig` discovery.
 - Rhai: `on_bootstrap`, `on_workspace_discover`, `on_pre_index` / `on_post_index`, `on_watch`. Sandbox tests.
 
 **Exit:** Java ~95% of a **heuristic** fixture set (not JDT 99%). PHP F12 across namespaces via Composer. HTML/CSS/JS highlight + symbols. Go/Zig highlight + document symbols + intra-module F12 at T1/T2 without gopls/zls. A fixture script can deny a path and abort initialize. Ingest never blocks `didChange` highlighting.
+
+**Sign-off checklist (M2)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C) — **96.49% lines**
+- [x] 80% mutants on listed crates that exist — script 90.2%, css 100%, javascript 95.8%, html 96.8%, go 82.6%, zig 85.7%, php 98.1%, java 82.6%, watch 96.8%, index 81.5%, resolve 81.6%, workspace 96.9%, control 88.7%, core 94.7%, install 95.8%
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change)
+- [x] [design-patterns.md](design-patterns.md) table updated for M2 types
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## M3 — Engine supervisor + Python/Rust T3 (~4 weeks)
 

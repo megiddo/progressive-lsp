@@ -307,15 +307,25 @@ mod tests {
         {
             assert!(a.get(&progressive_lsp_core::LanguageId::new("java")).is_ok());
             assert_eq!(a.get(&progressive_lsp_core::LanguageId::new("java")).unwrap().grammar_id(), "tree-sitter-java");
-            assert!(a.get(&progressive_lsp_core::LanguageId::new("php")).is_err());
+        }
+        #[cfg(feature = "lang-php")]
+        {
+            assert!(a.get(&progressive_lsp_core::LanguageId::new("php")).is_ok());
         }
         for slot in KNOWN_LANGUAGE_SLOTS {
-            if *slot == "java" {
+            if matches!(
+                *slot,
+                "java" | "php" | "html" | "css" | "javascript" | "typescript" | "go" | "zig"
+            ) {
                 continue;
             }
-            assert!(a.get(&progressive_lsp_core::LanguageId::new(*slot)).is_err());
+            assert!(
+                a.get(&progressive_lsp_core::LanguageId::new(*slot)).is_err(),
+                "unregistered {slot} must stay UnsupportedLanguage"
+            );
         }
         assert_eq!(a.contains(&progressive_lsp_core::LanguageId::new("java")), cfg!(feature = "lang-java"));
+        assert!(a.get(&progressive_lsp_core::LanguageId::new("python")).is_err());
         let _ = b.registered_ids();
     }
 

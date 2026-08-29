@@ -3,15 +3,21 @@
 
 pub mod chain;
 pub mod fake;
+pub mod graph;
+pub mod heuristic;
 pub mod query;
+pub mod stack_graph;
 pub mod tree_sitter;
 
 pub use chain::ResolverChain;
 pub use fake::{FakeResolver, NotReadyResolver};
+pub use graph::{CallSite, GraphFacts, GraphIndex, ImportDecl, TypeEdge};
+pub use heuristic::HeuristicResolver;
 pub use query::{
     DocumentSymbol, EmptyIndex, Hover, LspLocation, Position, QueryKind, Range, ResolveOutcome,
     ResolveQuery, ResolveResult, SymbolKind,
 };
+pub use stack_graph::StackGraphResolver;
 pub use tree_sitter::{IndexedSymbol, SymbolIndex, TreeSitterResolver};
 
 use crate::query::ResolveQuery as Q;
@@ -34,6 +40,8 @@ mod tests {
         let _ = FakeResolver::graph("t2");
         let _ = NotReadyResolver::new(LanguageId::new("java"), PackageId::new("p"));
         let _ = TreeSitterResolver::new(std::sync::Arc::new(query::EmptyIndex));
+        let _ = HeuristicResolver::new(std::sync::Arc::new(query::EmptyIndex));
+        let _ = StackGraphResolver::unused();
         let _ = FileId::new("f");
         assert_eq!(Tier::Syntax.as_str(), "syntax");
     }

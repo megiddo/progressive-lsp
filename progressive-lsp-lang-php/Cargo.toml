@@ -1,0 +1,19 @@
+[package]
+name = "progressive-lsp-lang-php"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "PHP LanguageFactory T1/T2 + Composer PSR-4 (no host php)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-plugin.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-workspace.workspace = true
+tree-sitter.workspace = true
+tree-sitter-php.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

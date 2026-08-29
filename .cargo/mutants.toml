@@ -1,2 +1,9 @@
 # cargo-mutants: listed library crates only (docs/testing.md).
-# Language crates with real resolvers: progressive-lsp-lang-java.
+# Language crates with real resolvers: java, php, html, css, javascript, go, zig.
+# Also progressive-lsp-script.
+
+# EmptyIndex already returns empty; `vec![]` replacements are equivalent.
+exclude_re = [
+    "impl GraphIndex for crate::query::EmptyIndex",
+    "impl crate::tree_sitter::SymbolIndex for EmptyIndex",
+]
