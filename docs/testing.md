@@ -79,6 +79,15 @@ T3 latency is per-engine and not a core fail if ty is slow.
 - Abort on `on_install_verify` refuses the new binary (no rename, no exec).
 - Scripts cannot register `textDocument/definition`.
 
+## Integration suite (PD1–PD3)
+
+Separate from this unit/mutation gate. Spec: [../integration/README.md](../integration/README.md).
+
+- May use containers, real engines, and a **deadline** wait on `workDoneProgress` / `TierReady` (poll protocol, not `sleep(5)`).
+- Must not weaken the crate suite: still no `thread::sleep` in `crates/` tests.
+- Nightly / release, not every library PR.
+- Darwin: do not treat missing musl ELFs as a green IT-1.
+
 ## Milestone sign-off (every WP)
 
 - [ ] Tests for this WP live on this branch

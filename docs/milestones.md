@@ -199,7 +199,7 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## M6 — Deploy, contracts as standard (~3 weeks)
 
-**Status: SIGNED OFF** on branch `m6`. v1 is complete. There is no M7. Do not open a next milestone branch.
+**Status: SIGNED OFF** on branch `m6` (merged to `main`). v1 product exits are complete. Post-dev work is **PD0–PD4**, stacked on `main` — not M7.
 
 - `xtask dist` per-triple tarballs + `manifest.json` + SHA256; slim vs full.
 - Install CLI: `install` / `serve` / `--control-socket` / `--control-fd` / `--mux`; `on_install_verify`; FakeRemoteTransport hash mismatch + atomic replace.
@@ -211,6 +211,57 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 **Darwin vs CI:** this host’s `xtask dist` tarballs contain **stubs**, not musl ELFs. Do not claim `check-static` green on them. The real dist is Linux CI per-triple musl (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`).
 
-## Post-v1 (not scheduled)
+## PD0 — Ingest post-dev docs
+
+**Status: SIGNED OFF** on branch `pd0`. Design + user docs in-tree. Do not start PD1 crates until this section is signed off (it is).
+
+**Scope:** copy user README/API, integration designs, T2 spike notes. No integration harness yet.
+
+**Exit**
+
+- [x] [docs/user/README.md](user/README.md) and [docs/user/progressive-v1-api.md](user/progressive-v1-api.md) in-tree
+- [x] [integration/](../integration/README.md) IT-1/IT-2/IT-3 designs
+- [x] [docs/spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md)
+- [x] branching / implementation-plan list PD1–PD4
+
+**Sign-off checklist (PD0)**
+
+- [x] Exit criteria met
+- [x] Tests / llvm-cov / mutants / `sleep` / `check-static` — **N/A** (docs only)
+- [x] Docs in this tree updated
+
+## PD1 — IT-1 deploy and config
+
+**Status:** not started. Branch `pd1` on `pd0`.
+
+Headless install/`serve`/`initialize` on Arch, Rocky/UBI, Debian, Ubuntu containers using a **prebuilt** static core (Linux CI). No Node/JVM/CPython in the image. Prefix, overlay config, git exclude. Spec: [integration/01-deploy-config.md](../integration/01-deploy-config.md).
+
+**Exit:** IT-1.1–1.7 pass on CI Linux for musl core (no engine packs required). Darwin: do not fake musl greens; skip or document Docker-unavailable as a CI gap.
+
+## PD2 — IT-2 vanilla LSP backends
+
+**Status:** not started. Branch `pd2` on `pd1`.
+
+Each language on a **pinned SHA** real corpus. Stock stdio LSP only. Spec: [integration/02-lsp-backends.md](../integration/02-lsp-backends.md).
+
+**Exit:** report rows per language; T3 rows `skip_pack_missing` when packs are stubs. No `$/` FilesSince.
+
+## PD3 — IT-3 extended protocol
+
+**Status:** not started. Branch `pd3` on `pd2`.
+
+Java / Python+ty / TypeScript+tsgo progressive client. Envelope + FilesSince / WatchBatch / TierReady / InstallPacks. Spec: [integration/03-extended-protocol.md](../integration/03-extended-protocol.md), API: [user/progressive-v1-api.md](user/progressive-v1-api.md).
+
+**Exit:** IT-3.1–3.7 as specified; mux `pending_mux` if unimplemented.
+
+## PD4 — T2 Strategy bake-off
+
+**Status:** not started. Branch `pd4` on `pd3`.
+
+Plugin seam: T2 Strategy selectable per language; **default remains heuristics**. Pin stack-graphs by git SHA; measure vs held-out corpus. Spec: [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md).
+
+**Exit:** seam + config pick; bake-off table committed (or explicit “TSG not default” with numbers). Default `heuristic` unless winner rule fires.
+
+## Later post-v1 (not in PD0–PD4)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.
