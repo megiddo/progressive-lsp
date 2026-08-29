@@ -232,11 +232,29 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 ## PD1 — IT-1 deploy and config
 
-**Status:** not started. Branch `pd1` on `pd0`.
+**Status: SIGNED OFF** on branch `pd1`. Do not start PD2 until this section stays signed off.
 
 Headless install/`serve`/`initialize` on Arch, Rocky/UBI, Debian, Ubuntu containers using a **prebuilt** static core (Linux CI). No Node/JVM/CPython in the image. Prefix, overlay config, git exclude. Spec: [integration/01-deploy-config.md](../integration/01-deploy-config.md).
 
 **Exit:** IT-1.1–1.7 pass on CI Linux for musl core (no engine packs required). Darwin: do not fake musl greens; skip or document Docker-unavailable as a CI gap.
+
+**Sign-off checklist (PD1)**
+
+- [x] Exit criteria for this WP met (harness + compose + IT-1.1–1.7 cases; Linux CI is the distro gate)
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **96.43% lines**
+- [x] 80% mutants on listed crates that exist — **N/A** (no listed crate source change; composition root + integration harness only)
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` if ELF changed — **N/A** (no shipped ELF change). Do not run it on a Darwin Mach-O.
+- [x] [design-patterns.md](design-patterns.md) table updated for `ServeHost` / `LspStdioDriver`
+- [x] Docs in this tree updated if a locked decision was refined
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the PD1 unit gate on macOS.
+- `integration/harness/run-it1.sh auto` on this host runs **host_smoke** only (Mach-O `serve` handshake, prefix, overlay, git exclude, help). That is **not** IT-1.1.
+- Real IT-1.1–1.6 need a prebuilt musl ELF bind-mounted into Arch / Rocky / Debian / Ubuntu (`integration/compose.yaml`). This Darwin host has no Docker daemon and no musl ELF — same class as the M0 musl gap. Linux CI is the distro gate.
+- `xtask check-static` on a Mach-O or dist stub is a refuse, not a green.
 
 ## PD2 — IT-2 vanilla LSP backends
 

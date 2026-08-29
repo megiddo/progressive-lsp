@@ -12,7 +12,7 @@ If you are writing an editor host that wants live pack install, file-watch catch
 
 ## Install
 
-Copy a release tarball onto the Linux host (or extract it in place). The default home is `$HOME/.progressivelsp`. Override it with `PROGRESSIVE_LSP_HOME` or `--prefix`.
+Copy a release tarball onto the Linux host (or extract it in place). The default home is `$HOME/.progressivelsp`. Override it with `PROGRESSIVE_LSP_HOME` or `--prefix` (`--prefix` wins when both are set).
 
 ```text
 progressive-lsp install --prefix DIR --packs python,rust,...

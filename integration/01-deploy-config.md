@@ -107,6 +107,15 @@ sha256sum -c SHA256SUMS
 
 **Pass:** non-zero exit, usage on stderr, process does not hang.
 
+## Darwin vs CI
+
+This suite’s greens are **Linux CI** with a prebuilt musl ELF bind-mounted into the four images (`integration/compose.yaml`). On a Darwin laptop:
+
+- `run-it1.sh auto` may run **host_smoke** against a native Mach-O (`serve` handshake, prefix, overlay, git exclude, help).
+- That is **not** IT-1.1 and must not be recorded as a distro pass.
+- Missing Docker daemon or missing musl ELF is the same class of gap as M0 (`xtask musl` / `check-static` on this host).
+- Never run `check-static` on the Mach-O or on `xtask dist` stubs and call it IT-1.6.
+
 ## Explicit non-goals for IT-1
 
 - Engine child processes.

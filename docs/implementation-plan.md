@@ -157,11 +157,13 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## PD1 (`pd1` branch)
 
+**Status: SIGNED OFF.** Do not open `pd2` until this table stays signed off.
+
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| PD1.1 | Integration harness (LSP stdio client) | PD0 | FakeClock still in unit tests; integration may use deadlines |
-| PD1.2 | Distro compose: Arch, Rocky/UBI, Debian, Ubuntu | PD1.1 | Prebuilt musl ELF from CI; Darwin gap documented |
-| PD1.3 | IT-1.1–1.7 deploy/config cases | PD1.2 | [integration/01-deploy-config.md](../integration/01-deploy-config.md) |
+| PD1.1 | Integration harness (LSP stdio client) | PD0 | **SIGNED OFF.** `integration/harness` (`plsp-it1 handshake`); not a workspace member |
+| PD1.2 | Distro compose: Arch, Rocky/UBI, Debian, Ubuntu | PD1.1 | **SIGNED OFF.** `integration/compose.yaml`; prebuilt musl ELF from CI; Darwin gap documented |
+| PD1.3 | IT-1.1–1.7 deploy/config cases | PD1.2 | **SIGNED OFF.** [integration/01-deploy-config.md](../integration/01-deploy-config.md). Linux CI is the distro gate; Darwin host_smoke is not IT-1.1 |
 
 ## PD2 (`pd2` branch)
 

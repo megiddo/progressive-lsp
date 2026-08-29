@@ -18,7 +18,9 @@ use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
 use progressive_lsp_script::ScriptHost;
 
+mod serve_host;
 mod session;
+pub use serve_host::{root_from_params, ServeHost};
 pub use session::{register_languages, WorkspaceSession};
 
 pub const USAGE: &str = "\
@@ -168,6 +170,21 @@ where
 }
 
 pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    serve_with_io(opts, BufReader::new(stdin.lock()), stdout.lock())
+}
+
+/// Same as [`run_serve`] but injectable stdio (IT-1 handshake + unit tests).
+pub fn serve_with_io<R, W>(
+    opts: ServeOpts,
+    reader: R,
+    writer: W,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    R: io::BufRead,
+    W: io::Write,
+{
     let layout = PrefixLayout::resolve(opts.prefix.as_deref())?;
     layout.ensure_dirs()?;
     let _registry = build_registry();
@@ -182,23 +199,24 @@ pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
     supervisor.register(Box::new(PackAdapter::gopls()));
     supervisor.register(Box::new(PackAdapter::zls()));
     let _supervisor = supervisor;
+    let host = ServeHost::new(layout)?;
     let socket = opts
         .control_socket
         .as_ref()
         .map(|p| p.display().to_string());
     let _ = opts.control_fd;
-    let facade = LspFacade::new(socket, opts.mux);
-    let stdin = io::stdin();
-    let stdout = io::stdout();
+    let facade = LspFacade::new(socket, opts.mux).with_intelligence(Arc::new(host));
     if opts.mux {
         let srv = ControlServer::new("").with_progressive(true);
+        let mut reader = reader;
+        let mut writer = writer;
         facade.serve_mux(
-            &mut BufReader::new(stdin.lock()),
-            &mut stdout.lock(),
+            &mut reader,
+            &mut writer,
             Some(|payload: &[u8]| srv.handle_mux_payload(payload).ok()),
         )?;
     } else {
-        facade.serve(BufReader::new(stdin.lock()), stdout.lock())?;
+        facade.serve(reader, writer)?;
     }
     Ok(())
 }
@@ -317,6 +335,7 @@ mod tests {
     use super::*;
     use progressive_lsp_plugin::KNOWN_LANGUAGE_SLOTS;
     use progressive_lsp_protocol::framing;
+    use std::path::Path;
 
     #[test]
     fn parse_serve_defaults_and_flags() {
@@ -511,26 +530,99 @@ mod tests {
         assert!(verify_existing(&path, &progressive_lsp_install::hex_encode(&sha256(b"no"))).is_err());
     }
 
+    fn handshake_bytes(root: Option<&Path>) -> Vec<u8> {
+        let params = match root {
+            Some(p) => serde_json::json!({
+                "capabilities": {},
+                "rootUri": format!("file://{}", p.display())
+            }),
+            None => serde_json::json!({"capabilities": {}}),
+        };
+        let mut stdin = framing::encode_message(
+            serde_json::to_vec(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": params
+            }))
+            .unwrap(),
+        );
+        stdin.extend_from_slice(&framing::encode_message(
+            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}))
+                .unwrap(),
+        ));
+        stdin.extend_from_slice(&framing::encode_message(
+            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}))
+                .unwrap(),
+        ));
+        stdin.extend_from_slice(&framing::encode_message(
+            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","method":"exit"})).unwrap(),
+        ));
+        stdin
+    }
+
     #[test]
     fn serve_round_trip_via_facade_not_process_stdin() {
         let facade = LspFacade::new(None, false);
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {}
-        });
-        let framed = framing::encode_message(serde_json::to_vec(&body).unwrap());
-        let mut exit = framing::encode_message(
-            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","method":"exit"})).unwrap(),
-        );
-        let mut stdin = framed;
-        stdin.append(&mut exit);
         let mut out = Vec::new();
         facade
-            .serve(std::io::Cursor::new(stdin), &mut out)
+            .serve(std::io::Cursor::new(handshake_bytes(None)), &mut out)
             .unwrap();
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn serve_with_io_stock_initialize_control_off() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        serve_with_io(
+            ServeOpts {
+                prefix: Some(prefix.path().to_path_buf()),
+                control_socket: None,
+                control_fd: None,
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(Some(workspace.path()))),
+            &mut out,
+        )
+        .unwrap();
+        let texts = framing::decode_all(&out).unwrap();
+        let resp: serde_json::Value = serde_json::from_slice(&texts[0]).unwrap();
+        assert_eq!(resp["result"]["serverInfo"]["name"], "progressive-lsp");
+        let cap = &resp["result"]["capabilities"]["experimental"]["progressiveLsp"];
+        assert_eq!(cap["version"], "v1");
+        assert!(cap["socket"].is_null());
+        assert_eq!(cap["mux"], false);
+        assert!(prefix.path().join("config.toml").is_file());
+        assert!(prefix.path().join("cache").is_dir());
+        assert!(!workspace.path().join(".progressivelsp/cache").exists());
+        assert!(workspace.path().join(".progressivelsp/.gitignore").is_file());
+    }
+
+    #[test]
+    fn serve_with_io_cli_prefix_creates_cliprefix_not_env() {
+        let clip = tempfile::tempdir().unwrap();
+        let env_home = tempfile::tempdir().unwrap();
+        let old = std::env::var("PROGRESSIVE_LSP_HOME").ok();
+        std::env::set_var("PROGRESSIVE_LSP_HOME", env_home.path());
+        let result = serve_with_io(
+            ServeOpts {
+                prefix: Some(clip.path().to_path_buf()),
+                control_socket: None,
+                control_fd: None,
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(None)),
+            Vec::new(),
+        );
+        match old {
+            Some(v) => std::env::set_var("PROGRESSIVE_LSP_HOME", v),
+            None => std::env::remove_var("PROGRESSIVE_LSP_HOME"),
+        }
+        result.unwrap();
+        assert!(clip.path().join("config.toml").is_file());
+        assert!(!env_home.path().join("config.toml").exists());
     }
 
     #[test]

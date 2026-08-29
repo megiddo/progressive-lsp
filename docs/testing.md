@@ -86,7 +86,7 @@ Separate from this unit/mutation gate. Spec: [../integration/README.md](../integ
 - May use containers, real engines, and a **deadline** wait on `workDoneProgress` / `TierReady` (poll protocol, not `sleep(5)`).
 - Must not weaken the crate suite: still no `thread::sleep` in `crates/` tests.
 - Nightly / release, not every library PR.
-- Darwin: do not treat missing musl ELFs as a green IT-1.
+- Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate.
 
 ## Milestone sign-off (every WP)
 

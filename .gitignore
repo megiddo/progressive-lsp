@@ -15,3 +15,7 @@ profraw/
 *.profraw
 /tmp/
 /spike/.cache/
+/integration/artifacts/*
+!/integration/artifacts/.gitkeep
+/integration/out/
+/integration/harness/target/

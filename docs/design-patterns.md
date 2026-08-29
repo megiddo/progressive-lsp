@@ -104,6 +104,9 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
 | `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
+| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail |
+| `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
+| `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
 
 ## Patterns we do not use (v1)
 
