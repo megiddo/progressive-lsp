@@ -448,7 +448,7 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 ## IDE-5 — Protocol console + progressive.v1
 
-**Status: UNSIGNED.** Last POC branch. Do not open `ide6`.
+**Status: SIGNED OFF** on branch `ide5`. Last POC branch. Do not open `ide6`. This stack is complete.
 
 - `ServeMode::ControlSocket`; `ControlClient` using `progressive-lsp-control`.
 - `ProtocolConsole`: append-only LSP JSON-RPC transcript + send; Envelope unary RPCs + `WatchBatch` / `TierReady` display.
@@ -458,14 +458,14 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 **Sign-off checklist (IDE-5)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch
-- [ ] 95% llvm-cov (same excludes)
-- [ ] 80% mutants on poc-ide
-- [ ] No `sleep`
-- [ ] `check-static` — **N/A**
-- [ ] Pattern table updated
-- [ ] Docs updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov (same excludes) — **95.99% lines**
+- [x] 80% mutants on poc-ide — poc-ide **683 caught / 711 scored (96.1%)**, 115 unviable, 20 missed, 8 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`ControlPush`, `TranscriptKind`, `IdeError::Control`)
+- [x] Docs updated if a locked decision was refined (`progressive-lsp-control` consumer MAY; `--mux` is `pending_mux`)
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 

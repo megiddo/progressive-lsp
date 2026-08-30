@@ -167,16 +167,19 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
 | `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
-| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; tests inject mode; no mux until implemented |
+| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; `serve_args` never includes `--mux` (`pending_mux`) |
 | `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |
 | `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
 | `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
 | `LspClient` | Facade | JSON-RPC in; domain locations out; no watch internals |
-| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; IDE-4 never opens the socket |
+| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; `LspClient` never opens it; `ControlClient` does in `ControlSocket` |
 | `ControlTransport` / `UnixControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails |
 | `FakeControl` | Test double | Same `ControlTransport`; pushes use `request_id == 0` |
 | `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |
+| `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
 | `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
+| `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
+| `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
 

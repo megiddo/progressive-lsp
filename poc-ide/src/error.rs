@@ -28,6 +28,8 @@ pub enum IdeError {
     LspMethodMissing(String),
     #[error("progressive-lsp binary not found")]
     MissingBinary,
+    #[error("control: {0}")]
+    Control(String),
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -77,6 +79,18 @@ impl IdeError {
         matches!(self, Self::MissingBinary)
     }
 
+    pub fn is_control(&self) -> bool {
+        matches!(self, Self::Control(_))
+    }
+
+    pub fn is_control_socket_missing(&self) -> bool {
+        matches!(self, Self::Control(m) if m == "control socket missing")
+    }
+
+    pub fn is_pending_mux(&self) -> bool {
+        matches!(self, Self::Control(m) if m == "pending_mux")
+    }
+
     pub fn is_io(&self) -> bool {
         matches!(self, Self::Io(_))
     }
@@ -95,6 +109,18 @@ impl IdeError {
 
     pub fn lsp_method_missing(method: impl Into<String>) -> Self {
         Self::LspMethodMissing(method.into())
+    }
+
+    pub fn control(msg: impl Into<String>) -> Self {
+        Self::Control(msg.into())
+    }
+
+    pub fn control_socket_missing() -> Self {
+        Self::Control("control socket missing".into())
+    }
+
+    pub fn pending_mux() -> Self {
+        Self::Control("pending_mux".into())
     }
 }
 
@@ -143,6 +169,12 @@ mod tests {
             IdeError::MissingBinary.to_string(),
             "progressive-lsp binary not found"
         );
+        assert_eq!(IdeError::control("refused").to_string(), "control: refused");
+        assert_eq!(
+            IdeError::control_socket_missing().to_string(),
+            "control: control socket missing"
+        );
+        assert_eq!(IdeError::pending_mux().to_string(), "control: pending_mux");
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -170,9 +202,20 @@ mod tests {
         assert!(IdeError::lsp_method_missing("m").is_lsp_method_missing());
         assert!(!IdeError::lsp_method_missing("m").is_missing_binary());
         assert!(IdeError::MissingBinary.is_missing_binary());
-        assert!(!IdeError::MissingBinary.is_io());
+        assert!(!IdeError::MissingBinary.is_control());
+        assert!(IdeError::control("x").is_control());
+        assert!(!IdeError::control("x").is_control_socket_missing());
+        assert!(!IdeError::control("x").is_pending_mux());
+        assert!(IdeError::control_socket_missing().is_control_socket_missing());
+        assert!(IdeError::control_socket_missing().is_control());
+        assert!(!IdeError::control_socket_missing().is_pending_mux());
+        assert!(IdeError::pending_mux().is_pending_mux());
+        assert!(IdeError::pending_mux().is_control());
+        assert!(!IdeError::pending_mux().is_control_socket_missing());
+        assert!(!IdeError::control("x").is_io());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());
+        assert!(!io.is_control());
     }
 }

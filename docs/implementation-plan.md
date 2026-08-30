@@ -256,12 +256,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## IDE-5 (`ide5` branch)
 
-**Status: UNSIGNED.** Last POC WP. No `ide6`.
+**Status: SIGNED OFF** on `ide5`. Last POC WP. No `ide6`. `--mux` is `pending_mux`.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| IDE-5.1 | `ControlClient` Envelope Adapter | IDE-4 | `progressive-lsp-control`; `FakeControl` |
-| IDE-5.2 | `ProtocolConsole` LSP + control | IDE-5.1 | mux `pending_mux` |
+| IDE-5.1 | `ControlClient` Envelope Adapter | IDE-4 | **SIGNED OFF.** `progressive-lsp-control`; `FakeControl`; payload > 16 MiB fails. |
+| IDE-5.2 | `ProtocolConsole` LSP + control | IDE-5.1 | **SIGNED OFF.** mux `pending_mux`. llvm-cov **95.99%** lines. Mutants poc-ide **683/711 (96.1%)**, 115 unviable |
 
 ## Spikes (do not skip hygiene on merge)
 

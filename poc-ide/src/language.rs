@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::error::IdeError;
+
 /// Extension → `languageId`. Unknown → `plaintext`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LanguageCatalog {
@@ -47,8 +49,8 @@ impl LanguageCatalog {
     }
 }
 
-/// Stock stdio vs control-socket. IDE-4 uses [`ServeMode::StockStdio`];
-/// [`ServeMode::ControlSocket`] is present for IDE-5 and is not activated.
+/// Stock stdio vs control-socket. [`ServeMode::ControlSocket`] spawns
+/// `serve --control-socket PATH`. `--mux` is `pending_mux` and is never an argv.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ServeMode {
     StockStdio,
@@ -76,6 +78,21 @@ impl ServeMode {
             "stock-stdio" => Some(Self::StockStdio),
             "control-socket" => Some(Self::ControlSocket),
             _ => None,
+        }
+    }
+
+    /// `progressive-lsp` argv. Never includes `--mux`.
+    pub fn serve_args(self, control_socket: Option<&Path>) -> Result<Vec<String>, IdeError> {
+        match self {
+            Self::StockStdio => Ok(vec!["serve".into()]),
+            Self::ControlSocket => {
+                let path = control_socket.ok_or_else(IdeError::control_socket_missing)?;
+                Ok(vec![
+                    "serve".into(),
+                    "--control-socket".into(),
+                    path.to_string_lossy().into_owned(),
+                ])
+            }
         }
     }
 }
@@ -202,5 +219,24 @@ mod tests {
         assert_eq!(ServeMode::parse(""), None);
         assert_eq!(ServeMode::parse("StockStdio"), None);
         assert_ne!(ServeMode::StockStdio, ServeMode::ControlSocket);
+
+        let stock = ServeMode::StockStdio.serve_args(None).unwrap();
+        assert_eq!(stock, vec!["serve"]);
+        assert!(!stock
+            .iter()
+            .any(|a| a.contains("mux") || a.contains("control")));
+        let stock_ignores_socket = ServeMode::StockStdio
+            .serve_args(Some(Path::new("/tmp/x.sock")))
+            .unwrap();
+        assert_eq!(stock_ignores_socket, vec!["serve"]);
+
+        let missing = ServeMode::ControlSocket.serve_args(None).unwrap_err();
+        assert!(missing.is_control_socket_missing());
+        let ctrl = ServeMode::ControlSocket
+            .serve_args(Some(Path::new("/tmp/plsp.sock")))
+            .unwrap();
+        assert_eq!(ctrl, vec!["serve", "--control-socket", "/tmp/plsp.sock"]);
+        assert!(!ctrl.iter().any(|a| a.contains("mux")));
+        assert_eq!(ctrl.iter().filter(|a| *a == "--mux").count(), 0);
     }
 }

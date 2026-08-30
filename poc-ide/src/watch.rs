@@ -223,7 +223,9 @@ mod tests {
     use super::*;
     use crate::edit::EditCommand;
     use crate::ports::{ClockPort, FakeClipboard, FakeClock, FakeWatch, MemFs};
-    use notify::event::{AccessKind, CreateKind, DataChange, EventAttributes, ModifyKind, RemoveKind};
+    use notify::event::{
+        AccessKind, CreateKind, DataChange, EventAttributes, ModifyKind, RemoveKind,
+    };
     use std::sync::mpsc;
 
     fn open_sample() -> (MemFs, BufferMap, FakeWatch, FakeClock) {
@@ -232,12 +234,7 @@ mod tests {
         fs.add_file("/ws/b.rs", b"fn b() {}\n").unwrap();
         let mut buffers = BufferMap::new();
         buffers.open("/ws/a.rs", &fs).unwrap();
-        (
-            fs,
-            buffers,
-            FakeWatch::new(),
-            FakeClock::at_unix_ms(1_000),
-        )
+        (fs, buffers, FakeWatch::new(), FakeClock::at_unix_ms(1_000))
     }
 
     #[test]
@@ -440,7 +437,10 @@ mod tests {
             NotifyWatch::map_kind(EventKind::Any),
             Some(DiskEventKind::Modify)
         );
-        assert_eq!(NotifyWatch::map_kind(EventKind::Access(AccessKind::Any)), None);
+        assert_eq!(
+            NotifyWatch::map_kind(EventKind::Access(AccessKind::Any)),
+            None
+        );
         assert_eq!(NotifyWatch::map_kind(EventKind::Other), None);
         assert_eq!(
             NotifyWatch::map_kind_str("create"),
@@ -450,7 +450,10 @@ mod tests {
             NotifyWatch::map_kind_str("Create"),
             Some(DiskEventKind::Create)
         );
-        assert_eq!(NotifyWatch::map_kind_str("any"), Some(DiskEventKind::Create));
+        assert_eq!(
+            NotifyWatch::map_kind_str("any"),
+            Some(DiskEventKind::Create)
+        );
         assert_eq!(
             NotifyWatch::map_kind_str("modify"),
             Some(DiskEventKind::Modify)
@@ -459,7 +462,10 @@ mod tests {
             NotifyWatch::map_kind_str("Modify"),
             Some(DiskEventKind::Modify)
         );
-        assert_eq!(NotifyWatch::map_kind_str("data"), Some(DiskEventKind::Modify));
+        assert_eq!(
+            NotifyWatch::map_kind_str("data"),
+            Some(DiskEventKind::Modify)
+        );
         assert_eq!(
             NotifyWatch::map_kind_str("remove"),
             Some(DiskEventKind::Delete)
@@ -490,11 +496,7 @@ mod tests {
             attrs: EventAttributes::new(),
         };
         assert!(NotifyWatch::map_event(&ignored, 1).is_empty());
-        assert!(NotifyWatch::map_event(
-            &Event::new(EventKind::Other),
-            1
-        )
-        .is_empty());
+        assert!(NotifyWatch::map_event(&Event::new(EventKind::Other), 1).is_empty());
     }
 
     #[test]
@@ -511,20 +513,23 @@ mod tests {
         assert!(!watch.is_watching("/ws"));
         assert_eq!(watch.watched_len(), 0);
 
-        tx.send(Ok(Event::new(EventKind::Create(CreateKind::File))
-            .add_path(PathBuf::from("/ws/a.rs"))))
-            .unwrap();
+        tx.send(Ok(
+            Event::new(EventKind::Create(CreateKind::File)).add_path(PathBuf::from("/ws/a.rs"))
+        ))
+        .unwrap();
         tx.send(Ok(Event::new(EventKind::Modify(ModifyKind::Data(
             DataChange::Any,
         )))
         .add_path(PathBuf::from("/ws/b.rs"))))
             .unwrap();
-        tx.send(Ok(Event::new(EventKind::Remove(RemoveKind::File))
-            .add_path(PathBuf::from("/ws/c.rs"))))
-            .unwrap();
-        tx.send(Ok(Event::new(EventKind::Access(AccessKind::Any))
-            .add_path(PathBuf::from("/ws/skip.rs"))))
-            .unwrap();
+        tx.send(Ok(
+            Event::new(EventKind::Remove(RemoveKind::File)).add_path(PathBuf::from("/ws/c.rs"))
+        ))
+        .unwrap();
+        tx.send(Ok(
+            Event::new(EventKind::Access(AccessKind::Any)).add_path(PathBuf::from("/ws/skip.rs"))
+        ))
+        .unwrap();
         tx.send(Err(notify::Error::generic("dropped"))).unwrap();
 
         let events = watch.poll();

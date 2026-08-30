@@ -1,7 +1,7 @@
 //! `LspClient` Facade, `LspLocation`, `SpawnSpec`, and `StdioLsp` Adapter.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -32,7 +32,9 @@ const METHOD_DEFINITION: &str = "textDocument/definition";
 const METHOD_IMPLEMENTATION: &str = "textDocument/implementation";
 const METHOD_REFERENCES: &str = "textDocument/references";
 
-/// Advertised `experimental.progressiveLsp`. Socket may be null; IDE-4 never opens it.
+/// Advertised `experimental.progressiveLsp`. Socket may be null. `LspClient`
+/// never opens it; [`crate::control::ControlClient`] does when
+/// [`crate::language::ServeMode::ControlSocket`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProgressiveLspCap {
     version: String,
@@ -191,7 +193,10 @@ impl SpawnSpec {
             }
         }
         if let Some(cwd) = cwd {
-            for rel in ["target/debug/progressive-lsp", "target/release/progressive-lsp"] {
+            for rel in [
+                "target/debug/progressive-lsp",
+                "target/release/progressive-lsp",
+            ] {
                 let candidate = cwd.join(rel);
                 if candidate.is_file() {
                     return Ok(Self { binary: candidate });
@@ -220,8 +225,24 @@ pub struct StdioLsp {
 
 impl StdioLsp {
     pub fn spawn(spec: &SpawnSpec) -> Result<Self, IdeError> {
-        let mut child = Command::new(spec.binary())
-            .arg("serve")
+        Self::spawn_serve(spec, ServeMode::StockStdio, None)
+    }
+
+    pub fn spawn_serve(
+        spec: &SpawnSpec,
+        mode: ServeMode,
+        control_socket: Option<&Path>,
+    ) -> Result<Self, IdeError> {
+        let args = mode.serve_args(control_socket)?;
+        Self::spawn_with_args(spec, &args)
+    }
+
+    pub fn spawn_with_args(spec: &SpawnSpec, args: &[impl AsRef<OsStr>]) -> Result<Self, IdeError> {
+        let mut cmd = Command::new(spec.binary());
+        for arg in args {
+            cmd.arg(arg);
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -298,7 +319,8 @@ impl LspTransport for StdioLsp {
         loop {
             let body = read_message(&mut self.reader)?
                 .ok_or_else(|| IdeError::lsp("eof waiting for response"))?;
-            let v: Value = serde_json::from_slice(&body).map_err(|e| IdeError::lsp(e.to_string()))?;
+            let v: Value =
+                serde_json::from_slice(&body).map_err(|e| IdeError::lsp(e.to_string()))?;
             if v.get("id").is_none() {
                 continue;
             }
@@ -478,10 +500,8 @@ impl<T: LspTransport> LspClient<T> {
             return Ok(());
         }
         let uri = file_uri(path)?;
-        self.transport.notify(
-            METHOD_DID_SAVE,
-            json!({ "textDocument": { "uri": uri } }),
-        )
+        self.transport
+            .notify(METHOD_DID_SAVE, json!({ "textDocument": { "uri": uri } }))
     }
 
     pub fn did_close(&mut self, path: impl AsRef<Path>) -> Result<(), IdeError> {
@@ -491,10 +511,8 @@ impl<T: LspTransport> LspClient<T> {
             return Ok(());
         }
         let uri = file_uri(path)?;
-        self.transport.notify(
-            METHOD_DID_CLOSE,
-            json!({ "textDocument": { "uri": uri } }),
-        )
+        self.transport
+            .notify(METHOD_DID_CLOSE, json!({ "textDocument": { "uri": uri } }))
     }
 
     pub fn definition(
@@ -699,7 +717,9 @@ fn incremental_edit(old: &str, new: &str) -> (u32, u32, u32, u32, String) {
     let old_chars: Vec<char> = old.chars().collect();
     let new_chars: Vec<char> = new.chars().collect();
     let mut prefix = 0;
-    while prefix < old_chars.len() && prefix < new_chars.len() && old_chars[prefix] == new_chars[prefix]
+    while prefix < old_chars.len()
+        && prefix < new_chars.len()
+        && old_chars[prefix] == new_chars[prefix]
     {
         prefix += 1;
     }
@@ -855,7 +875,8 @@ mod tests {
         assert!(cap.socket().is_none());
         assert!(!cap.mux());
         let with_sock =
-            ProgressiveLspCap::from_initialize_result(&init_result(Some("/tmp/plsp.sock"))).unwrap();
+            ProgressiveLspCap::from_initialize_result(&init_result(Some("/tmp/plsp.sock")))
+                .unwrap();
         assert_eq!(with_sock.socket(), Some("/tmp/plsp.sock"));
         assert!(ProgressiveLspCap::from_initialize_result(&json!({})).is_none());
         assert!(ProgressiveLspCap::from_initialize_result(&json!({
@@ -877,7 +898,8 @@ mod tests {
 
     #[test]
     fn spawn_spec_value_object_missing_is_domain_error() {
-        let err = SpawnSpec::resolve_in(None, Some(Path::new("/no-such-cwd-ide4")), None).unwrap_err();
+        let err =
+            SpawnSpec::resolve_in(None, Some(Path::new("/no-such-cwd-ide4")), None).unwrap_err();
         assert!(err.is_missing_binary());
         assert_eq!(err.to_string(), "progressive-lsp binary not found");
         let missing_env = SpawnSpec::resolve_in(
@@ -918,20 +940,31 @@ mod tests {
         .unwrap();
         assert_eq!(via_env.binary(), env_bin.as_path());
 
-        let via_debug = SpawnSpec::resolve_in(None, Some(tmp.path()), Some(path_dir.clone().into_os_string()))
-            .unwrap();
+        let via_debug = SpawnSpec::resolve_in(
+            None,
+            Some(tmp.path()),
+            Some(path_dir.clone().into_os_string()),
+        )
+        .unwrap();
         assert_eq!(via_debug.binary(), debug_bin.as_path());
 
         fs::remove_file(&debug_bin).unwrap();
-        let via_release =
-            SpawnSpec::resolve_in(None, Some(tmp.path()), Some(path_dir.clone().into_os_string()))
-                .unwrap();
+        let via_release = SpawnSpec::resolve_in(
+            None,
+            Some(tmp.path()),
+            Some(path_dir.clone().into_os_string()),
+        )
+        .unwrap();
         assert_eq!(via_release.binary(), release_bin.as_path());
 
         fs::remove_file(&release_bin).unwrap();
         fs::create_dir_all(&debug_bin).unwrap();
-        let via_path = SpawnSpec::resolve_in(None, Some(tmp.path()), Some(path_dir.clone().into_os_string()))
-            .unwrap();
+        let via_path = SpawnSpec::resolve_in(
+            None,
+            Some(tmp.path()),
+            Some(path_dir.clone().into_os_string()),
+        )
+        .unwrap();
         assert_eq!(via_path.binary(), path_bin.as_path());
 
         let env_dir = SpawnSpec::resolve_in(
@@ -964,10 +997,12 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("missing Content-Length"));
-        assert!(read_message(&mut Cursor::new(b"Content-Length: nope\r\n\r\n"))
-            .unwrap_err()
-            .to_string()
-            .contains("invalid Content-Length"));
+        assert!(
+            read_message(&mut Cursor::new(b"Content-Length: nope\r\n\r\n"))
+                .unwrap_err()
+                .to_string()
+                .contains("invalid Content-Length")
+        );
         let long = format!("X: {}\r\n", "a".repeat(MAX_HEADER_LINE));
         assert!(read_message(&mut Cursor::new(long))
             .unwrap_err()
@@ -1024,9 +1059,8 @@ mod tests {
             .unwrap_err()
             .is_lsp_method_missing());
 
-        let other = encode_message(
-            br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}"#,
-        );
+        let other =
+            encode_message(br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}"#);
         let mut lsp = StdioLsp::from_pair(Vec::new(), Cursor::new(other));
         let err = lsp.request("shutdown", json!(null)).unwrap_err();
         assert!(err.is_lsp());
@@ -1048,6 +1082,26 @@ mod tests {
     fn stdio_lsp_adapter_spawn_missing_binary() {
         let spec = SpawnSpec::from_path("/no/such/progressive-lsp-ide4-bin");
         assert!(StdioLsp::spawn(&spec).unwrap_err().is_missing_binary());
+        assert!(StdioLsp::spawn_serve(&spec, ServeMode::StockStdio, None)
+            .unwrap_err()
+            .is_missing_binary());
+        assert!(StdioLsp::spawn_serve(
+            &spec,
+            ServeMode::ControlSocket,
+            Some(Path::new("/tmp/poc-ide5.sock")),
+        )
+        .unwrap_err()
+        .is_missing_binary());
+        assert!(StdioLsp::spawn_serve(&spec, ServeMode::ControlSocket, None)
+            .unwrap_err()
+            .is_control_socket_missing());
+        let args = ServeMode::ControlSocket
+            .serve_args(Some(Path::new("/tmp/poc-ide5.sock")))
+            .unwrap();
+        assert!(StdioLsp::spawn_with_args(&spec, &args)
+            .unwrap_err()
+            .is_missing_binary());
+        assert!(!args.iter().any(|a| a == "--mux"));
     }
 
     #[cfg(unix)]
@@ -1077,7 +1131,10 @@ mod tests {
         );
         let init_params = &inner.sent()[0].params;
         assert!(
-            init_params.get("processId").and_then(|v| v.as_u64()).is_some(),
+            init_params
+                .get("processId")
+                .and_then(|v| v.as_u64())
+                .is_some(),
             "initialize must send processId: {init_params}"
         );
         assert_eq!(init_params["rootUri"], "file:///ws");
@@ -1264,7 +1321,10 @@ mod tests {
         assert!(inner.sent_methods().contains(&METHOD_DID_OPEN));
         assert!(inner.sent_methods().contains(&METHOD_SHUTDOWN));
         assert!(inner.sent_methods().contains(&METHOD_EXIT));
-        assert!(inner.sent().iter().any(|c| c.method == METHOD_EXIT && c.is_notification()));
+        assert!(inner
+            .sent()
+            .iter()
+            .any(|c| c.method == METHOD_EXIT && c.is_notification()));
     }
 
     #[test]
@@ -1299,9 +1359,7 @@ mod tests {
         );
 
         let again = LspLocation::new("file:///ws/lib.rs", 0, 0, 0, 2);
-        again
-            .open_or_focus(&mut tabs, &mut buffers, &fs)
-            .unwrap();
+        again.open_or_focus(&mut tabs, &mut buffers, &fs).unwrap();
         assert_eq!(tabs.len(), 2);
         assert_eq!(
             buffers.get("/ws/lib.rs").unwrap().selection(),
@@ -1325,7 +1383,10 @@ mod tests {
         let loc = LspLocation::new("file:///ws/café.rs", 0, 4, 0, 8);
         let sel = loc.to_selection(text);
         assert_eq!(sel.start(), cafe_offset);
-        assert_eq!(path_from_file_uri("file:///ws/a.rs").unwrap(), PathBuf::from("/ws/a.rs"));
+        assert_eq!(
+            path_from_file_uri("file:///ws/a.rs").unwrap(),
+            PathBuf::from("/ws/a.rs")
+        );
         assert_eq!(
             path_from_file_uri("file://localhost/ws/a.rs").unwrap(),
             PathBuf::from("/ws/a.rs")

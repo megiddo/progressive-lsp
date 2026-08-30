@@ -3070,6 +3070,7 @@ dependencies = [
  "egui_extras",
  "lsp-types",
  "notify",
+ "progressive-lsp-control",
  "rfd",
  "ropey",
  "serde",

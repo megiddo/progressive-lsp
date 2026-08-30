@@ -1,11 +1,21 @@
 //! `DialogPort` / `ClipboardPort` / `FsPort` / `WatchPort` / `ClockPort` /
-//! `LspTransport` plus adapters and test doubles. Tests never call `rfd`, OS
-//! clipboard, `notify` OS APIs, or host disk except through `StdFs` tests.
+//! `LspTransport` / `ControlTransport` plus adapters and test doubles. Tests
+//! never call `rfd`, OS clipboard, `notify` OS APIs, or host disk except
+//! through `StdFs` tests.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use progressive_lsp_control::{
+    encode_frame, Envelope, FilesSinceResponse, GetConfigResponse, IndexPackage,
+    IndexStatusResponse, InstallPacksResponse, ReloadConfigResponse, ReloadScriptsResponse,
+    SetConfigResponse, Status, TierRow, TierStatusResponse, WatchSubscribeResponse,
+    MAX_PAYLOAD_BYTES, METHOD_FILES_SINCE, METHOD_GET_CONFIG, METHOD_INDEX_STATUS,
+    METHOD_INSTALL_PACKS, METHOD_RELOAD_CONFIG, METHOD_RELOAD_SCRIPTS, METHOD_SET_CONFIG,
+    METHOD_TIER_STATUS, METHOD_WATCH_SUBSCRIBE,
+};
 
 use crate::error::IdeError;
 use crate::tree::{FileTree, WorkspaceRoot};
@@ -374,11 +384,7 @@ impl DiskEvent {
         Self::new(path, DiskEventKind::Delete, mtime)
     }
 
-    pub fn at_clock(
-        path: impl Into<PathBuf>,
-        kind: DiskEventKind,
-        clock: &impl ClockPort,
-    ) -> Self {
+    pub fn at_clock(path: impl Into<PathBuf>, kind: DiskEventKind, clock: &impl ClockPort) -> Self {
         Self::new(path, kind, clock.unix_ms())
     }
 
@@ -618,6 +624,200 @@ impl LspTransport for FakeLsp {
     fn notify(&mut self, method: &str, params: serde_json::Value) -> Result<(), IdeError> {
         self.sent.push(LspCall::notify(method, params));
         self.take_scripted(method).map(|_| ())
+    }
+}
+
+/// Envelope frames. Production [`crate::control::UnixControl`]; tests use [`FakeControl`].
+pub trait ControlTransport {
+    /// Send a unary Envelope and wait for the matching reply. Pushes seen while
+    /// waiting (`request_id == 0`) are queued for [`ControlTransport::take_pushes`].
+    fn send(&mut self, request: Envelope) -> Result<Envelope, IdeError>;
+
+    /// Drain queued server pushes. Pushes always have `request_id == 0`.
+    fn take_pushes(&mut self) -> Vec<Envelope>;
+
+    /// Read any available pushes without sending. Unix adapter is non-blocking.
+    fn poll(&mut self) -> Result<(), IdeError>;
+}
+
+/// Test double: scripted Envelope replies. Pushes use `request_id == 0`.
+#[derive(Debug, Default)]
+pub struct FakeControl {
+    by_method: BTreeMap<String, VecDeque<Result<Envelope, IdeError>>>,
+    sent: Vec<Envelope>,
+    pending_pushes: VecDeque<Envelope>,
+    delivered: Vec<Envelope>,
+    missing_socket: bool,
+}
+
+impl FakeControl {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn missing_socket() -> Self {
+        Self {
+            missing_socket: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_missing_socket(&self) -> bool {
+        self.missing_socket
+    }
+
+    pub fn script(&mut self, reply: Envelope) -> &mut Self {
+        self.by_method
+            .entry(reply.method.clone())
+            .or_default()
+            .push_back(Ok(reply));
+        self
+    }
+
+    pub fn script_error(&mut self, method: impl Into<String>, err: IdeError) -> &mut Self {
+        self.by_method
+            .entry(method.into())
+            .or_default()
+            .push_back(Err(err));
+        self
+    }
+
+    pub fn queue_push(&mut self, mut env: Envelope) -> &mut Self {
+        env.request_id = 0;
+        self.pending_pushes.push_back(env);
+        self
+    }
+
+    pub fn sent(&self) -> &[Envelope] {
+        &self.sent
+    }
+
+    pub fn sent_methods(&self) -> Vec<&str> {
+        self.sent.iter().map(|e| e.method.as_str()).collect()
+    }
+
+    pub fn queued_len(&self, method: &str) -> usize {
+        self.by_method.get(method).map(|q| q.len()).unwrap_or(0)
+    }
+
+    pub fn pending_push_len(&self) -> usize {
+        self.pending_pushes.len()
+    }
+
+    fn reject_oversize(request: &Envelope) -> Result<(), IdeError> {
+        if request.body.len() > MAX_PAYLOAD_BYTES as usize {
+            return Err(IdeError::control(format!(
+                "payload exceeds {MAX_PAYLOAD_BYTES} bytes ({})",
+                request.body.len()
+            )));
+        }
+        encode_frame(&request.to_bytes()).map_err(|e| IdeError::control(e.to_string()))?;
+        Ok(())
+    }
+
+    fn default_reply(request: &Envelope) -> Envelope {
+        let id = request.request_id;
+        let method = request.method.as_str();
+        let ok = Status::ok();
+        match method {
+            METHOD_GET_CONFIG => Envelope::reply(
+                method,
+                id,
+                GetConfigResponse {
+                    status: Some(ok),
+                    toml: "packs = []\n".into(),
+                },
+            ),
+            METHOD_SET_CONFIG => {
+                Envelope::reply(method, id, SetConfigResponse { status: Some(ok) })
+            }
+            METHOD_RELOAD_CONFIG => {
+                Envelope::reply(method, id, ReloadConfigResponse { status: Some(ok) })
+            }
+            METHOD_INSTALL_PACKS => {
+                Envelope::reply(method, id, InstallPacksResponse { status: Some(ok) })
+            }
+            METHOD_WATCH_SUBSCRIBE => {
+                Envelope::reply(method, id, WatchSubscribeResponse { status: Some(ok) })
+            }
+            METHOD_FILES_SINCE => Envelope::reply(
+                method,
+                id,
+                FilesSinceResponse {
+                    status: Some(ok),
+                    paths: vec!["/ws/a.rs".into()],
+                    truncated: false,
+                    generation: 1,
+                },
+            ),
+            METHOD_INDEX_STATUS => Envelope::reply(
+                method,
+                id,
+                IndexStatusResponse {
+                    status: Some(ok),
+                    packages: vec![IndexPackage {
+                        package_id: "pkg".into(),
+                        generation: 1,
+                    }],
+                    cache_entries: 0,
+                },
+            ),
+            METHOD_TIER_STATUS => Envelope::reply(
+                method,
+                id,
+                TierStatusResponse {
+                    status: Some(ok),
+                    rows: vec![TierRow {
+                        package_id: "pkg".into(),
+                        tier: "syntax".into(),
+                    }],
+                },
+            ),
+            METHOD_RELOAD_SCRIPTS => {
+                Envelope::reply(method, id, ReloadScriptsResponse { status: Some(ok) })
+            }
+            _ => Envelope {
+                method: request.method.clone(),
+                request_id: id,
+                body: Vec::new(),
+            },
+        }
+    }
+
+    fn deliver_pending(&mut self) {
+        self.delivered.extend(self.pending_pushes.drain(..));
+    }
+}
+
+impl ControlTransport for FakeControl {
+    fn send(&mut self, request: Envelope) -> Result<Envelope, IdeError> {
+        if self.missing_socket {
+            return Err(IdeError::control_socket_missing());
+        }
+        Self::reject_oversize(&request)?;
+        self.sent.push(request.clone());
+        self.deliver_pending();
+        if let Some(q) = self.by_method.get_mut(&request.method) {
+            if let Some(scripted) = q.pop_front() {
+                return scripted.map(|mut env| {
+                    env.request_id = request.request_id;
+                    env
+                });
+            }
+        }
+        Ok(Self::default_reply(&request))
+    }
+
+    fn take_pushes(&mut self) -> Vec<Envelope> {
+        self.delivered.drain(..).collect()
+    }
+
+    fn poll(&mut self) -> Result<(), IdeError> {
+        if self.missing_socket {
+            return Err(IdeError::control_socket_missing());
+        }
+        self.deliver_pending();
+        Ok(())
     }
 }
 
@@ -1057,11 +1257,7 @@ mod tests {
         assert_eq!(unscripted, serde_json::Value::Null);
         assert_eq!(
             lsp.sent_methods(),
-            vec![
-                "initialize",
-                "initialized",
-                "textDocument/definition"
-            ]
+            vec!["initialize", "initialized", "textDocument/definition"]
         );
         assert!(!lsp.sent()[0].is_notification());
         assert!(lsp.sent()[1].is_notification());
@@ -1103,5 +1299,194 @@ mod tests {
             .sent()
             .iter()
             .all(|c| !c.method.contains("filesSince") && !c.method.starts_with("$/")));
+    }
+
+    #[test]
+    fn fake_control_test_double_round_trips_every_unary_rpc() {
+        use progressive_lsp_control::{
+            GetConfigRequest, IndexStatusRequest, InstallPacksRequest, ReloadConfigRequest,
+            ReloadScriptsRequest, SetConfigRequest, TierStatusRequest, WatchSubscribeRequest,
+            METHOD_WATCH_BATCH,
+        };
+
+        let mut ctrl = FakeControl::new();
+        assert!(!ctrl.is_missing_socket());
+        assert_eq!(FakeControl::default().sent().len(), 0);
+        assert_eq!(ctrl.queued_len(METHOD_GET_CONFIG), 0);
+        assert_eq!(ctrl.pending_push_len(), 0);
+
+        let methods = [
+            (
+                METHOD_GET_CONFIG,
+                Envelope::request(METHOD_GET_CONFIG, 1, GetConfigRequest {}),
+            ),
+            (
+                METHOD_SET_CONFIG,
+                Envelope::request(
+                    METHOD_SET_CONFIG,
+                    2,
+                    SetConfigRequest {
+                        patch_toml: "packs = [\"rust\"]".into(),
+                    },
+                ),
+            ),
+            (
+                METHOD_RELOAD_CONFIG,
+                Envelope::request(METHOD_RELOAD_CONFIG, 3, ReloadConfigRequest {}),
+            ),
+            (
+                METHOD_INSTALL_PACKS,
+                Envelope::request(
+                    METHOD_INSTALL_PACKS,
+                    4,
+                    InstallPacksRequest {
+                        packs: vec!["python".into()],
+                    },
+                ),
+            ),
+            (
+                METHOD_WATCH_SUBSCRIBE,
+                Envelope::request(METHOD_WATCH_SUBSCRIBE, 5, WatchSubscribeRequest {}),
+            ),
+            (
+                METHOD_FILES_SINCE,
+                Envelope::request(
+                    METHOD_FILES_SINCE,
+                    6,
+                    progressive_lsp_control::FilesSinceRequest {
+                        since: Some(
+                            progressive_lsp_control::files_since_request::Since::SinceGeneration(3),
+                        ),
+                    },
+                ),
+            ),
+            (
+                METHOD_INDEX_STATUS,
+                Envelope::request(METHOD_INDEX_STATUS, 7, IndexStatusRequest {}),
+            ),
+            (
+                METHOD_TIER_STATUS,
+                Envelope::request(METHOD_TIER_STATUS, 8, TierStatusRequest {}),
+            ),
+            (
+                METHOD_RELOAD_SCRIPTS,
+                Envelope::request(METHOD_RELOAD_SCRIPTS, 9, ReloadScriptsRequest {}),
+            ),
+        ];
+        for (i, (method, req)) in methods.into_iter().enumerate() {
+            let reply = ctrl.send(req).unwrap();
+            assert_eq!(reply.method, method, "{method}");
+            assert_eq!(reply.request_id, (i as u64) + 1, "{method}");
+            assert_ne!(reply.request_id, 0, "{method} reply is not a push");
+        }
+        assert_eq!(
+            ctrl.sent_methods(),
+            vec![
+                METHOD_GET_CONFIG,
+                METHOD_SET_CONFIG,
+                METHOD_RELOAD_CONFIG,
+                METHOD_INSTALL_PACKS,
+                METHOD_WATCH_SUBSCRIBE,
+                METHOD_FILES_SINCE,
+                METHOD_INDEX_STATUS,
+                METHOD_TIER_STATUS,
+                METHOD_RELOAD_SCRIPTS,
+            ]
+        );
+        assert!(ctrl
+            .sent()
+            .iter()
+            .all(|e| e.method != "$/progressive/filesSince"
+                && e.method != "workspace/filesSince"
+                && !e.method.starts_with("$/")));
+
+        let unknown = ctrl
+            .send(Envelope {
+                method: "NoSuchRpc".into(),
+                request_id: 10,
+                body: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(unknown.method, "NoSuchRpc");
+        assert_eq!(unknown.request_id, 10);
+        assert!(unknown.body.is_empty());
+        assert!(ctrl.poll().is_ok());
+        assert!(ctrl.take_pushes().is_empty());
+
+        ctrl.script(Envelope::reply(
+            METHOD_GET_CONFIG,
+            99,
+            GetConfigResponse {
+                status: Some(Status::ok()),
+                toml: "scripted = true\n".into(),
+            },
+        ));
+        assert_eq!(ctrl.queued_len(METHOD_GET_CONFIG), 1);
+        let scripted = ctrl
+            .send(Envelope::request(
+                METHOD_GET_CONFIG,
+                11,
+                GetConfigRequest {},
+            ))
+            .unwrap();
+        assert_eq!(scripted.request_id, 11);
+        assert_eq!(
+            scripted.decode_body::<GetConfigResponse>().unwrap().toml,
+            "scripted = true\n"
+        );
+
+        ctrl.script_error(METHOD_SET_CONFIG, IdeError::control("boom"));
+        assert!(ctrl
+            .send(Envelope::request(
+                METHOD_SET_CONFIG,
+                12,
+                SetConfigRequest {
+                    patch_toml: String::new(),
+                },
+            ))
+            .unwrap_err()
+            .is_control());
+
+        let push = Envelope::request(
+            METHOD_WATCH_BATCH,
+            77,
+            progressive_lsp_control::WatchBatch::default(),
+        );
+        assert_eq!(push.request_id, 77);
+        ctrl.queue_push(push);
+        assert_eq!(ctrl.pending_push_len(), 1);
+        ctrl.poll().unwrap();
+        let pushes = ctrl.take_pushes();
+        assert_eq!(pushes.len(), 1);
+        assert_eq!(pushes[0].request_id, 0);
+        assert_eq!(pushes[0].method, METHOD_WATCH_BATCH);
+        assert!(ctrl.take_pushes().is_empty());
+    }
+
+    #[test]
+    fn fake_control_test_double_missing_socket_and_oversize() {
+        let mut missing = FakeControl::missing_socket();
+        assert!(missing.is_missing_socket());
+        assert!(missing
+            .send(Envelope::request(
+                METHOD_GET_CONFIG,
+                1,
+                progressive_lsp_control::GetConfigRequest {},
+            ))
+            .unwrap_err()
+            .is_control_socket_missing());
+        assert!(missing.poll().unwrap_err().is_control_socket_missing());
+        assert!(missing.take_pushes().is_empty());
+
+        let mut huge = FakeControl::new();
+        let over = Envelope {
+            method: METHOD_GET_CONFIG.into(),
+            request_id: 1,
+            body: vec![0u8; (MAX_PAYLOAD_BYTES as usize) + 1],
+        };
+        let err = huge.send(over).unwrap_err();
+        assert!(err.is_control());
+        assert!(err.to_string().contains("payload exceeds"));
+        assert!(huge.sent().is_empty());
     }
 }

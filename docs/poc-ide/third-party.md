@@ -45,3 +45,5 @@ Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file sta
 **IDE-3 pins:** `notify` **8.2.0** (`NotifyWatch` maps `notify` events in the lib; live `RecommendedWatcher` is wired in the bin). Tests inject `FakeWatch` only. Still no `egui_dock` or `walkdir`.
 
 **IDE-4 pins:** `lsp-types` **0.97.0**, `serde` / `serde_json` workspace **1.0**. Content-Length framing is copied into `StdioLsp` — no `integration/harness` or `progressive-lsp-plugin` / `-resolve` / `-index` dep. Still no `egui_dock` or `walkdir`. `ControlSocket` is an unused `ServeMode` variant until IDE-5.
+
+**IDE-5 pins:** `progressive-lsp-control` (workspace). Consumer MAY depend. Lib still no egui. `--mux` is `pending_mux` — do not silently retest the socket as mux. Still no `egui_dock` or `walkdir`.

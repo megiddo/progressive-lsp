@@ -6,11 +6,13 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    position_at, BufferMap, ClipboardPort, ConflictChoice, DialogPort, DiskEvent, DiskWatch,
-    EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient,
-    NotifyWatch, OpenBuffer, Selection, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeNode,
-    WatchPort, WorkspaceRoot,
+    advertised_control_socket, position_at, BufferMap, ClipboardPort, ConflictChoice,
+    ControlClient, DialogPort, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
+    Highlighter, IdeError, LayoutState, LspClient, NotifyWatch, OpenBuffer, ProtocolConsole,
+    Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TranscriptKind, TreeNode,
+    UnixControl, WatchPort, WorkspaceRoot, CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
 };
+use serde_json::json;
 use std::sync::mpsc;
 
 /// Native `rfd` Adapter. Tests never construct this type.
@@ -111,11 +113,34 @@ pub struct PocIdeApp {
     disk: DiskWatch,
     lsp: Option<LspClient<StdioLsp>>,
     lsp_error: Option<String>,
+    serve_mode: ServeMode,
+    control_socket_path: Option<PathBuf>,
+    control: Option<ControlClient<UnixControl>>,
+    control_error: Option<String>,
+    console: ProtocolConsole,
+    console_open: bool,
+    console_control_tab: bool,
+    console_method: String,
+    console_body: String,
     status: String,
 }
 
 impl PocIdeApp {
-    pub fn new(folder: Option<PathBuf>, file: Option<PathBuf>) -> Self {
+    pub fn new(
+        folder: Option<PathBuf>,
+        file: Option<PathBuf>,
+        control_socket: Option<PathBuf>,
+    ) -> Self {
+        let serve_mode = if control_socket.is_some() {
+            ServeMode::ControlSocket
+        } else {
+            ServeMode::StockStdio
+        };
+        let console_method = if serve_mode.is_control_socket() {
+            CONTROL_UNARY_METHODS[0].to_string()
+        } else {
+            STOCK_LSP_METHODS[0].to_string()
+        };
         let mut app = Self {
             dialog: RfdDialog,
             fs: StdFs,
@@ -130,6 +155,15 @@ impl PocIdeApp {
             disk: DiskWatch::new(),
             lsp: None,
             lsp_error: None,
+            serve_mode,
+            control_socket_path: control_socket,
+            control: None,
+            control_error: None,
+            console: ProtocolConsole::new(),
+            console_open: true,
+            console_control_tab: serve_mode.is_control_socket(),
+            console_method,
+            console_body: String::new(),
             status: String::new(),
         };
         if let Some(dir) = folder {
@@ -241,33 +275,77 @@ impl PocIdeApp {
     fn connect_lsp(&mut self, root: &WorkspaceRoot) {
         self.shutdown_lsp();
         match SpawnSpec::resolve() {
-            Ok(spec) => match StdioLsp::spawn(&spec) {
-                Ok(transport) => {
-                    let mut client = LspClient::new(transport);
-                    match client.initialize(root.as_path()) {
-                        Ok(()) => {
-                            self.lsp = Some(client);
-                            self.lsp_error = None;
+            Ok(spec) => {
+                match StdioLsp::spawn_serve(
+                    &spec,
+                    self.serve_mode,
+                    self.control_socket_path.as_deref(),
+                ) {
+                    Ok(transport) => {
+                        let mut client = LspClient::new(transport).with_mode(self.serve_mode);
+                        match client.initialize(root.as_path()) {
+                            Ok(()) => {
+                                self.connect_control(client.progressive_cap());
+                                self.lsp = Some(client);
+                                self.lsp_error = None;
+                            }
+                            Err(e) => {
+                                self.lsp = None;
+                                self.lsp_error = Some(e.to_string());
+                            }
                         }
-                        Err(e) => {
-                            self.lsp = None;
-                            self.lsp_error = Some(e.to_string());
+                    }
+                    Err(e) => {
+                        self.lsp = None;
+                        self.lsp_error = Some(e.to_string());
+                        if self.serve_mode.is_control_socket() {
+                            self.control_error = Some(e.to_string());
                         }
                     }
                 }
-                Err(e) => {
-                    self.lsp = None;
-                    self.lsp_error = Some(e.to_string());
-                }
-            },
+            }
             Err(e) => {
                 self.lsp = None;
                 self.lsp_error = Some(e.to_string());
+                if self.serve_mode.is_control_socket() {
+                    self.control_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+
+    fn connect_control(&mut self, cap: Option<&poc_ide::ProgressiveLspCap>) {
+        self.control = None;
+        self.control_error = None;
+        if !self.serve_mode.is_control_socket() {
+            return;
+        }
+        let Some(cap) = cap else {
+            let err = IdeError::control_socket_missing();
+            self.control_error = Some(err.to_string());
+            self.console.record_control_unavailable(&err);
+            return;
+        };
+        match advertised_control_socket(cap) {
+            Ok(path) => match ControlClient::<UnixControl>::connect(path) {
+                Ok(client) => {
+                    self.control = Some(client);
+                    self.control_error = None;
+                }
+                Err(e) => {
+                    self.control_error = Some(e.to_string());
+                    self.console.record_control_unavailable(&e);
+                }
+            },
+            Err(e) => {
+                self.control_error = Some(e.to_string());
+                self.console.record_control_unavailable(&e);
             }
         }
     }
 
     fn shutdown_lsp(&mut self) {
+        self.control = None;
         if let Some(mut client) = self.lsp.take() {
             let _ = client.shutdown();
         }
@@ -314,6 +392,141 @@ impl PocIdeApp {
         }
     }
 
+    fn send_console(&mut self) {
+        let method = self.console_method.clone();
+        if self.console_control_tab {
+            if let Some(client) = self.control.as_mut() {
+                let body = ProtocolConsole::encode_body(&method, &self.console_body);
+                if let Err(e) = self.console.send_control(client, &method, body) {
+                    self.status = e.to_string();
+                } else {
+                    self.status.clear();
+                }
+            } else {
+                let err = self
+                    .control_error
+                    .as_deref()
+                    .map(IdeError::control)
+                    .unwrap_or_else(IdeError::control_socket_missing);
+                self.console.record_control_unavailable(&err);
+                self.status = err.to_string();
+            }
+        } else {
+            let params = serde_json::from_str(&self.console_body).unwrap_or_else(|_| json!({}));
+            let Some(lsp) = self.lsp.as_mut() else {
+                self.status = self.missing_server_status();
+                return;
+            };
+            if let Err(e) = self.console.send_lsp(lsp.transport_mut(), &method, params) {
+                self.status = e.to_string();
+            } else {
+                self.status.clear();
+            }
+        }
+    }
+
+    fn show_console_panel(&mut self, ui: &mut egui::Ui) {
+        if let Some(client) = self.control.as_mut() {
+            if let Err(e) = self.console.drain_pushes(client) {
+                self.status = e.to_string();
+            }
+        }
+        if !self.console_open {
+            egui::Panel::bottom("console_bar")
+                .resizable(false)
+                .show(ui, |ui| {
+                    if ui.button("Protocol console").clicked() {
+                        self.console_open = true;
+                    }
+                });
+            return;
+        }
+        egui::Panel::bottom("console")
+            .resizable(true)
+            .default_size(180.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Protocol console");
+                    if ui.small_button("×").clicked() {
+                        self.console_open = false;
+                    }
+                    ui.selectable_value(&mut self.console_control_tab, false, "LSP");
+                    ui.selectable_value(&mut self.console_control_tab, true, "Control");
+                });
+                if self.console_control_tab {
+                    if let Some(err) = &self.control_error {
+                        ui.colored_label(egui::Color32::from_rgb(200, 80, 80), err);
+                    } else if self.control.is_none() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(200, 80, 80),
+                            IdeError::control_socket_missing().to_string(),
+                        );
+                    }
+                }
+                ui.horizontal(|ui| {
+                    let methods: &[&str] = if self.console_control_tab {
+                        CONTROL_UNARY_METHODS
+                    } else {
+                        STOCK_LSP_METHODS
+                    };
+                    egui::ComboBox::from_id_salt("console_method")
+                        .selected_text(&self.console_method)
+                        .show_ui(ui, |ui| {
+                            for m in methods {
+                                ui.selectable_value(&mut self.console_method, (*m).to_string(), *m);
+                            }
+                        });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.console_method)
+                            .desired_width(220.0)
+                            .hint_text("method"),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.console_body)
+                            .desired_width(280.0)
+                            .hint_text(if self.console_control_tab {
+                                "body (SetConfig TOML / packs / generation)"
+                            } else {
+                                "JSON params"
+                            }),
+                    );
+                    if ui.button("Send").clicked() {
+                        self.send_console();
+                    }
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if self.console.is_empty() {
+                            ui.weak("No transcript yet.");
+                        } else {
+                            for entry in self.console.entries() {
+                                let color = match entry.kind() {
+                                    TranscriptKind::LspError | TranscriptKind::ControlError => {
+                                        egui::Color32::from_rgb(200, 80, 80)
+                                    }
+                                    TranscriptKind::ControlPush => {
+                                        egui::Color32::from_rgb(80, 160, 80)
+                                    }
+                                    _ => ui.visuals().text_color(),
+                                };
+                                ui.colored_label(
+                                    color,
+                                    format!(
+                                        "[{}] {} id={} {}",
+                                        entry.kind().as_str(),
+                                        entry.method(),
+                                        entry.request_id(),
+                                        entry.body()
+                                    ),
+                                );
+                            }
+                        }
+                    });
+            });
+    }
+
     fn show_conflict_modal(&mut self, ui: &mut egui::Ui) {
         let Some(modal) = self.disk.first_pending().cloned() else {
             return;
@@ -349,6 +562,7 @@ impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.disk.ingest(&mut self.watch, &self.buffers);
         self.show_conflict_modal(ui);
+        self.show_console_panel(ui);
 
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
