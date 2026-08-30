@@ -1,10 +1,13 @@
 //! eframe view. Ignored by llvm-cov. Domain state lives in the lib.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
+use egui::text::LayoutJob;
 use poc_ide::{
-    DialogPort, FileTree, FsPort, LayoutState, StdFs, TabStrip, TreeNode, WorkspaceRoot,
+    BufferMap, ClipboardPort, DialogPort, EditCommand, FileTree, FsPort, HighlightSpan,
+    Highlighter, IdeError, LayoutState, OpenBuffer, Selection, StdFs, TabStrip, TreeNode,
+    WorkspaceRoot,
 };
 
 /// Native `rfd` Adapter. Tests never construct this type.
@@ -20,12 +23,32 @@ impl DialogPort for RfdDialog {
     }
 }
 
+/// Production `ClipboardPort` Adapter. Lives in the bin so tests use `FakeClipboard`.
+pub struct ArboardClipboard;
+
+impl ClipboardPort for ArboardClipboard {
+    fn get_text(&mut self) -> Result<String, IdeError> {
+        let mut clip = arboard::Clipboard::new().map_err(|e| IdeError::clipboard(e.to_string()))?;
+        clip.get_text()
+            .map_err(|e| IdeError::clipboard(e.to_string()))
+    }
+
+    fn set_text(&mut self, text: &str) -> Result<(), IdeError> {
+        let mut clip = arboard::Clipboard::new().map_err(|e| IdeError::clipboard(e.to_string()))?;
+        clip.set_text(text.to_string())
+            .map_err(|e| IdeError::clipboard(e.to_string()))
+    }
+}
+
 pub struct PocIdeApp {
     dialog: RfdDialog,
     fs: StdFs,
+    clipboard: ArboardClipboard,
     root: Option<WorkspaceRoot>,
     tree: Option<FileTree>,
     tabs: TabStrip,
+    buffers: BufferMap,
+    highlighter: Highlighter,
     layout: LayoutState,
     status: String,
 }
@@ -35,9 +58,12 @@ impl PocIdeApp {
         let mut app = Self {
             dialog: RfdDialog,
             fs: StdFs,
+            clipboard: ArboardClipboard,
             root: None,
             tree: None,
             tabs: TabStrip::new(),
+            buffers: BufferMap::new(),
+            highlighter: Highlighter::new(),
             layout: LayoutState::new(),
             status: String::new(),
         };
@@ -50,14 +76,14 @@ impl PocIdeApp {
         app
     }
 
-    fn apply_folder_path(&mut self, path: &std::path::Path) {
+    fn apply_folder_path(&mut self, path: &Path) {
         match WorkspaceRoot::from_folder_path(path, &self.fs) {
             Ok(root) => self.set_root(root, None),
             Err(e) => self.status = e.to_string(),
         }
     }
 
-    fn apply_file_path(&mut self, path: &std::path::Path) {
+    fn apply_file_path(&mut self, path: &Path) {
         match WorkspaceRoot::from_file_path(path, &self.fs) {
             Ok((root, file)) => self.set_root(root, Some(file)),
             Err(e) => self.status = e.to_string(),
@@ -69,12 +95,13 @@ impl PocIdeApp {
             Ok(tree) => {
                 if self.root.as_ref() != Some(&root) {
                     self.tabs = TabStrip::new();
+                    self.buffers = BufferMap::new();
                 }
                 self.root = Some(root);
                 self.tree = Some(tree);
                 self.status.clear();
                 if let Some(file) = open_file {
-                    self.tabs.open(file);
+                    self.open_path(&file);
                 }
             }
             Err(e) => self.status = e.to_string(),
@@ -92,10 +119,37 @@ impl PocIdeApp {
             self.set_root(root, Some(file));
         }
     }
+
+    fn open_path(&mut self, path: &Path) {
+        match self.buffers.open(path, &self.fs) {
+            Ok(buf) => {
+                let opened = buf.path().to_path_buf();
+                self.tabs.open(opened);
+                self.status.clear();
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    fn save_focused(&mut self) {
+        let Some(id) = self.tabs.focused().cloned() else {
+            return;
+        };
+        if let Some(buf) = self.buffers.get_mut(id.as_path()) {
+            match buf.save(&mut self.fs) {
+                Ok(()) => self.status.clear(),
+                Err(e) => self.status = e.to_string(),
+            }
+        }
+    }
 }
 
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
+            self.save_focused();
+        }
+
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.menu_button("File", |ui| {
@@ -106,6 +160,10 @@ impl eframe::App for PocIdeApp {
                     if ui.button("Open File…").clicked() {
                         ui.close();
                         self.pick_file();
+                    }
+                    if ui.button("Save").clicked() {
+                        ui.close();
+                        self.save_focused();
                     }
                 });
                 if !self.status.is_empty() {
@@ -131,7 +189,10 @@ impl eframe::App for PocIdeApp {
                         ui.label(label);
                         ui.separator();
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            show_nodes(ui, &nodes, &mut self.tabs);
+                            let clicked = show_nodes(ui, &nodes);
+                            if let Some(path) = clicked {
+                                self.open_path(&path);
+                            }
                         });
                     }
                     _ => {
@@ -150,7 +211,17 @@ impl eframe::App for PocIdeApp {
                     let tabs: Vec<_> = self.tabs.tabs().to_vec();
                     for tab in &tabs {
                         let selected = self.tabs.focused() == Some(tab);
-                        if ui.selectable_label(selected, tab.label()).clicked() {
+                        let dirty = self
+                            .buffers
+                            .get(tab.as_path())
+                            .map(OpenBuffer::is_dirty)
+                            .unwrap_or(false);
+                        let label = if dirty {
+                            format!("{}*", tab.label())
+                        } else {
+                            tab.label()
+                        };
+                        if ui.selectable_label(selected, label).clicked() {
                             self.tabs.focus(tab);
                         }
                         if ui.small_button("×").clicked() {
@@ -160,10 +231,15 @@ impl eframe::App for PocIdeApp {
                 }
             });
             ui.separator();
-            match self.tabs.focused() {
+            match self.tabs.focused().cloned() {
                 Some(id) => {
+                    if !self.buffers.contains(id.as_path()) {
+                        self.open_path(id.as_path());
+                    }
                     ui.label(id.as_path().display().to_string());
-                    ui.weak("Empty editor pane — buffers land in IDE-2.");
+                    if let Some(buf) = self.buffers.get_mut(id.as_path()) {
+                        show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
+                    }
                 }
                 None => {
                     ui.label("No file open");
@@ -173,16 +249,122 @@ impl eframe::App for PocIdeApp {
     }
 }
 
-fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], tabs: &mut TabStrip) {
+fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode]) -> Option<PathBuf> {
+    let mut clicked = None;
     for node in nodes {
         if node.is_dir() {
             egui::CollapsingHeader::new(node.name())
                 .default_open(true)
                 .show(ui, |ui| {
-                    show_nodes(ui, node.children(), tabs);
+                    if let Some(path) = show_nodes(ui, node.children()) {
+                        clicked = Some(path);
+                    }
                 });
         } else if ui.selectable_label(false, node.name()).clicked() {
-            tabs.open(node.path());
+            clicked = Some(node.path().to_path_buf());
         }
     }
+    clicked
+}
+
+fn show_editor(
+    ui: &mut egui::Ui,
+    buffer: &mut OpenBuffer,
+    highlighter: &Highlighter,
+    clipboard: &mut impl ClipboardPort,
+) {
+    let path = buffer.path().to_path_buf();
+    let mut text = buffer.text();
+    let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+        let s = buf.as_str();
+        let spans = highlighter.highlight(&path, s);
+        let job = layout_job_from_spans(s, &spans, wrap_width);
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let output = egui::TextEdit::multiline(&mut text)
+        .code_editor()
+        .desired_width(f32::INFINITY)
+        .desired_rows(24)
+        .layouter(&mut layouter)
+        .show(ui);
+    if output.response.changed() && text != buffer.text() {
+        sync_buffer_from_view(buffer, &text, clipboard);
+    }
+}
+
+fn sync_buffer_from_view(
+    buffer: &mut OpenBuffer,
+    new_text: &str,
+    clipboard: &mut impl ClipboardPort,
+) {
+    let len = buffer.len_chars();
+    let _ = EditCommand::select(Selection::new(0, len)).apply(buffer, clipboard);
+    if new_text.is_empty() {
+        let _ = EditCommand::delete().apply(buffer, clipboard);
+    } else {
+        let _ = EditCommand::insert(new_text).apply(buffer, clipboard);
+    }
+}
+
+fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+    let font = egui::FontId::monospace(14.0);
+    if spans.is_empty() {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: font,
+                color: egui::Color32::from_rgb(200, 200, 200),
+                ..Default::default()
+            },
+        );
+        return job;
+    }
+    let mut cursor = 0usize;
+    let chars: Vec<char> = text.chars().collect();
+    let total = chars.len();
+    for span in spans {
+        let start = span.start().min(total);
+        let end = span.end().min(total);
+        if start > cursor {
+            let prefix: String = chars[cursor..start].iter().collect();
+            job.append(
+                &prefix,
+                0.0,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color: egui::Color32::from_rgb(200, 200, 200),
+                    ..Default::default()
+                },
+            );
+        }
+        if end > start {
+            let piece: String = chars[start..end].iter().collect();
+            job.append(
+                &piece,
+                0.0,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color: egui::Color32::from_rgb(span.r(), span.g(), span.b()),
+                    ..Default::default()
+                },
+            );
+        }
+        cursor = end.max(cursor);
+    }
+    if cursor < total {
+        let suffix: String = chars[cursor..].iter().collect();
+        job.append(
+            &suffix,
+            0.0,
+            egui::TextFormat {
+                font_id: font,
+                color: egui::Color32::from_rgb(200, 200, 200),
+                ..Default::default()
+            },
+        );
+    }
+    job
 }

@@ -14,6 +14,12 @@ pub enum IdeError {
     NotADirectory(PathBuf),
     #[error("path has no parent: {0}")]
     NoParent(PathBuf),
+    #[error("is a directory: {0}")]
+    IsDirectory(PathBuf),
+    #[error("invalid UTF-8: {0}")]
+    InvalidUtf8(PathBuf),
+    #[error("clipboard: {0}")]
+    Clipboard(String),
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -35,8 +41,24 @@ impl IdeError {
         matches!(self, Self::NoParent(_))
     }
 
+    pub fn is_directory(&self) -> bool {
+        matches!(self, Self::IsDirectory(_))
+    }
+
+    pub fn is_invalid_utf8(&self) -> bool {
+        matches!(self, Self::InvalidUtf8(_))
+    }
+
+    pub fn is_clipboard(&self) -> bool {
+        matches!(self, Self::Clipboard(_))
+    }
+
     pub fn is_io(&self) -> bool {
         matches!(self, Self::Io(_))
+    }
+
+    pub fn clipboard(msg: impl Into<String>) -> Self {
+        Self::Clipboard(msg.into())
     }
 }
 
@@ -63,6 +85,18 @@ mod tests {
             IdeError::NoParent(PathBuf::from("/")).to_string(),
             "path has no parent: /"
         );
+        assert_eq!(
+            IdeError::IsDirectory(PathBuf::from("/ws")).to_string(),
+            "is a directory: /ws"
+        );
+        assert_eq!(
+            IdeError::InvalidUtf8(PathBuf::from("/ws/a.rs")).to_string(),
+            "invalid UTF-8: /ws/a.rs"
+        );
+        assert_eq!(
+            IdeError::clipboard("denied").to_string(),
+            "clipboard: denied"
+        );
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -76,7 +110,13 @@ mod tests {
         assert!(IdeError::NotADirectory(PathBuf::from("/f")).is_not_a_directory());
         assert!(!IdeError::NotADirectory(PathBuf::from("/f")).is_no_parent());
         assert!(IdeError::NoParent(PathBuf::from("/")).is_no_parent());
-        assert!(!IdeError::NoParent(PathBuf::from("/")).is_io());
+        assert!(!IdeError::NoParent(PathBuf::from("/")).is_directory());
+        assert!(IdeError::IsDirectory(PathBuf::from("/ws")).is_directory());
+        assert!(!IdeError::IsDirectory(PathBuf::from("/ws")).is_invalid_utf8());
+        assert!(IdeError::InvalidUtf8(PathBuf::from("/a")).is_invalid_utf8());
+        assert!(!IdeError::InvalidUtf8(PathBuf::from("/a")).is_clipboard());
+        assert!(IdeError::clipboard("x").is_clipboard());
+        assert!(!IdeError::clipboard("x").is_io());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());

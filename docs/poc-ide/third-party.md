@@ -39,3 +39,5 @@ Pin the **egui trio** (`egui`, `eframe`, `egui_extras`) to the same minor. `egui
 Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file stays the policy.
 
 **IDE-1 pins** (also in `poc-ide/Cargo.toml`): `eframe` / `egui` / `egui_extras` **=0.36.1**, `rfd` **=0.15.4**, `thiserror` workspace **2.0**. No `egui_dock`, `walkdir`, `ropey`, `syntect`, or `notify` on this crate yet.
+
+**IDE-2 pins:** `ropey` **1.6.1**, `syntect` **5.3.0**, `arboard` **3.6.1** (bin `ArboardClipboard` only). Still no `egui_dock`, `walkdir`, or `notify`.

@@ -140,7 +140,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
-| `poc-ide` bin (`main.rs`) | Composition root | Only the bin wires eframe/`rfd`; lib takes Ports |
+| `poc-ide` bin (`main.rs`) | Composition root | Only the bin wires eframe/`rfd` / `ArboardClipboard`; lib takes Ports |
+| `ArboardClipboard` | Adapter | Bin-only `ClipboardPort`; lib tests use `FakeClipboard` |
 | `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test |
 | `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
@@ -157,6 +158,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
 | `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
+| `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
 | `FakeWatch` | Test double | Same `WatchPort`; tests inject events; no `thread::sleep` |
 | `ClockPort` / `FakeClock` (poc-ide) | Port / test double | Tests never `thread::sleep`; advance with FakeClock |

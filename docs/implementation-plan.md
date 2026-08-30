@@ -230,12 +230,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## IDE-2 (`ide2` branch)
 
-**Status: UNSIGNED.** Do not open `ide3` until this table is signed off.
+**Status: SIGNED OFF** on `ide2`. Do not open `ide3` until this table stays signed off.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| IDE-2.1 | `OpenBuffer` / `EditCommand` / save | IDE-1 | ropey; `FakeClipboard` |
-| IDE-2.2 | `Highlighter` syntect Adapter | IDE-2.1 | no Tree-sitter in the IDE |
+| IDE-2.1 | `OpenBuffer` / `EditCommand` / save | IDE-1 | **SIGNED OFF.** ropey 1.6.1; `FakeClipboard`; `FsPort` read/write |
+| IDE-2.2 | `Highlighter` syntect Adapter | IDE-2.1 | **SIGNED OFF.** syntect 5.3.0; no Tree-sitter in the IDE. llvm-cov **95.59%** lines. Mutants poc-ide **211/213 (99.1%)**, 39 unviable |
 
 ## IDE-3 (`ide3` branch)
 

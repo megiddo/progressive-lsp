@@ -1,5 +1,5 @@
-//! `DialogPort` / `FsPort` plus production adapters and test doubles.
-//! Tests never call `rfd` or touch host disk except through `StdFs` tests.
+//! `DialogPort` / `ClipboardPort` / `FsPort` plus production adapters and test doubles.
+//! Tests never call `rfd`, OS clipboard, or host disk except through `StdFs` tests.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -68,11 +68,64 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
-/// Tree / canonicalize go through this Port. Tests use [`MemFs`].
+/// In-memory clipboard. Cut/copy/paste never call the OS clipboard in tests.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FakeClipboard {
+    text: String,
+    fail_get: bool,
+    fail_set: bool,
+}
+
+impl FakeClipboard {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn contents(&self) -> &str {
+        &self.text
+    }
+
+    pub fn fail_next_get(&mut self) {
+        self.fail_get = true;
+    }
+
+    pub fn fail_next_set(&mut self) {
+        self.fail_set = true;
+    }
+}
+
+/// Cut/copy/paste go through this Port. Production adapter lives in the bin.
+pub trait ClipboardPort {
+    fn get_text(&mut self) -> Result<String, IdeError>;
+    fn set_text(&mut self, text: &str) -> Result<(), IdeError>;
+}
+
+impl ClipboardPort for FakeClipboard {
+    fn get_text(&mut self) -> Result<String, IdeError> {
+        if self.fail_get {
+            self.fail_get = false;
+            return Err(IdeError::clipboard("fake get"));
+        }
+        Ok(self.text.clone())
+    }
+
+    fn set_text(&mut self, text: &str) -> Result<(), IdeError> {
+        if self.fail_set {
+            self.fail_set = false;
+            return Err(IdeError::clipboard("fake set"));
+        }
+        self.text = text.to_string();
+        Ok(())
+    }
+}
+
+/// Tree / canonicalize / bytes go through this Port. Tests use [`MemFs`].
 pub trait FsPort {
     fn canonicalize(&self, path: &Path) -> Result<PathBuf, IdeError>;
     fn is_dir(&self, path: &Path) -> bool;
     fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>, IdeError>;
+    fn read(&self, path: &Path) -> Result<Vec<u8>, IdeError>;
+    fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), IdeError>;
     fn read_tree(&self, root: &WorkspaceRoot) -> Result<FileTree, IdeError> {
         FileTree::load(root, self)
     }
@@ -117,6 +170,32 @@ impl FsPort for StdFs {
             });
         }
         Ok(out)
+    }
+
+    fn read(&self, path: &Path) -> Result<Vec<u8>, IdeError> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(IdeError::NotFound(path.to_path_buf()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::IsADirectory => {
+                Err(IdeError::IsDirectory(path.to_path_buf()))
+            }
+            Err(e) => Err(IdeError::Io(e)),
+        }
+    }
+
+    fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), IdeError> {
+        if path.is_dir() {
+            return Err(IdeError::IsDirectory(path.to_path_buf()));
+        }
+        match std::fs::write(path, bytes) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(IdeError::NotFound(path.to_path_buf()))
+            }
+            Err(e) => Err(IdeError::Io(e)),
+        }
     }
 }
 
@@ -208,6 +287,31 @@ impl FsPort for MemFs {
             }
         }
         Ok(out)
+    }
+
+    fn read(&self, path: &Path) -> Result<Vec<u8>, IdeError> {
+        let path = require_absolute(path)?;
+        if self.dirs.contains(&path) && !self.files.contains_key(&path) {
+            return Err(IdeError::IsDirectory(path));
+        }
+        self.files
+            .get(&path)
+            .cloned()
+            .ok_or(IdeError::NotFound(path))
+    }
+
+    fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), IdeError> {
+        let path = require_absolute(path)?;
+        if self.dirs.contains(&path) {
+            return Err(IdeError::IsDirectory(path));
+        }
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                self.add_dir(parent)?;
+            }
+        }
+        self.files.insert(path, bytes.to_vec());
+        Ok(())
     }
 }
 
@@ -392,6 +496,119 @@ mod tests {
             is_dir: true,
         };
         assert!(d.is_dir);
+    }
+
+    #[test]
+    fn fake_clipboard_test_double_never_calls_os() {
+        let mut clip = FakeClipboard::new();
+        assert_eq!(clip.contents(), "");
+        assert_eq!(clip.get_text().unwrap(), "");
+        clip.set_text("hello").unwrap();
+        assert_eq!(clip.contents(), "hello");
+        assert_eq!(clip.get_text().unwrap(), "hello");
+        clip.set_text("").unwrap();
+        assert_eq!(clip.contents(), "");
+        assert_eq!(FakeClipboard::default(), FakeClipboard::new());
+
+        clip.fail_next_set();
+        assert!(clip.set_text("nope").unwrap_err().is_clipboard());
+        assert_eq!(clip.contents(), "");
+        clip.set_text("kept").unwrap();
+        clip.fail_next_get();
+        assert!(clip.get_text().unwrap_err().is_clipboard());
+        assert_eq!(clip.get_text().unwrap(), "kept");
+    }
+
+    #[test]
+    fn mem_fs_read_write_bytes_no_host_disk() {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/a.rs", b"fn x() {}").unwrap();
+        assert_eq!(fs.read(Path::new("/ws/a.rs")).unwrap(), b"fn x() {}");
+        fs.write(Path::new("/ws/a.rs"), b"fn y() {}").unwrap();
+        assert_eq!(fs.read(Path::new("/ws/a.rs")).unwrap(), b"fn y() {}");
+        fs.write(Path::new("/ws/new.rs"), b"new").unwrap();
+        assert_eq!(fs.read(Path::new("/ws/new.rs")).unwrap(), b"new");
+        fs.write(Path::new("/ws/deep/nested/f.rs"), b"z").unwrap();
+        assert!(fs.is_dir(Path::new("/ws/deep")));
+        assert!(fs.is_dir(Path::new("/ws/deep/nested")));
+        assert_eq!(fs.read(Path::new("/ws/deep/nested/f.rs")).unwrap(), b"z");
+        assert!(fs.read(Path::new("/missing")).unwrap_err().is_not_found());
+        assert!(fs.read(Path::new("rel")).unwrap_err().is_not_absolute());
+        assert!(fs
+            .write(Path::new("rel.rs"), b"x")
+            .unwrap_err()
+            .is_not_absolute());
+        assert!(fs.read(Path::new("/ws")).unwrap_err().is_directory());
+        assert!(fs
+            .write(Path::new("/ws"), b"no")
+            .unwrap_err()
+            .is_directory());
+    }
+
+    #[test]
+    fn std_fs_read_write_bytes_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.rs");
+        fs::write(&file, b"fn x() {}").unwrap();
+        let mut port = StdFs;
+        assert_eq!(port.read(&file).unwrap(), b"fn x() {}");
+        port.write(&file, b"fn y() {}").unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"fn y() {}");
+        assert!(port
+            .read(&tmp.path().join("missing.rs"))
+            .unwrap_err()
+            .is_not_found());
+        assert!(port.write(tmp.path(), b"no").unwrap_err().is_directory());
+        let nested = tmp.path().join("no-parent").join("x.rs");
+        let err = port.write(&nested, b"x").unwrap_err();
+        assert!(
+            err.is_not_found(),
+            "write without parent must be NotFound, not a generic Io remap: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn std_fs_read_directory_is_directory_or_io() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = StdFs.read(tmp.path()).unwrap_err();
+        assert!(
+            err.is_directory() || err.is_io(),
+            "reading a directory must not panic: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn std_fs_write_permission_denied_is_io() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let locked = tmp.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        let err = StdFs.write(&locked.join("new.rs"), b"y").unwrap_err();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            err.is_io(),
+            "unwritable parent must be Io, not NotFound: {err}"
+        );
+        assert!(!err.is_not_found());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn std_fs_read_permission_denied_is_io() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let locked = tmp.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        let inner = locked.join("file");
+        fs::write(&inner, b"x").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = StdFs.read(&inner);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let err = result.unwrap_err();
+        assert!(err.is_io(), "unreadable parent must be Io: {err}");
     }
 
     #[test]

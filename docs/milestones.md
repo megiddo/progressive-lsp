@@ -381,7 +381,7 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 ## IDE-2 — Edit + highlight + save
 
-**Status: UNSIGNED.** Do not start IDE-3 until this section is signed off. No DiskWatch modal, no LSP.
+**Status: SIGNED OFF** on branch `ide2`. Do not start IDE-3 until this section stays signed off. No DiskWatch modal, no LSP.
 
 - `OpenBuffer` + `ropey`; `EditCommand` insert/delete/select; cut/copy/paste via `ClipboardPort`.
 - Save / open file bytes via `FsPort`.
@@ -392,14 +392,14 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 **Sign-off checklist (IDE-2)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch
-- [ ] 95% llvm-cov on crates that exist (same excludes as IDE-1)
-- [ ] 80% mutants on listed crates that changed — poc-ide
-- [ ] No `sleep` in crate unit tests
-- [ ] `check-static` — **N/A**
-- [ ] Pattern table updated
-- [ ] Docs updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (same excludes as IDE-1) — **95.59% lines**
+- [x] 80% mutants on listed crates that changed — poc-ide **211 caught / 213 scored (99.1%)**, 39 unviable, 2 missed
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`HighlightSpan`, `ArboardClipboard`)
+- [x] Docs updated if a locked decision was refined (`ropey` 1.6.1, `syntect` 5.3.0, `arboard` 3.6.1)
 
 ## IDE-3 — Disk conflict modal
 
