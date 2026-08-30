@@ -21,6 +21,14 @@ main   # after v1 merge
               └── pd2
                     └── pd3
                           └── pd4
+
+main   # after PD4 merge
+  └── ide0
+        └── ide1
+              └── ide2
+                    └── ide3
+                          └── ide4
+                                └── ide5
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -192,6 +200,69 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | PD4.1 | T2 Strategy config pick; default heuristic | PD3 | **SIGNED OFF.** `[t2] java = "heuristic"` default; tests inject fake T2 |
 | PD4.2 | Pin stack-graphs git SHA; bake-off table | PD4.1 | **SIGNED OFF.** Pin `fcb7705`; winner rule did not fire; [t2-bakeoff-results.md](spikes/t2-bakeoff-results.md) |
 
+## IDE-0 (`ide0` branch)
+
+**Status: SIGNED OFF** on `ide0`. Parent is `main`. IDE-1 may start after this WP; do not open `ide1` from this branch.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| IDE-0.1 | POC IDE docs, OSS pins, pattern rows, stack | PD4 / `main` | **SIGNED OFF.** Docs only. No `poc-ide` crate. Tests / 95% llvm-cov / 80% mutants / `sleep` / `check-static` are **N/A**. |
+
+**Sign-off checklist (IDE-0.1)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — **N/A** (no crates)
+- [x] 95% llvm-cov on crates that exist — **N/A** (none added)
+- [x] 80% mutants on listed crates that exist — **N/A** (none added)
+- [x] No `sleep` — **N/A** (no tests)
+- [x] `check-static` if ELF changed — **N/A** (no ELFs)
+- [x] [design-patterns.md](design-patterns.md) names every POC type in [poc-ide/architecture.md](poc-ide/architecture.md)
+- [x] Docs in this tree updated if a locked decision was refined
+
+## IDE-1 (`ide1` branch)
+
+**Status: SIGNED OFF** on `ide1`. Do not open `ide2` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| IDE-1.1 | `poc-ide` crate skeleton, composition-root bin | IDE-0 | **SIGNED OFF.** lib + `main.rs`; not musl. Pins: eframe/egui/egui_extras **0.36.1**, rfd **0.15.4**. |
+| IDE-1.2 | `DialogPort` + `FileTree` + `LayoutState` + `TabStrip` | IDE-1.1 | **SIGNED OFF.** `FakeDialog` / `MemFs`; resizable width is a value. llvm-cov **95.43%** lines. Mutants poc-ide **100/100 (100%)**, 23 unviable. |
+
+## IDE-2 (`ide2` branch)
+
+**Status: SIGNED OFF** on `ide2`. Do not open `ide3` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| IDE-2.1 | `OpenBuffer` / `EditCommand` / save | IDE-1 | **SIGNED OFF.** ropey 1.6.1; `FakeClipboard`; `FsPort` read/write |
+| IDE-2.2 | `Highlighter` syntect Adapter | IDE-2.1 | **SIGNED OFF.** syntect 5.3.0; no Tree-sitter in the IDE. llvm-cov **95.59%** lines. Mutants poc-ide **211/213 (99.1%)**, 39 unviable |
+
+## IDE-3 (`ide3` branch)
+
+**Status: SIGNED OFF** on `ide3`. Do not open `ide4` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| IDE-3.1 | `DiskWatch` + `ConflictModal` | IDE-2 | **SIGNED OFF.** `FakeWatch` / `FakeClock`; no `sleep`. llvm-cov **95.79%** lines. Mutants poc-ide **278/282 (98.6%)**, 60 unviable |
+
+## IDE-4 (`ide4` branch)
+
+**Status: SIGNED OFF** on `ide4`. Do not open `ide5` until this table stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| IDE-4.1 | `LanguageCatalog` | IDE-1 | **SIGNED OFF.** Extension table; unknown → `plaintext`; plaintext skips `didOpen`. |
+| IDE-4.2 | `LspClient` + definition / implementation / references | IDE-2, IDE-4.1 | **SIGNED OFF.** `FakeLsp`; stock stdio; `lsp-types` 0.97.0. llvm-cov **95.86%** lines. Mutants poc-ide **535/555 (96.4%)**, 88 unviable |
+
+## IDE-5 (`ide5` branch)
+
+**Status: SIGNED OFF** on `ide5`. Last POC WP. No `ide6`. `--mux` is `pending_mux`.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| IDE-5.1 | `ControlClient` Envelope Adapter | IDE-4 | **SIGNED OFF.** `progressive-lsp-control`; `FakeControl`; payload > 16 MiB fails. |
+| IDE-5.2 | `ProtocolConsole` LSP + control | IDE-5.1 | **SIGNED OFF.** mux `pending_mux`. llvm-cov **95.99%** lines. Mutants poc-ide **683/711 (96.1%)**, 115 unviable |
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -208,4 +279,5 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 2. Implement only that WP’s crates/files.
 3. Map new types in [design-patterns.md](design-patterns.md).
 4. Do not add Node/JVM/CPython, `$/` FilesSince, or SSH in the install crate.
-5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off).
+5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off).
+6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.

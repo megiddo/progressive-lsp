@@ -336,6 +336,137 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 - Optional `--features t2-stack-graphs` compiles the runtime. Slim default omits it. Do not treat Darwin RSS as a musl green.
 - Post-dev stack ends here. Do not open a `pd5` branch.
 
-## Later post-v1 (not in PD0–PD4)
+## IDE-0 — POC IDE documentation
 
-Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.
+**Status: SIGNED OFF** on branch `ide0`. Do not start IDE-1 crates until this section is signed off (it is).
+
+**Scope:** [poc-ide/](poc-ide/README.md) plus index/branch/milestone/pattern/testing updates. No `poc-ide` crate yet.
+
+**Exit**
+
+- [x] [poc-ide/README.md](poc-ide/README.md), [architecture.md](poc-ide/architecture.md), [third-party.md](poc-ide/third-party.md), [agent-context.md](poc-ide/agent-context.md) exist and agree (egui consumer, Ports, no Node, no musl IDE ELF).
+- [x] branching / implementation-plan / this file list `ide0`–`ide5`.
+- [x] [design-patterns.md](design-patterns.md) names every POC type in the architecture doc.
+- [x] [testing.md](testing.md) states poc-ide coverage, mutants, ignore `main.rs`/`ui.rs`, `check-static` N/A.
+- [x] [requirements.md](requirements.md) / [vision.md](vision.md) / [consumer.md](consumer.md) record that `poc-ide/` is a consumer sample, not the intelligence product.
+
+**Sign-off checklist (IDE-0)**
+
+- [x] Exit criteria met
+- [x] Tests / llvm-cov / mutants / `sleep` / `check-static` — **N/A** (docs only)
+- [x] Docs in this tree updated
+
+## IDE-1 — Shell: open, tree, tabs, layout
+
+**Status: SIGNED OFF** on branch `ide1`. Do not start IDE-2 until this section stays signed off. No buffers-as-rope, no LSP.
+
+- `poc-ide` crate: lib + tiny `main.rs` composition root.
+- `DialogPort` + `rfd` (bin); `FakeDialog` tests: open folder sets `WorkspaceRoot`; open file sets root to parent and a selected path.
+- `FileTree` Composite via `FsPort` (`std::fs` recursion / `MemFs`); display-skip `.git` / `target` / `node_modules`.
+- `LayoutState` left-panel width; persist in-process only (no config file required).
+- `TabStrip` custom view in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on rustc 1.87); tests: open/focus/close tabs by path.
+
+**Exit:** domain can open a folder or file, list a tree, hold tabs, and record a resizable panel width. `cargo run -p poc-ide` shows left tree + tabs + empty editor pane with a draggable splitter. CLI `--folder DIR` / `--file PATH` skip the dialog. No `thread::sleep`.
+
+**Sign-off checklist (IDE-1)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, `poc-ide/src/ui.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **95.43% lines**
+- [x] 80% mutants on listed crates that changed — poc-ide **100 caught / 100 scored (100%)**, 23 unviable
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` if ELF changed — **N/A** (GUI is not a shipped musl ELF)
+- [x] [design-patterns.md](design-patterns.md) table updated for IDE-1 types (`IdeError`, `DirEntry`)
+- [x] Docs in this tree updated if a locked decision was refined (egui 0.36 `Panel::left`; custom tab bar; `std::fs` tree walk)
+
+## IDE-2 — Edit + highlight + save
+
+**Status: SIGNED OFF** on branch `ide2`. Do not start IDE-3 until this section stays signed off. No DiskWatch modal, no LSP.
+
+- `OpenBuffer` + `ropey`; `EditCommand` insert/delete/select; cut/copy/paste via `ClipboardPort`.
+- Save / open file bytes via `FsPort`.
+- `Highlighter` Adapter (syntect); unknown language → no panic, plain style.
+- Bin: multiline editor bound to the active buffer; syntax colors from highlighter tokens.
+
+**Exit:** insert/delete/select/cut/copy/paste/save unit tests on `MemFs` + `FakeClipboard`. Highlighting returns non-empty spans for a `.rs` fixture and a no-panic path for `.unknown`.
+
+**Sign-off checklist (IDE-2)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (same excludes as IDE-1) — **95.59% lines**
+- [x] 80% mutants on listed crates that changed — poc-ide **211 caught / 213 scored (99.1%)**, 39 unviable, 2 missed
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`HighlightSpan`, `ArboardClipboard`)
+- [x] Docs updated if a locked decision was refined (`ropey` 1.6.1, `syntect` 5.3.0, `arboard` 3.6.1)
+
+## IDE-3 — Disk conflict modal
+
+**Status: SIGNED OFF** on branch `ide3`. Do not start IDE-4 until this section stays signed off. No LSP.
+
+- `DiskWatch` Observer on `WatchPort`; `FakeWatch` + `FakeClock` (local `ClockPort` in poc-ide; no `progressive-lsp-core` dep).
+- Open buffer + watch event on that path → `ConflictModal` with `LoadDisk` | `KeepMemory`.
+- Always prompt when the open path changes on disk (including clean buffers).
+- `LoadDisk` rereads `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime`.
+
+**Exit:** FakeWatch modify on an open dirty buffer surfaces the modal; both choices have invariant tests. No `thread::sleep`.
+
+**Sign-off checklist (IDE-3)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov (same excludes) — **95.79% lines**
+- [x] 80% mutants on poc-ide (and listed crates that changed) — poc-ide **278 caught / 282 scored (98.6%)**, 60 unviable, 4 missed
+- [x] No `sleep`
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`DiskEvent`, `DiskEventKind`, `SystemClock`)
+- [x] Docs updated if a locked decision was refined (`notify` 8.2.0; live `RecommendedWatcher` in the bin)
+
+## IDE-4 — Language catalog + stock LSP discovery
+
+**Status: SIGNED OFF** on branch `ide4`. Do not start IDE-5 until this section stays signed off. No Envelope console (read `experimental.progressiveLsp` only).
+
+- `LanguageCatalog` extension → `languageId` (table in [poc-ide/architecture.md](poc-ide/architecture.md)).
+- `ServeMode::StockStdio`; `LspClient` + `FakeLsp`. `ServeMode::ControlSocket` is present and unused.
+- `didOpen` / `didChange` / `didSave` / `didClose`.
+- `textDocument/definition`, `implementation`, `references` → jump list / open tab.
+- Missing binary → domain error, editor remains usable.
+
+**Exit:** FakeLsp answers definition/implementation/references for a fixture path; catalog maps the v1 extensions; plaintext skips `didOpen`. Integration against a live `progressive-lsp` binary is optional and must not use `sleep` (deadline poll only if added under `poc-ide` tests that are clearly integration-gated — prefer FakeLsp for the unit gate).
+
+**Sign-off checklist (IDE-4)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov (same excludes) — **95.86% lines**
+- [x] 80% mutants on poc-ide — poc-ide **535 caught / 555 scored (96.4%)**, 88 unviable, 17 missed, 3 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`LspCall`, `ProgressiveLspCap` poc-ide)
+- [x] Docs updated if a locked decision was refined (`lsp-types` 0.97.0; `ControlSocket` unused until IDE-5)
+
+## IDE-5 — Protocol console + progressive.v1
+
+**Status: SIGNED OFF** on branch `ide5`. Last POC branch. Do not open `ide6`. This stack is complete.
+
+- `ServeMode::ControlSocket`; `ControlClient` using `progressive-lsp-control`.
+- `ProtocolConsole`: append-only LSP JSON-RPC transcript + send; Envelope unary RPCs + `WatchBatch` / `TierReady` display.
+- `FakeControl` for every RPC in the [user API table](user/progressive-v1-api.md). `--mux` is `pending_mux`.
+
+**Exit:** FakeControl round-trips GetConfig / SetConfig / ReloadConfig / InstallPacks / WatchSubscribe / FilesSince / IndexStatus / TierStatus / ReloadScripts; pushes appear in the transcript with `request_id == 0`. Stock FakeLsp inspector still sends definition. Live serve is not required for sign-off.
+
+**Sign-off checklist (IDE-5)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov (same excludes) — **95.99% lines**
+- [x] 80% mutants on poc-ide — poc-ide **683 caught / 711 scored (96.1%)**, 115 unviable, 20 missed, 8 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`ControlPush`, `TranscriptKind`, `IdeError::Control`)
+- [x] Docs updated if a locked decision was refined (`progressive-lsp-control` consumer MAY; `--mux` is `pending_mux`)
+
+## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
+
+Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

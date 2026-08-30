@@ -23,7 +23,7 @@ Related: [requirements.md](requirements.md), [architecture.md](architecture.md),
 
 | Anti-goal | Why |
 |---|---|
-| Be zeds-dead-host (SSH, git, PTY, file tree, IDE config) | Wrong product. Example consumer only. |
+| Be zeds-dead-host (SSH, git, PTY, file tree, IDE config) | Wrong product. Example consumer only. In-tree `poc-ide/` is a separate consumer sample, not this process. |
 | Node, JVM, or CPython as the language-server runtime | Portability and static-deploy. |
 | Dynamic linking of our ELFs | The painful solution already exists. |
 | `$/` JSON-RPC for FilesSince / pack install in v1 | Legal LSP extension, nonstandard *use*; stock clients ignore it anyway. |

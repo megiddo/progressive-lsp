@@ -28,6 +28,10 @@ Same LSP stdio **plus** optional control:
 
 zeds-dead-host stays thin: SSH, mux, file tree, git, PTY, IDE config remain **there**. Language intelligence remains **here**.
 
+## In-tree POC editor
+
+`poc-ide/` is a native egui sample that speaks stock stdio LSP and, optionally, `progressive.v1`. It is how we exercise this repo’s contracts in a folder-shaped UI. It is **not** zeds-dead and **not** a shipped musl artifact. See [poc-ide/README.md](poc-ide/README.md).
+
 ## Bootstrap
 
 - Already have bytes: library `Installer` verify + place only. URL fetch **off by default**.

@@ -1,8 +1,14 @@
 # cargo-mutants: listed library crates only (docs/testing.md).
 # Language crates with real resolvers: java, php, html, css, javascript, go, zig, python, rust, c, cpp, csharp.
 # Also progressive-lsp-script and progressive-lsp-engine (supervisor/crash/backoff/hash/discovery).
+# poc-ide from IDE-1: Ports / Commands / value objects — not eframe (`src/main.rs`, `src/ui.rs`).
 
 # EmptyIndex already returns empty; `vec![]` replacements are equivalent.
+# poc-ide eframe composition root is not mutation-tested (docs/testing.md).
+exclude_globs = [
+    "poc-ide/src/main.rs",
+    "poc-ide/src/ui.rs",
+]
 exclude_re = [
     "impl GraphIndex for crate::query::EmptyIndex",
     "impl crate::tree_sitter::SymbolIndex for EmptyIndex",
@@ -15,6 +21,10 @@ exclude_re = [
     "copy_tree",
     # Optional --features t2-stack-graphs runtime (not in default tests).
     "tsg_runtime",
+    # Clamp at the exact min/max: `<` vs `<=` and `>` vs `>=` are equivalent
+    # because the boundary value is already the clamped result.
+    "replace < with <= in clamp_left_width",
+    "replace > with >= in clamp_left_width",
     # Position/byte helpers (same class as test line_col).
     "ident_at",
     "find_decl",

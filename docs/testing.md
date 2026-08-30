@@ -6,12 +6,14 @@ Gates apply from the **first library crate** (M0). Sign-off: [implementation-pla
 
 ```text
 cargo llvm-cov --workspace --fail-under-lines 95 \
-  --ignore-filename-regex 'xtask/|/src/main\.rs$|tree-sitter'
+  --ignore-filename-regex 'xtask/|/src/main\.rs$|tree-sitter|poc-ide/src/ui\.rs'
 ```
 
-**Exclude from the denominator:** `xtask/`; bin `main.rs` (keep mains tiny: parse CLI, call lib); vendored Tree-sitter C / generated grammar (`tree-sitter` in the path); unmodified `third_party/stack-graphs`; engine pack **source we do not own**.
+**Exclude from the denominator:** `xtask/`; bin `main.rs` (keep mains tiny: parse CLI, call lib); `poc-ide/src/ui.rs` if the eframe view is split out of `main.rs`; vendored Tree-sitter C / generated grammar (`tree-sitter` in the path); unmodified `third_party/stack-graphs`; engine pack **source we do not own**.
 
 Empty Factory slots still count: tests that they return `UnsupportedLanguage` without panic.
+
+`poc-ide` is a workspace member. Its **library** is in the 95% denominator. eframe/`rfd` stay in `main.rs` (already ignored) or `poc-ide/src/ui.rs`. Do not put egui types in the lib.
 
 ## Mutation — 80% kill rate
 
@@ -20,8 +22,9 @@ Empty Factory slots still count: tests that they return `UnsupportedLanguage` wi
 - Always when present: `progressive-lsp-core`, `-control`, `-install`, `-watch`, `-index`, `-resolve`, `-script`, `-workspace`
 - Language crates once they have real resolvers (not empty slots)
 - `progressive-lsp-engine`: supervisor crash/backoff/hash/discovery only
+- `poc-ide` once the crate exists (IDE-1+): Ports, Commands, Facades — not eframe
 
-Do not mutation-test clangd, ty, or rust-analyzer **source we do not own**. Engine wrappers: supervisor crash/backoff/hash/discovery only.
+Do not mutation-test clangd, ty, or rust-analyzer **source we do not own**. Engine wrappers: supervisor crash/backoff/hash/discovery only. Do not mutation-test `egui` / `syntect` / `notify` **source we do not own**.
 
 ## Time and threads
 
@@ -90,6 +93,16 @@ Separate from this unit/mutation gate. Spec: [../integration/README.md](../integ
 - IT-2 may wait on `workDoneProgress` with a deadline (poll protocol, not `sleep(5)`). T3 rows are `skip_pack_missing` when packs are Darwin stubs — not typed-hover greens.
 - IT-3 may deadline-poll the control socket for `WatchBatch` / `TierReady`. `--mux` is `pending_mux` if unimplemented. T3 types rows stay `skip_pack_missing` on Darwin stubs.
 - PD4 T2 bake-off may fetch the stack-graphs pin and junit4 at SHA (cache under `target/`). Default T2 stays heuristic unless the winner rule fires. Do not treat Darwin RSS as a musl green.
+
+## POC IDE (`poc-ide/`)
+
+Separate from the server’s musl bar. Spec: [poc-ide/README.md](poc-ide/README.md).
+
+- Unit tests: Ports and Fake* doubles. **No** `thread::sleep`. `cargo test -p poc-ide -- --test-threads=1` must pass.
+- llvm-cov: library in the workspace 95% denominator; ignore `poc-ide/src/main.rs` and `poc-ide/src/ui.rs`.
+- Mutants: 80% on `poc-ide` from IDE-1.
+- `check-static`: **N/A**. Do not run it on the GUI Mach-O. `xtask musl` still builds only `--bin progressive-lsp`.
+- Live `progressive-lsp serve` is not the unit gate. `FakeLsp` / `FakeControl` are.
 
 ## Milestone sign-off (every WP)
 

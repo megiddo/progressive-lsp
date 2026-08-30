@@ -27,6 +27,7 @@ members = [
     "progressive-lsp-lang-cpp",
     "progressive-lsp-lang-csharp",
     "xtask",
+    "poc-ide",
 ]
 
 [workspace.package]

@@ -134,6 +134,55 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | Scripts as Strategy for `textDocument/definition` | Forbidden; tests assert |
 | Ad-hoc manager / helper / util crates | Missing pattern; add a row here instead |
 
+## POC IDE (consumer sample)
+
+In-tree editor in `poc-ide/`. Types live there only. The server map above is unchanged. Architecture: [poc-ide/architecture.md](poc-ide/architecture.md).
+
+| Component / type | Pattern | Invariant (testable) |
+|---|---|---|
+| `poc-ide` bin (`main.rs`) | Composition root | Only the bin wires eframe/`rfd` / `ArboardClipboard`; lib takes Ports |
+| `ArboardClipboard` | Adapter | Bin-only `ClipboardPort`; lib tests use `FakeClipboard` |
+| `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test |
+| `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
+| `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
+| `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
+| `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |
+| `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |
+| `MemFs` | Test double | Same `FsPort`; no host disk |
+| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter |
+| `LayoutState` | Value object | `left_width` > 0; clamp on set; no window handle in the lib |
+| `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
+| `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |
+| `Selection` | Value object | Range is ordered `start <= end` in char offsets |
+| `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
+| `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
+| `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
+| `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
+| `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
+| `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
+| `FakeWatch` | Test double | Same `WatchPort`; tests inject events; no `thread::sleep` |
+| `DiskEvent` / `DiskEventKind` | Event / DTO | path + kind + mtime; `KeepMemory` ignores a later event with the same mtime |
+| `ClockPort` / `FakeClock` (poc-ide) | Port / test double | Tests never `thread::sleep`; advance with FakeClock |
+| `SystemClock` (poc-ide) | ClockPort production | Wall `unix_ms`; tests use `FakeClock` |
+| `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
+| `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
+| `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
+| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; `serve_args` never includes `--mux` (`pending_mux`) |
+| `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |
+| `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
+| `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
+| `LspClient` | Facade | JSON-RPC in; domain locations out; no watch internals |
+| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; `LspClient` never opens it; `ControlClient` does in `ControlSocket` |
+| `ControlTransport` / `UnixControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails |
+| `FakeControl` | Test double | Same `ControlTransport`; pushes use `request_id == 0` |
+| `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |
+| `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
+| `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
+| `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
+| `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
+| `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
+| `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
+
 ## Adding a type
 
 1. Name the pattern in this table (PR must update the table).
