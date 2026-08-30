@@ -43,6 +43,7 @@ main   # after IDE-5 merge
                     └── poc-compact-folders  # compact a/b/c single-child dirs (not IDE-6)
                           └── poc-context-menu  # editor context menu for definition / implementation / references (not IDE-6)
                                 └── poc-navigate  # deferred Navigate + editor caret sync (not IDE-6)
+                                      └── poc-no-console  # drop the hand-typed protocol console; debug is RunLog (not IDE-6)
 ```
 
 ## Rules

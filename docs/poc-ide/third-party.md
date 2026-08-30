@@ -15,7 +15,7 @@ Lean on OSS. Do not write an editor, highlighter, or dialog toolkit. If a crate 
 | Walk tree | `walkdir` | `FsPort.read_tree` | **IDE-1 used the fallback:** `std::fs` one-level listing behind `FsPort` / `FileTree::load`. `poc-tree-lazy` keeps that Adapter; load is shallow, expand lists one more level. |
 | Disk events | `notify` | `WatchPort` prod Adapter | `FakeWatch` |
 | Clipboard | `arboard` **or** egui ctx clipboard | `ClipboardPort` prod in **main** | `FakeClipboard` |
-| LSP DTOs | `lsp-types` | params/results | `serde_json::Value` for the console inspector |
+| LSP DTOs | `lsp-types` | params/results | `serde_json::Value` for `ProtocolConsole` lib tests |
 | Control codec | `progressive-lsp-control` (in-repo) | Envelope + proto | none |
 | Errors | `thiserror` | Domain Result | — |
 | JSON-RPC | `serde` / `serde_json` | LSP frames | none |

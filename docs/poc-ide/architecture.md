@@ -31,7 +31,7 @@ poc-ide/                     workspace member; not a musl artifact
   src/language.rs            LanguageCatalog, ServeMode
   src/lsp.rs                LspClient Facade, LspLocation, SpawnSpec, StdioLsp
   src/control.rs             ControlClient Adapter, UnixControl
-  src/console.rs             ProtocolConsole Facade, TranscriptEntry
+  src/console.rs             ProtocolConsole Facade, TranscriptEntry (lib + unit tests; not wired in the bin)
   src/watch.rs              DiskWatch Observer, NotifyWatch
   src/log.rs                RunLog Repository (per-run sqlite debug sink)
 ```
@@ -49,7 +49,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 5. Save → `FsPort.write` → clear dirty → `didSave`.
 6. `WatchPort` events for an open path → if the buffer is open, enqueue `ConflictModal` (always; even if clean). Choice `LoadDisk` replaces rope and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime`.
 7. Go to definition / implementation / references → `DiscoverCommand` → `LspClient` → jump opens or focuses a tab at `LspLocation`. Navigate records `PendingDiscover` and applies after the menu closes (same path as F12 and the editor / file-tree context menu). The editor view copies caret char offsets onto `OpenBuffer.selection` via `CursorOffsets` so discover uses the visible caret, not a stale 0,0. Right-click uses the focused tab + cursor (same as F12), not the tree path.
-8. Protocol console sends raw LSP methods or Envelope methods; transcripts are append-only `TranscriptEntry` DTOs.
+8. Debug events go to `RunLog` (sqlite). `ProtocolConsole` remains a lib Facade for Envelope/LSP transcript tests; the bin has no hand-typed inspector.
 
 ## Ports (inject always)
 
@@ -77,7 +77,7 @@ Content-Length JSON-RPC, same shape as the integration harness, **copied as a ne
 - `textDocument/definition` / `implementation` / `references`
 - Read `capabilities.experimental.progressiveLsp` (socket may be null in stock mode)
 
-Unknown server methods in the console: send anyway; show the JSON-RPC error. Jump targets are `LspLocation` (uri + range). `SpawnSpec` resolves the `progressive-lsp` binary (env, then `target/{debug,release}/progressive-lsp`, then `PATH`); missing binary is a domain error, not a panic.
+Unknown server methods on `ProtocolConsole` (lib/tests): send anyway; record the JSON-RPC error. Jump targets are `LspLocation` (uri + range). `SpawnSpec` resolves the `progressive-lsp` binary (env, then `target/{debug,release}/progressive-lsp`, then `PATH`); missing binary is a domain error, not a panic.
 
 ## Control client
 
@@ -87,7 +87,7 @@ Only when `ServeMode::ControlSocket`. Spawn:
 progressive-lsp serve --control-socket PATH [--prefix DIR]
 ```
 
-After `initialize`, connect to `experimental.progressiveLsp.socket` (must match). Speak `Envelope` (`method`, `request_id`, `body`) as in [../user/progressive-v1-api.md](../user/progressive-v1-api.md). Console must be able to invoke every unary RPC in the RPC table and display `WatchBatch` / `TierReady` pushes (`request_id == 0`).
+After `initialize`, connect to `experimental.progressiveLsp.socket` (must match). Speak `Envelope` (`method`, `request_id`, `body`) as in [../user/progressive-v1-api.md](../user/progressive-v1-api.md). `ProtocolConsole` (lib) must be able to invoke every unary RPC in the RPC table and record `WatchBatch` / `TierReady` pushes (`request_id == 0`). The bin does not hand-type those RPCs; `RunLog` is the debug sink.
 
 `--mux` stays `pending_mux` (same as IT-3). Do not silently retest the socket as mux.
 
@@ -117,10 +117,10 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 - Center: `TabStrip` rendered with a thin custom tab bar in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on this workspace’s rustc). Same `TabStrip` tests.
 - Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References; they run `DiscoverCommand` (same path as Navigate / F12). Navigate records `PendingDiscover` and applies after the menu UI.
 - Modal: `egui::Modal` / `Window` for `ConflictModal`.
-- Bottom or right: `ProtocolConsole` (collapsible); transcript rows are append-only `TranscriptEntry` DTOs.
+- No bottom protocol console. Debug is `RunLog` sqlite, not a hand-typed inspector.
 
 ## Failure modes
 
-- Missing `progressive-lsp` binary: editor still edits/highlights; discovery commands return a domain error; console shows spawn failure. Not a panic.
-- Control socket refused: stock LSP remains; console control tab errors.
+- Missing `progressive-lsp` binary: editor still edits/highlights; discovery commands return a domain error; `RunLog` / status records spawn failure. Not a panic.
+- Control socket refused: stock LSP remains; `RunLog` records the control connect error.
 - T3 stub / method empty: show empty location list; do not fake a hit.

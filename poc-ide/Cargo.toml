@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "POC IDE consumer sample: folder/file, tree, tabs, buffers, syntect, disk conflict, stock LSP, protocol console"
+description = "POC IDE consumer sample: folder/file, tree, tabs, buffers, syntect, disk conflict, stock LSP, RunLog"
 
 [lib]
 name = "poc_ide"

@@ -9,11 +9,9 @@ use poc_ide::{
     advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
     ControlClient, CursorOffsets, DialogPort, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
     FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, NotifyWatch,
-    OpenBuffer, PendingDiscover, ProtocolConsole, RunLog, Selection, ServeMode, SpawnSpec, StdFs,
-    StdioLsp, TabId, TabStrip, TranscriptKind, TreeExpansion, TreeNode, UnixControl, WatchPort,
-    WorkspaceRoot, CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
+    OpenBuffer, PendingDiscover, RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId,
+    TabStrip, TreeExpansion, TreeNode, UnixControl, WatchPort, WorkspaceRoot,
 };
-use serde_json::json;
 use std::sync::mpsc;
 
 /// Native `rfd` Adapter. Tests never construct this type.
@@ -117,13 +115,11 @@ pub struct PocIdeApp {
     lsp_error: Option<String>,
     serve_mode: ServeMode,
     control_socket_path: Option<PathBuf>,
+    /// Live Envelope connection when `ServeMode::ControlSocket`. Held so the
+    /// socket stays up; the bin has no inspector that sends through it.
+    #[allow(dead_code)]
     control: Option<ControlClient<UnixControl>>,
     control_error: Option<String>,
-    console: ProtocolConsole,
-    console_open: bool,
-    console_control_tab: bool,
-    console_method: String,
-    console_body: String,
     status: String,
     run_log: RunLog,
     pending_discover: Option<PendingDiscover>,
@@ -140,11 +136,6 @@ impl PocIdeApp {
             ServeMode::ControlSocket
         } else {
             ServeMode::StockStdio
-        };
-        let console_method = if serve_mode.is_control_socket() {
-            CONTROL_UNARY_METHODS[0].to_string()
-        } else {
-            STOCK_LSP_METHODS[0].to_string()
         };
         let mut app = Self {
             dialog: RfdDialog,
@@ -165,11 +156,6 @@ impl PocIdeApp {
             control_socket_path: control_socket,
             control: None,
             control_error: None,
-            console: ProtocolConsole::new(),
-            console_open: true,
-            console_control_tab: serve_mode.is_control_socket(),
-            console_method,
-            console_body: String::new(),
             status: String::new(),
             run_log,
             pending_discover: None,
@@ -222,6 +208,7 @@ impl PocIdeApp {
                 self.status = watch_err
                     .map(|e| e.to_string())
                     .or_else(|| self.lsp_error.clone())
+                    .or_else(|| self.control_error.clone())
                     .unwrap_or_default();
                 if let Some(file) = open_file {
                     self.open_path(&file);
@@ -367,7 +354,6 @@ impl PocIdeApp {
             let err = IdeError::control_socket_missing();
             self.run_log.log_control_connect_error(&err.to_string());
             self.control_error = Some(err.to_string());
-            self.console.record_control_unavailable(&err);
             return;
         };
         match advertised_control_socket(cap) {
@@ -379,13 +365,11 @@ impl PocIdeApp {
                 Err(e) => {
                     self.run_log.log_control_connect_error(&e.to_string());
                     self.control_error = Some(e.to_string());
-                    self.console.record_control_unavailable(&e);
                 }
             },
             Err(e) => {
                 self.run_log.log_control_connect_error(&e.to_string());
                 self.control_error = Some(e.to_string());
-                self.console.record_control_unavailable(&e);
             }
         }
     }
@@ -423,141 +407,6 @@ impl PocIdeApp {
             Err(e) if e.is_missing_binary() => self.status = self.missing_server_status(),
             Err(e) => self.status = e.to_string(),
         }
-    }
-
-    fn send_console(&mut self) {
-        let method = self.console_method.clone();
-        if self.console_control_tab {
-            if let Some(client) = self.control.as_mut() {
-                let body = ProtocolConsole::encode_body(&method, &self.console_body);
-                if let Err(e) = self.console.send_control(client, &method, body) {
-                    self.status = e.to_string();
-                } else {
-                    self.status.clear();
-                }
-            } else {
-                let err = self
-                    .control_error
-                    .as_deref()
-                    .map(IdeError::control)
-                    .unwrap_or_else(IdeError::control_socket_missing);
-                self.console.record_control_unavailable(&err);
-                self.status = err.to_string();
-            }
-        } else {
-            let params = serde_json::from_str(&self.console_body).unwrap_or_else(|_| json!({}));
-            let Some(lsp) = self.lsp.as_mut() else {
-                self.status = self.missing_server_status();
-                return;
-            };
-            if let Err(e) = self.console.send_lsp(lsp.transport_mut(), &method, params) {
-                self.status = e.to_string();
-            } else {
-                self.status.clear();
-            }
-        }
-    }
-
-    fn show_console_panel(&mut self, ui: &mut egui::Ui) {
-        if let Some(client) = self.control.as_mut() {
-            if let Err(e) = self.console.drain_pushes(client) {
-                self.status = e.to_string();
-            }
-        }
-        if !self.console_open {
-            egui::Panel::bottom("console_bar")
-                .resizable(false)
-                .show(ui, |ui| {
-                    if ui.button("Protocol console").clicked() {
-                        self.console_open = true;
-                    }
-                });
-            return;
-        }
-        egui::Panel::bottom("console")
-            .resizable(true)
-            .default_size(180.0)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("Protocol console");
-                    if ui.small_button("×").clicked() {
-                        self.console_open = false;
-                    }
-                    ui.selectable_value(&mut self.console_control_tab, false, "LSP");
-                    ui.selectable_value(&mut self.console_control_tab, true, "Control");
-                });
-                if self.console_control_tab {
-                    if let Some(err) = &self.control_error {
-                        ui.colored_label(egui::Color32::from_rgb(200, 80, 80), err);
-                    } else if self.control.is_none() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(200, 80, 80),
-                            IdeError::control_socket_missing().to_string(),
-                        );
-                    }
-                }
-                ui.horizontal(|ui| {
-                    let methods: &[&str] = if self.console_control_tab {
-                        CONTROL_UNARY_METHODS
-                    } else {
-                        STOCK_LSP_METHODS
-                    };
-                    egui::ComboBox::from_id_salt("console_method")
-                        .selected_text(&self.console_method)
-                        .show_ui(ui, |ui| {
-                            for m in methods {
-                                ui.selectable_value(&mut self.console_method, (*m).to_string(), *m);
-                            }
-                        });
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.console_method)
-                            .desired_width(220.0)
-                            .hint_text("method"),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.console_body)
-                            .desired_width(280.0)
-                            .hint_text(if self.console_control_tab {
-                                "body (SetConfig TOML / packs / generation)"
-                            } else {
-                                "JSON params"
-                            }),
-                    );
-                    if ui.button("Send").clicked() {
-                        self.send_console();
-                    }
-                });
-                ui.separator();
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        if self.console.is_empty() {
-                            ui.weak("No transcript yet.");
-                        } else {
-                            for entry in self.console.entries() {
-                                let color = match entry.kind() {
-                                    TranscriptKind::LspError | TranscriptKind::ControlError => {
-                                        egui::Color32::from_rgb(200, 80, 80)
-                                    }
-                                    TranscriptKind::ControlPush => {
-                                        egui::Color32::from_rgb(80, 160, 80)
-                                    }
-                                    _ => ui.visuals().text_color(),
-                                };
-                                ui.colored_label(
-                                    color,
-                                    format!(
-                                        "[{}] {} id={} {}",
-                                        entry.kind().as_str(),
-                                        entry.method(),
-                                        entry.request_id(),
-                                        entry.body()
-                                    ),
-                                );
-                            }
-                        }
-                    });
-            });
     }
 
     fn show_conflict_modal(&mut self, ui: &mut egui::Ui) {
@@ -612,7 +461,6 @@ impl eframe::App for PocIdeApp {
             self.run_log.log_conflict_enqueue(&path, mtime);
         }
         self.show_conflict_modal(ui);
-        self.show_console_panel(ui);
 
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
