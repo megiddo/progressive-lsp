@@ -20,8 +20,9 @@ pub use git_exclude::{
 };
 pub use ids::{FileId, LanguageId, LanguageVersion, PackageId, Tier, WorkspaceId};
 pub use log::{
-    sanitize_extras, FakeLog, LogComponent, LogLevel, LogOrigin, LogPort, LogRecord, LogScope,
-    LogScopeGuard, LogSink, MemoryLog, NeverFailLog, NullLog, MEMORY_LOG_CAP, MESSAGE_MAX_BYTES,
+    message_from_bytes, sanitize_extras, FakeLog, LogComponent, LogLevel, LogOrigin, LogPort,
+    LogRecord, LogScope, LogScopeGuard, LogSink, MemoryLog, NeverFailLog, NullLog, MEMORY_LOG_CAP,
+    MESSAGE_MAX_BYTES,
 };
 pub use prefix::{PrefixLayout, PREFIX_DIR_NAME};
 pub use rss::{
@@ -44,6 +45,7 @@ mod tests {
         assert_eq!(log.records().len(), 1);
         assert_eq!(MEMORY_LOG_CAP, 4096);
         assert_eq!(MESSAGE_MAX_BYTES, 64 * 1024);
+        assert_eq!(message_from_bytes(b"ok"), "ok");
         let _ = PrefixLayout::from_path("/tmp/prefix");
         assert_eq!(PREFIX_DIR_NAME, OVERLAY_DIR_NAME);
         assert!(rss_sample_label().contains("allocator"));

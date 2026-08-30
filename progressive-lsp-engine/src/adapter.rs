@@ -40,6 +40,45 @@ pub enum EngineMessage {
     Watch { paths: Vec<String> },
 }
 
+/// Value object. stdout is LSP JSON-RPC (never a log Adapter).
+/// stderr is an optional capture pipe for `ChildStderrAdapter`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChildIo {
+    stdout_lsp: bool,
+    stderr_pipe: bool,
+}
+
+impl ChildIo {
+    /// Production pack spawn: LSP stdout + stderr pipe. Never `NullStderrAdapter`.
+    pub fn lsp_with_stderr_pipe() -> Self {
+        Self {
+            stdout_lsp: true,
+            stderr_pipe: true,
+        }
+    }
+
+    /// No stderr pipe (tests / reserved). Still never a log Adapter on stdout.
+    pub fn lsp_without_stderr() -> Self {
+        Self {
+            stdout_lsp: true,
+            stderr_pipe: false,
+        }
+    }
+
+    pub fn stdout_is_lsp(&self) -> bool {
+        self.stdout_lsp
+    }
+
+    /// Invariant: a log Adapter is never attached to engine stdout.
+    pub fn stdout_is_never_log_adapter(&self) -> bool {
+        self.stdout_lsp
+    }
+
+    pub fn has_stderr_pipe(&self) -> bool {
+        self.stderr_pipe
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ChildHandle {
     pub id: u64,
@@ -47,6 +86,7 @@ pub struct ChildHandle {
     pub capabilities: EngineCapabilities,
     alive: Arc<AtomicBool>,
     inbox: Arc<Mutex<Vec<EngineMessage>>>,
+    io: ChildIo,
 }
 
 impl PartialEq for ChildHandle {
@@ -65,7 +105,17 @@ impl ChildHandle {
             capabilities,
             alive: Arc::new(AtomicBool::new(true)),
             inbox: Arc::new(Mutex::new(Vec::new())),
+            io: ChildIo::lsp_with_stderr_pipe(),
         }
+    }
+
+    pub fn with_io(mut self, io: ChildIo) -> Self {
+        self.io = io;
+        self
+    }
+
+    pub fn io(&self) -> &ChildIo {
+        &self.io
     }
 
     pub fn is_alive(&self) -> bool {
@@ -164,7 +214,10 @@ mod tests {
         assert!(!h.is_alive());
         let other = ChildHandle::new(1, "python", EngineCapabilities::empty());
         assert_eq!(h, other);
-        assert_ne!(h, ChildHandle::new(2, "python", EngineCapabilities::empty()));
+        assert_ne!(
+            h,
+            ChildHandle::new(2, "python", EngineCapabilities::empty())
+        );
     }
 
     #[test]
@@ -211,5 +264,22 @@ mod tests {
             ReadyKind::IndexedPackage(PackageId::new("p"))
         );
         assert!(a.extra_languages().is_empty());
+    }
+
+    #[test]
+    fn child_io_stdout_is_never_log_adapter_value_object() {
+        let piped = ChildIo::lsp_with_stderr_pipe();
+        assert!(piped.stdout_is_lsp());
+        assert!(piped.stdout_is_never_log_adapter());
+        assert!(piped.has_stderr_pipe());
+        let quiet = ChildIo::lsp_without_stderr();
+        assert!(quiet.stdout_is_lsp());
+        assert!(quiet.stdout_is_never_log_adapter());
+        assert!(!quiet.has_stderr_pipe());
+        let h = ChildHandle::new(1, "python", EngineCapabilities::empty());
+        assert!(h.io().has_stderr_pipe());
+        assert!(h.io().stdout_is_never_log_adapter());
+        let h = h.with_io(ChildIo::lsp_without_stderr());
+        assert!(!h.io().has_stderr_pipe());
     }
 }

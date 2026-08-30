@@ -13,11 +13,12 @@ use progressive_lsp_control::{
     WatchSubscribeResponse,
 };
 use progressive_lsp_core::{
-    apply_worktree_excludes, Config, ConfigError, ConfigOverlay, FakeClock, InitializeFailed,
-    PrefixLayout, OVERLAY_DIR_NAME,
+    apply_worktree_excludes, Config, ConfigError, ConfigLoad, ConfigOverlay, FakeClock,
+    InitializeFailed, LogPort, NullLog, PrefixLayout, OVERLAY_DIR_NAME,
 };
 use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes};
 use progressive_lsp_install::{hex_encode, sha256, Installer, LocalFs, Manifest, ManifestArtifact};
+use progressive_lsp_log::ConfigWarnAdapter;
 use progressive_lsp_protocol::LspIntelligence;
 use progressive_lsp_resolve::{ResolveQuery, ResolveResult};
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
@@ -59,15 +60,21 @@ pub struct ServeHost {
     pending_batches: Mutex<Vec<WatchBatch>>,
     snapshot: Mutex<HashMap<PathBuf, u64>>,
     pending_tier: Mutex<Vec<TierReady>>,
+    log: Arc<dyn LogPort>,
 }
 
 impl ServeHost {
     pub fn new(layout: PrefixLayout) -> Result<Self, ConfigError> {
-        let config = load_config_file(&layout.config_path())?;
+        Self::new_with_log(layout, Arc::new(NullLog))
+    }
+
+    pub fn new_with_log(layout: PrefixLayout, log: Arc<dyn LogPort>) -> Result<Self, ConfigError> {
+        let load = load_config_file(&layout.config_path())?;
+        ConfigWarnAdapter::new(Arc::clone(&log)).emit_warnings(&load.warnings);
         Ok(Self {
-            session: WorkspaceSession::with_prefix_and_t2(&layout, config.t2_for("java")),
+            session: WorkspaceSession::with_prefix_and_t2(&layout, load.config.t2_for("java")),
             layout,
-            config: Mutex::new(config),
+            config: Mutex::new(load.config),
             disk_watch: ServeDiskWatch::new(),
             workspace: Mutex::new(None),
             journal: Mutex::new(FilesSinceJournal::new(256)),
@@ -75,7 +82,12 @@ impl ServeHost {
             pending_batches: Mutex::new(Vec::new()),
             snapshot: Mutex::new(HashMap::new()),
             pending_tier: Mutex::new(Vec::new()),
+            log,
         })
+    }
+
+    fn emit_config_warnings(&self, warnings: &[String]) {
+        ConfigWarnAdapter::new(Arc::clone(&self.log)).emit_warnings(warnings);
     }
 
     pub fn layout(&self) -> &PrefixLayout {
@@ -92,6 +104,7 @@ impl ServeHost {
         let overlay = root.join(OVERLAY_DIR_NAME).join("config.toml");
         if overlay.exists() {
             let extra = load_overlay_file(&overlay).map_err(|e| InitializeFailed(e.to_string()))?;
+            self.emit_config_warnings(&extra.warnings);
             let mut cfg = self.config.lock().expect("config");
             *cfg = cfg.merge(&extra);
         }
@@ -228,11 +241,14 @@ impl ServeHost {
     }
 
     fn reread_disk_config(&self) -> Result<Config, String> {
-        let mut cfg = load_config_file(&self.layout.config_path()).map_err(|e| e.to_string())?;
+        let load = load_config_file(&self.layout.config_path()).map_err(|e| e.to_string())?;
+        self.emit_config_warnings(&load.warnings);
+        let mut cfg = load.config;
         if let Some(root) = self.workspace.lock().expect("ws").as_ref() {
             let overlay = root.join(OVERLAY_DIR_NAME).join("config.toml");
             if overlay.exists() {
                 let extra = load_overlay_file(&overlay).map_err(|e| e.to_string())?;
+                self.emit_config_warnings(&extra.warnings);
                 cfg = cfg.merge(&extra);
             }
         }
@@ -305,7 +321,10 @@ impl ControlPlane for ServeHost {
 
     fn set_config(&self, req: &SetConfigRequest) -> SetConfigResponse {
         let overlay = match ConfigOverlay::parse(&req.patch_toml) {
-            Ok(o) => o,
+            Ok(o) => {
+                self.emit_config_warnings(&o.warnings);
+                o
+            }
             Err(e) => {
                 return SetConfigResponse {
                     status: Some(Status::error(1, e.to_string())),
@@ -483,13 +502,16 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-fn load_config_file(path: &Path) -> Result<Config, ConfigError> {
+fn load_config_file(path: &Path) -> Result<ConfigLoad, ConfigError> {
     if !path.exists() {
-        return Ok(Config::empty());
+        return Ok(ConfigLoad {
+            config: Config::empty(),
+            warnings: Vec::new(),
+        });
     }
     let src = std::fs::read_to_string(path)
         .map_err(|e| ConfigError::Io(format!("read {}: {e}", path.display())))?;
-    Ok(Config::from_toml(&src)?.config)
+    Config::from_toml(&src)
 }
 
 fn load_overlay_file(path: &Path) -> Result<ConfigOverlay, ConfigError> {
@@ -506,7 +528,11 @@ fn mtime_stamp(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-fn script_paths_on_chain(layout: &PrefixLayout, workspace: Option<&Path>, cfg: &Config) -> Vec<PathBuf> {
+fn script_paths_on_chain(
+    layout: &PrefixLayout,
+    workspace: Option<&Path>,
+    cfg: &Config,
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut dirs = vec![layout.scripts_dir()];
     if let Some(ws) = workspace {
@@ -577,7 +603,8 @@ fn install_pack_from_inbox_or_stub(layout: &PrefixLayout, raw: &str) -> Result<(
     };
     let (bytes, expected) = if inbox.join("payload").is_file() {
         let bytes = std::fs::read(inbox.join("payload")).map_err(|e| e.to_string())?;
-        let hex = std::fs::read_to_string(inbox.join("expected.sha256")).map_err(|e| e.to_string())?;
+        let hex =
+            std::fs::read_to_string(inbox.join("expected.sha256")).map_err(|e| e.to_string())?;
         (bytes, parse_sha256_hex(&hex)?)
     } else {
         let bytes = stub_pack_bytes(pack, binary);
@@ -651,11 +678,11 @@ mod tests {
         );
         assert_eq!(root_from_params(&serde_json::json!({})), None);
         assert_eq!(root_from_params(&serde_json::json!({"rootUri": ""})), None);
-        assert_eq!(root_from_params(&serde_json::json!({"rootUri": "null"})), None);
         assert_eq!(
-            root_from_params(&serde_json::json!({"rootPath": ""})),
+            root_from_params(&serde_json::json!({"rootUri": "null"})),
             None
         );
+        assert_eq!(root_from_params(&serde_json::json!({"rootPath": ""})), None);
         assert_eq!(
             root_from_params(&serde_json::json!({"rootUri": "/plain"})),
             Some(PathBuf::from("/plain"))
@@ -733,6 +760,36 @@ mod tests {
     }
 
     #[test]
+    fn config_load_warnings_emit_via_config_warn_adapter() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(layout.config_path(), "future = 1\n").unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.operation.as_deref() == Some("config") && r.message.contains("future")),
+            "{:?}",
+            log.records()
+        );
+        let overlay_dir = workspace.path().join(OVERLAY_DIR_NAME);
+        std::fs::create_dir_all(&overlay_dir).unwrap();
+        std::fs::write(overlay_dir.join("config.toml"), "extra = 2\n").unwrap();
+        host.on_initialize(&serde_json::json!({
+            "rootPath": workspace.path().to_string_lossy()
+        }))
+        .unwrap();
+        assert!(
+            log.records().iter().any(|r| r.message.contains("extra")),
+            "{:?}",
+            log.records()
+        );
+    }
+
+    #[test]
     fn missing_prefix_config_is_empty() {
         let prefix = tempfile::tempdir().unwrap();
         let layout = PrefixLayout::from_path(prefix.path().join("missing-cfg"));
@@ -782,7 +839,8 @@ mod tests {
         );
         let found = host.resolve(&q);
         assert!(
-            found.locations.iter().any(|l| l.uri.contains("Lib.java")) || !found.locations.is_empty(),
+            found.locations.iter().any(|l| l.uri.contains("Lib.java"))
+                || !found.locations.is_empty(),
             "{found:?}"
         );
         std::fs::write(
@@ -828,20 +886,20 @@ mod tests {
             .unwrap()
             .is_ok());
         let after_t2 = host.get_config(&GetConfigRequest {});
-        assert!(
-            after_t2.toml.contains("stack-graphs"),
-            "{}",
-            after_t2.toml
+        assert!(after_t2.toml.contains("stack-graphs"), "{}", after_t2.toml);
+        assert_eq!(
+            host.merged_config().t2_for("java"),
+            progressive_lsp_core::T2Backend::StackGraphs
         );
-        assert_eq!(host.merged_config().t2_for("java"), progressive_lsp_core::T2Backend::StackGraphs);
-        assert!(host
-            .set_config(&SetConfigRequest {
+        assert!(
+            host.set_config(&SetConfigRequest {
                 patch_toml: "[[".into(),
             })
             .status
             .unwrap()
             .code
-            != 0);
+                != 0
+        );
         assert!(host
             .set_config(&SetConfigRequest {
                 patch_toml: "packs = [\"python\"]\n".into(),
@@ -849,16 +907,34 @@ mod tests {
             .status
             .unwrap()
             .is_ok());
-        assert!(host.get_config(&GetConfigRequest {}).toml.contains("python"));
+        assert!(host
+            .get_config(&GetConfigRequest {})
+            .toml
+            .contains("python"));
         std::fs::write(layout.config_path(), "packs = [\"go\"]\n").unwrap();
-        assert!(host.reload_config(&ReloadConfigRequest {}).status.unwrap().is_ok());
-        assert!(host.get_config(&GetConfigRequest {}).toml.contains("python") || host.get_config(&GetConfigRequest {}).toml.contains("go"));
-        assert!(host.watch_subscribe(&WatchSubscribeRequest {}).status.unwrap().is_ok());
+        assert!(host
+            .reload_config(&ReloadConfigRequest {})
+            .status
+            .unwrap()
+            .is_ok());
+        assert!(
+            host.get_config(&GetConfigRequest {})
+                .toml
+                .contains("python")
+                || host.get_config(&GetConfigRequest {}).toml.contains("go")
+        );
+        assert!(host
+            .watch_subscribe(&WatchSubscribeRequest {})
+            .status
+            .unwrap()
+            .is_ok());
         std::fs::write(src.join("New.java"), "class New {}\n").unwrap();
         host.poll_disk_watch();
         let batches = host.take_watch_batches();
         assert!(
-            batches.iter().any(|b| b.events.iter().any(|e| e.path.contains("New.java")))
+            batches
+                .iter()
+                .any(|b| b.events.iter().any(|e| e.path.contains("New.java")))
                 || host
                     .files_since(&FilesSinceRequest {
                         since: Some(files_since_request::Since::SinceUnixMs(0)),
@@ -873,7 +949,13 @@ mod tests {
         let tiers = host.tier_status(&TierStatusRequest {});
         assert!(tiers.status.unwrap().is_ok());
         let ready = host.take_tier_ready();
-        assert!(ready.iter().any(|r| r.tier == "syntax" || r.tier == "graph") || ready.is_empty() || !tiers.rows.is_empty());
+        assert!(
+            ready
+                .iter()
+                .any(|r| r.tier == "syntax" || r.tier == "graph")
+                || ready.is_empty()
+                || !tiers.rows.is_empty()
+        );
         let inbox = layout.root().join("inbox/ty");
         std::fs::create_dir_all(&inbox).unwrap();
         std::fs::write(inbox.join("payload"), b"wrong-bytes").unwrap();
@@ -892,10 +974,16 @@ mod tests {
         assert!(parse_sha256_hex("zz").is_err());
         assert_eq!(canonical_pack("ty"), "python");
         assert_eq!(canonical_pack("python"), "python");
-        assert!(script_paths_on_chain(&layout, Some(workspace.path()), &Config::empty()).is_empty()
-            || true);
+        assert!(
+            script_paths_on_chain(&layout, Some(workspace.path()), &Config::empty()).is_empty()
+                || true
+        );
         let _ = host.last_watch_batch();
-        assert!(host.reload_scripts(&ReloadScriptsRequest {}).status.unwrap().is_ok());
+        assert!(host
+            .reload_scripts(&ReloadScriptsRequest {})
+            .status
+            .unwrap()
+            .is_ok());
     }
 
     #[test]
@@ -926,6 +1014,9 @@ mod tests {
         install_pack_from_inbox_or_stub(&layout, "python").unwrap();
         assert!(layout.engines_dir().join("python/ty").is_file());
         assert!(install_pack_from_inbox_or_stub(&layout, "nope").is_err());
-        assert_eq!(mtime_stamp(&std::fs::metadata(prefix.path()).unwrap()) > 0 || true, true);
+        assert_eq!(
+            mtime_stamp(&std::fs::metadata(prefix.path()).unwrap()) > 0 || true,
+            true
+        );
     }
 }

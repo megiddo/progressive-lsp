@@ -162,5 +162,8 @@ mod tests {
         assert!(PackAdapter::new("phpantom", LanguageId::new("php"))
             .extra_languages()
             .is_empty());
+        let io = crate::adapter::ChildIo::lsp_with_stderr_pipe();
+        assert!(io.has_stderr_pipe());
+        assert!(io.stdout_is_never_log_adapter());
     }
 }

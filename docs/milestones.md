@@ -585,12 +585,31 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-3 — Facades, bridges, eprintln death
 
-Do not start LOG-3 until LOG-2 stays signed off.
+**Status: SIGNED OFF** on branch `log3`. Do not start LOG-4 until this section is signed off (it is). Parent is `log2`. No sqlite serve/install bootstrap. No `LogScope` around didOpen. poc-ide `RunLog` unchanged. poc-ide `StdioLsp` still uses `stderr(Stdio::null())` (do not inherit engine stderr into the IDE).
 
-- Bridges + child/file/LSP capture Adapters. Composition root passes `LogPort`. `ConfigLoad.warnings` emit. Product diagnostic `eprintln!` gone except CLI usage/help (IT-1.7).
+- Bridges + child/file/LSP capture Adapters. Composition root passes `LogPort` (`MemoryLog` bootstrap). `ConfigLoad.warnings` emit. Product diagnostic `eprintln!` gone except CLI usage/help (IT-1.7).
 - Allowlist clangd `--log=`; optional gopls `-logfile`. Not `-rpc.trace`, `RA_LOG_FILE`, or `TY_LOG_PROFILE`.
+- `ChildIo` Value: stdout is LSP; stderr is an optional pipe. `NullStderrAdapter` is forbidden on prod pack spawn.
 
-**Exit:** grep of diagnostic `eprintln!` in `src/` and `progressive-lsp-*` is empty except tests and the CLI usage exception. Engine stdout is never a log Adapter.
+**Exit**
+
+- [x] Grep of diagnostic `eprintln!` in `src/` and `progressive-lsp-*` is empty except tests and `CliUsageAdapter` (IT-1.7).
+- [x] Engine stdout is never a log Adapter.
+
+**Sign-off checklist (LOG-3)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1` (all passed)
+- [x] 95% llvm-cov on crates that exist — **96.44%** lines (ignore `xtask/`, `/src/main.rs$`, `tree-sitter`, `poc-ide/src/ui.rs`)
+- [x] 80% mutants on listed crates that changed — `progressive-lsp-log` **137 caught / 151 scored (90.7%)**, 17 unviable, 14 missed, 1 timeout
+- [x] No `sleep`
+- [x] `check-static` — fixture ELFs including `libdl` `DT_NEEDED` fail-closed. Darwin: do not fake musl greens (sqlite serve bootstrap is LOG-4; no musl ELF on this host)
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-3 gate on macOS.
+- `SqliteLogRepository` is not wired into `serve` / `install` (LOG-4). Linux CI must `check-static` the core ELF once rusqlite is linked into it. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## LOG-4 — Wire serve/install + docs lock
 

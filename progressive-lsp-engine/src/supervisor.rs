@@ -28,6 +28,7 @@ struct SupervisorState {
     capabilities: EngineCapabilities,
     progress_notes: Vec<String>,
     last_error: BTreeMap<String, EngineError>,
+    stderr_attached: BTreeSet<String>,
 }
 
 impl SupervisorState {
@@ -42,6 +43,7 @@ impl SupervisorState {
             capabilities: EngineCapabilities::empty(),
             progress_notes: Vec::new(),
             last_error: BTreeMap::new(),
+            stderr_attached: BTreeSet::new(),
         }
     }
 }
@@ -86,7 +88,10 @@ impl EngineSupervisor {
     }
 
     pub fn adapter_names(&self) -> Vec<String> {
-        self.adapters.iter().map(|a| a.pack_name().to_string()).collect()
+        self.adapters
+            .iter()
+            .map(|a| a.pack_name().to_string())
+            .collect()
     }
 
     pub fn bind_file(&self, file: FileId, package: PackageId) {
@@ -124,7 +129,12 @@ impl EngineSupervisor {
     }
 
     pub fn last_error(&self, pack: &str) -> Option<EngineError> {
-        self.inner.lock().expect("sup").last_error.get(pack).cloned()
+        self.inner
+            .lock()
+            .expect("sup")
+            .last_error
+            .get(pack)
+            .cloned()
     }
 
     pub fn try_spawn(
@@ -228,10 +238,11 @@ impl EngineSupervisor {
             }
         }
         for lang in &langs {
-            st.ready.insert((
-                lang.as_str().to_string(),
-                package.as_str().to_string(),
-            ));
+            st.ready
+                .insert((lang.as_str().to_string(), package.as_str().to_string()));
+        }
+        if handle.io().stdout_is_never_log_adapter() && handle.io().has_stderr_pipe() {
+            st.stderr_attached.insert(adapter.pack_name().to_string());
         }
         st.children.insert(
             adapter.pack_name().to_string(),
@@ -240,6 +251,14 @@ impl EngineSupervisor {
                 language: language.clone(),
             },
         );
+    }
+
+    pub fn stderr_capture_attached(&self, pack: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("sup")
+            .stderr_attached
+            .contains(pack)
     }
 
     pub fn note_crash(&self, pack: &str) {
@@ -256,6 +275,7 @@ impl EngineSupervisor {
             st.ready_languages.remove(&lang);
         }
         st.children.remove(pack);
+        st.stderr_attached.remove(pack);
         let n = st.crash_count.entry(pack.into()).or_insert(0);
         *n = n.saturating_add(1);
         let until = self.policy.next_attempt_ms(now, *n);
@@ -311,11 +331,7 @@ impl EngineSupervisor {
                     } else {
                         return None;
                     }
-                    Some((
-                        pack.to_string(),
-                        a.language_id(),
-                        PackageId::new("pkg"),
-                    ))
+                    Some((pack.to_string(), a.language_id(), PackageId::new("pkg")))
                 })
                 .collect()
         };
@@ -336,7 +352,11 @@ impl EngineSupervisor {
         }
         let st = self.inner.lock().expect("sup");
         for (pack, child) in &st.children {
-            let Some(adapter) = self.adapters.iter().find(|a| a.pack_name() == pack.as_str()) else {
+            let Some(adapter) = self
+                .adapters
+                .iter()
+                .find(|a| a.pack_name() == pack.as_str())
+            else {
                 continue;
             };
             let serves = child.language == *language
@@ -356,7 +376,11 @@ impl EngineSupervisor {
         self.poll_health();
         let st = self.inner.lock().expect("sup");
         for (pack, child) in &st.children {
-            if let Some(adapter) = self.adapters.iter().find(|a| a.pack_name() == pack.as_str()) {
+            if let Some(adapter) = self
+                .adapters
+                .iter()
+                .find(|a| a.pack_name() == pack.as_str())
+            {
                 adapter.forward_did_change(&child.handle, uri, text);
             }
         }
@@ -366,7 +390,11 @@ impl EngineSupervisor {
         self.poll_health();
         let st = self.inner.lock().expect("sup");
         for (pack, child) in &st.children {
-            if let Some(adapter) = self.adapters.iter().find(|a| a.pack_name() == pack.as_str()) {
+            if let Some(adapter) = self
+                .adapters
+                .iter()
+                .find(|a| a.pack_name() == pack.as_str())
+            {
                 adapter.forward_watch(&child.handle, paths);
             }
         }
@@ -389,9 +417,9 @@ mod tests {
     use crate::adapter::{EngineBinary, ReadyKind};
     use crate::fake::{FakeAnswers, FakeEngineAdapter};
     use crate::hooks::AbortSpawnHooks;
+    use progressive_lsp_core::Tier;
     use progressive_lsp_core::{FakeClock, FileId};
     use progressive_lsp_resolve::{LspLocation, Position, QueryKind, Range};
-    use progressive_lsp_core::Tier;
     use std::path::PathBuf;
 
     fn prefix() -> (tempfile::TempDir, PrefixLayout) {
@@ -415,9 +443,27 @@ mod tests {
         sup.register(Box::new(fake));
         let ws = PathBuf::from("/ws");
         assert!(sup
-            .try_spawn("python", &LanguageId::new("python"), &PackageId::new("pkg"), &ws)
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                &ws
+            )
             .unwrap());
+        assert!(
+            sup.stderr_capture_attached("python"),
+            "ChildStderrAdapter attaches when ChildIo has a stderr pipe"
+        );
         (sup, ws)
+    }
+
+    #[test]
+    fn supervisor_attaches_stderr_adapter_when_pipe_exists() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let (sup, _) = ready_ty(clock, prefix);
+        assert!(sup.stderr_capture_attached("python"));
+        assert!(!sup.stderr_capture_attached("missing"));
     }
 
     #[test]
@@ -427,7 +473,11 @@ mod tests {
         let (sup, ws) = ready_ty(clock.clone(), prefix);
         assert!(sup.is_ready(&LanguageId::new("python"), &PackageId::new("pkg")));
         assert!(sup.merged_capabilities().definition);
-        let q = ResolveQuery::new(FileId::new("a.py"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("a.py"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         assert!(sup
             .resolve(&LanguageId::new("python"), &PackageId::new("pkg"), &q)
             .is_ready());
@@ -444,14 +494,24 @@ mod tests {
         assert!(!sup.progress_notes().is_empty());
 
         let err = sup
-            .try_spawn("python", &LanguageId::new("python"), &PackageId::new("pkg"), &ws)
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                &ws,
+            )
             .unwrap_err();
         assert!(matches!(err, EngineError::Backoff { .. }));
         assert!(sup.tick(&ws).is_empty());
 
         clock.advance_ms(50);
         assert!(sup
-            .try_spawn("python", &LanguageId::new("python"), &PackageId::new("pkg"), &ws)
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                &ws
+            )
             .is_err());
 
         clock.advance_ms(100);
@@ -548,13 +608,21 @@ mod tests {
         assert!(sup.merged_capabilities().hover);
         sup.bind_file(FileId::new("a.py"), PackageId::new("pkg"));
         assert_eq!(sup.package_for_file(&FileId::new("a.py")).as_str(), "pkg");
-        assert_eq!(sup.package_for_file(&FileId::new("other.py")).as_str(), "pkg");
+        assert_eq!(
+            sup.package_for_file(&FileId::new("other.py")).as_str(),
+            "pkg"
+        );
         let unknown = EngineSupervisor::new(
             Arc::new(FakeClock::at_unix_ms(1)),
             PrefixLayout::from_path("/p"),
         );
         assert!(unknown
-            .try_spawn("missing", &LanguageId::new("python"), &PackageId::new("p"), Path::new("/w"))
+            .try_spawn(
+                "missing",
+                &LanguageId::new("python"),
+                &PackageId::new("p"),
+                Path::new("/w")
+            )
             .is_err());
     }
 
@@ -564,7 +632,11 @@ mod tests {
         let (_dir, prefix) = prefix();
         let fake = FakeEngineAdapter::ty();
         fake.set_answers(FakeAnswers {
-            definition: vec![LspLocation::new("file:///a.py", Range::default(), Tier::Types)],
+            definition: vec![LspLocation::new(
+                "file:///a.py",
+                Range::default(),
+                Tier::Types,
+            )],
             ..FakeAnswers::default()
         });
         let fake = fake.with_binary(EngineBinary {
@@ -585,7 +657,11 @@ mod tests {
         )
         .unwrap();
         assert!(sup.is_ready(&LanguageId::new("python"), &PackageId::new("other")));
-        let q = ResolveQuery::new(FileId::new("a.py"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("a.py"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         assert!(sup
             .resolve(&LanguageId::new("python"), &PackageId::new("pkg"), &q)
             .is_ready());
@@ -649,7 +725,11 @@ mod tests {
         .unwrap();
         assert!(sup.is_ready(&LanguageId::new("c"), &PackageId::new("pkg")));
         assert!(sup.is_ready(&LanguageId::new("cpp"), &PackageId::new("pkg")));
-        let q = ResolveQuery::new(FileId::new("a.cpp"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("a.cpp"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         assert!(sup
             .resolve(&LanguageId::new("cpp"), &PackageId::new("pkg"), &q)
             .is_ready());

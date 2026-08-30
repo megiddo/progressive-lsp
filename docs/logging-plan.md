@@ -58,6 +58,8 @@ Docs only. Wire [logging.md](logging.md) and this plan into the docs tree. Draft
 
 ### LOG-3 — Facades, bridges, eprintln death
 
+**SIGNED OFF** on `log3`. `MemoryLog` bootstrap only; sqlite serve/install wire is LOG-4.
+
 | File | Change |
 |---|---|
 | `progressive-lsp-log/src/bridges.rs` | `LogCrateBridge`, `TracingBridge` |

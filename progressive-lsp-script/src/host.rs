@@ -125,7 +125,11 @@ impl ScriptHost {
         self.load(&src, name)
     }
 
-    pub fn run(&mut self, hook: HookName, ctx: &ScriptContext) -> Result<ScriptDecision, ScriptSandbox> {
+    pub fn run(
+        &mut self,
+        hook: HookName,
+        ctx: &ScriptContext,
+    ) -> Result<ScriptDecision, ScriptSandbox> {
         let mut denied = Vec::new();
         let mut tweak = SpawnTweak::default();
         for engine in &mut self.engines {
@@ -160,7 +164,10 @@ impl ScriptHost {
         }
     }
 
-    pub fn on_workspace_discover(&mut self, roots: &[PathBuf]) -> Result<Vec<PathBuf>, ScriptAbort> {
+    pub fn on_workspace_discover(
+        &mut self,
+        roots: &[PathBuf],
+    ) -> Result<Vec<PathBuf>, ScriptAbort> {
         let mut keep = Vec::new();
         for root in roots {
             let ctx = ScriptContext {
@@ -172,8 +179,9 @@ impl ScriptHost {
             match self.run(HookName::OnWorkspaceDiscover, &ctx) {
                 Ok(ScriptDecision::Abort(_)) | Ok(ScriptDecision::SkipPackage) => {}
                 Ok(ScriptDecision::DenyPaths(paths)) => {
-                    if paths.iter().any(|p| root.to_string_lossy().contains(p) || p == root.to_string_lossy().as_ref())
-                    {
+                    if paths.iter().any(|p| {
+                        root.to_string_lossy().contains(p) || p == root.to_string_lossy().as_ref()
+                    }) {
                         // skip this root
                     } else {
                         keep.push(root.clone());
@@ -222,9 +230,9 @@ impl ScriptHost {
         match self.run(HookName::OnEngineSpawn, &ctx)? {
             ScriptDecision::Abort(msg) => Ok(SpawnDecision::Skip(msg)),
             ScriptDecision::SkipPackage => Ok(SpawnDecision::Skip("skip_package".into())),
-            ScriptDecision::TweakSpawn(tweak) => {
-                Ok(SpawnDecision::Proceed(filter_spawn_tweaks(&tweak, workspace)))
-            }
+            ScriptDecision::TweakSpawn(tweak) => Ok(SpawnDecision::Proceed(filter_spawn_tweaks(
+                &tweak, workspace,
+            ))),
             _ => Ok(SpawnDecision::Proceed(SpawnTweak::default())),
         }
     }
@@ -284,7 +292,14 @@ impl ScriptHost {
 /// Env keys scripts may set on engine spawn. Others are dropped.
 pub const SPAWN_ENV_ALLOWLIST: &[&str] = &["RUST_LOG", "RA_LOG", "TY_LOG", "TMPDIR"];
 /// Argv tokens scripts may append. Others are dropped.
-pub const SPAWN_ARGV_ALLOWLIST: &[&str] = &["--stdio", "--quiet", "--log-level", "--log-file"];
+pub const SPAWN_ARGV_ALLOWLIST: &[&str] = &[
+    "--stdio",
+    "--quiet",
+    "--log-level",
+    "--log-file",
+    "--log",
+    "-logfile",
+];
 
 pub fn filter_spawn_tweaks(tweak: &SpawnTweak, workspace: &str) -> SpawnTweak {
     let argv = tweak
@@ -310,9 +325,9 @@ pub fn filter_spawn_tweaks(tweak: &SpawnTweak, workspace: &str) -> SpawnTweak {
 }
 
 fn argv_allowed(arg: &str) -> bool {
-    SPAWN_ARGV_ALLOWLIST.iter().any(|k| {
-        *arg == **k || arg.starts_with(&format!("{k}="))
-    })
+    SPAWN_ARGV_ALLOWLIST
+        .iter()
+        .any(|k| *arg == **k || arg.starts_with(&format!("{k}=")))
 }
 
 fn cwd_allowed(cwd: &str, workspace: &str) -> bool {
@@ -345,7 +360,10 @@ mod tests {
     #[test]
     fn hook_names() {
         assert_eq!(HookName::OnBootstrap.as_str(), "on_bootstrap");
-        assert_eq!(HookName::OnWorkspaceDiscover.as_str(), "on_workspace_discover");
+        assert_eq!(
+            HookName::OnWorkspaceDiscover.as_str(),
+            "on_workspace_discover"
+        );
         assert_eq!(HookName::OnPreIndex.as_str(), "on_pre_index");
         assert_eq!(HookName::OnPostIndex.as_str(), "on_post_index");
         assert_eq!(HookName::OnWatch.as_str(), "on_watch");
@@ -409,9 +427,13 @@ mod tests {
         assert!(abort_pre.on_watch(&["keep.rs".into()]).unwrap().is_empty());
 
         let mut cont = host_with(ScriptDecision::Continue);
-        assert_eq!(cont.on_watch(&["a.rs".into(), "b.rs".into()]).unwrap(), vec!["a.rs", "b.rs"]);
         assert_eq!(
-            cont.on_workspace_discover(&[PathBuf::from("/keep")]).unwrap(),
+            cont.on_watch(&["a.rs".into(), "b.rs".into()]).unwrap(),
+            vec!["a.rs", "b.rs"]
+        );
+        assert_eq!(
+            cont.on_workspace_discover(&[PathBuf::from("/keep")])
+                .unwrap(),
             vec![PathBuf::from("/keep")]
         );
         assert!(cont.on_pre_index("pkg").unwrap());
@@ -480,7 +502,11 @@ mod tests {
         )
         .unwrap();
         let err = host.on_watch(&["a".into()]).unwrap_err();
-        assert!(err.to_string().contains("sandbox") || err.0.contains("operation") || err.0.contains("too"));
+        assert!(
+            err.to_string().contains("sandbox")
+                || err.0.contains("operation")
+                || err.0.contains("too")
+        );
 
         let mut s = ScriptHost::new(
             Box::new(RhaiEngineFactory),
@@ -519,7 +545,9 @@ mod tests {
             "f.rhai",
         )
         .unwrap();
-        let kept = host.on_watch(&["keep.rs".into(), "drop.me".into()]).unwrap();
+        let kept = host
+            .on_watch(&["keep.rs".into(), "drop.me".into()])
+            .unwrap();
         assert_eq!(kept, vec!["keep.rs"]);
         assert!(!host.on_pre_index("pkg").unwrap());
 
@@ -543,7 +571,9 @@ mod tests {
         assert!(gated.on_pre_index("pkg").unwrap());
         assert!(!gated.on_pre_index("other").unwrap());
         assert_eq!(
-            gated.on_watch(&["keep.rs".into(), "drop.me".into()]).unwrap(),
+            gated
+                .on_watch(&["keep.rs".into(), "drop.me".into()])
+                .unwrap(),
             vec!["keep.rs"]
         );
         gated.ops_limit = 5;
@@ -580,7 +610,9 @@ mod tests {
         assert!(!host.allow_shell);
         let io = host.load("shell(\"ls\"); fn on_bootstrap() {}", "io.rhai");
         assert!(io.is_err());
-        assert!(host.load_path(PathBuf::from("/no/such/script.rhai").as_path()).is_err());
+        assert!(host
+            .load_path(PathBuf::from("/no/such/script.rhai").as_path())
+            .is_err());
     }
 
     #[test]
@@ -634,6 +666,32 @@ mod tests {
         assert!(cwd_allowed(r"C:\ws\a", r"C:\ws"));
         assert!(argv_allowed("--quiet"));
         assert!(!argv_allowed("--eval"));
+        assert!(argv_allowed("--log=verbose"));
+        assert!(argv_allowed("-logfile=/tmp/gopls.log"));
+        assert!(!argv_allowed("-rpc.trace"));
+        assert!(!argv_allowed("-rpc.trace=true"));
+        assert!(!SPAWN_ENV_ALLOWLIST.contains(&"RA_LOG_FILE"));
+        assert!(!SPAWN_ENV_ALLOWLIST.contains(&"TY_LOG_PROFILE"));
+        let clangd = filter_spawn_tweaks(
+            &SpawnTweak {
+                argv: vec!["--log=verbose".into(), "-rpc.trace".into()],
+                cwd: None,
+                env: vec![("RA_LOG_FILE".into(), "x".into())],
+            },
+            "/ws",
+        );
+        assert_eq!(clangd.argv, vec!["--log=verbose".to_string()]);
+        assert!(clangd.env.is_empty());
+        let gopls = filter_spawn_tweaks(
+            &SpawnTweak {
+                argv: vec!["-logfile=/tmp/gopls.log".into()],
+                cwd: None,
+                env: vec![("TY_LOG_PROFILE".into(), "1".into())],
+            },
+            "/ws",
+        );
+        assert_eq!(gopls.argv, vec!["-logfile=/tmp/gopls.log".to_string()]);
+        assert!(gopls.env.is_empty());
     }
 
     #[test]
@@ -747,7 +805,8 @@ mod tests {
         );
         host.load("fn other() {}", "n.rhai").unwrap();
         assert_eq!(
-            host.run(HookName::OnPostIndex, &ScriptContext::default()).unwrap(),
+            host.run(HookName::OnPostIndex, &ScriptContext::default())
+                .unwrap(),
             ScriptDecision::Continue
         );
     }

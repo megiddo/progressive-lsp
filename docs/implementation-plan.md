@@ -344,12 +344,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-3 (`log3` branch)
 
-Do not open `log3` until LOG-2 stays signed off.
+**Status: SIGNED OFF** on `log3`. LOG-4 may start after this WP; do not open `log4` from this branch. No sqlite serve/install bootstrap. No `LogScope` around didOpen.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-3.1 | `LogCrateBridge` / `TracingBridge` / `ChildStderrAdapter` / `LogFileTailAdapter` / `LspLogMessageAdapter` | LOG-2 | never attach stderr Adapter to engine stdout |
-| LOG-3.2 | Composition-root `LogPort`; emit `ConfigLoad.warnings`; replace product `eprintln!` | LOG-3.1 | CLI usage/help still stderr (IT-1.7); grep gate; allowlist clangd `--log=`; optional gopls `-logfile`; not `-rpc.trace` |
+| LOG-3.1 | `LogCrateBridge` / `TracingBridge` / `ChildStderrAdapter` / `LogFileTailAdapter` / `LspLogMessageAdapter` | LOG-2 | **SIGNED OFF.** never attach stderr Adapter to engine stdout; `ChildIo` is LSP stdout + optional stderr pipe; `NullStderrAdapter` forbidden on prod pack spawn |
+| LOG-3.2 | Composition-root `LogPort`; emit `ConfigLoad.warnings`; replace product `eprintln!` | LOG-3.1 | **SIGNED OFF.** `MemoryLog` bootstrap (sqlite wire is LOG-4); CLI usage/help still stderr (IT-1.7); grep gate; allowlist clangd `--log=`; optional gopls `-logfile`; not `-rpc.trace` |
+
+**Sign-off checklist (LOG-3)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **96.44%** lines
+- [x] 80% mutants on listed crates that exist — log crate **137 caught / 151 scored (90.7%)**, 17 unviable, 14 missed, 1 timeout
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (bin not sqlite-wired; no musl ELF on this host)
+- [x] [design-patterns.md](design-patterns.md) names every new type (`ChildIo` Value; `FakeChildStderr` test double)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-4 (`log4` branch)
 

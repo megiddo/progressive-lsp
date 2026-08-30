@@ -126,7 +126,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 
 ## Global logging (LOG-1+)
 
-Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 lands sqlite Actor types in `progressive-lsp-log`. Capture Adapters stay unimplemented until LOG-3. poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
+Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 landed sqlite Actor types in `progressive-lsp-log`. LOG-3 lands capture Adapters + `ChildIo`. poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
@@ -157,6 +157,8 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | `CliUsageAdapter` | Adapter | `--help` / usage; first-party; **also** writes stderr (IT-1.7); `LogPort::warn` with `operation=cli` |
 | `NullStderrAdapter` | Adapter | `stderr(Stdio::null())`; **Forbidden** on production pack spawn |
 | `InheritStderrAdapter` | Adapter | `stderr(Stdio::inherit())`; operator/CI harness bins only — never `serve` |
+| `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter` |
+| `FakeChildStderr` | Test double | Bounded line source (`STDERR_DRAIN_CAP`) for `ChildStderrAdapter`; overflow drops oldest so stderr cannot stall LSP |
 
 ## Patterns we do not use (v1)
 

@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use progressive_lsp_control::ControlServer;
-use progressive_lsp_core::{apply_worktree_excludes, InstallError, PrefixLayout, SystemClock};
+use progressive_lsp_core::{
+    apply_worktree_excludes, InstallError, LogPort, MemoryLog, PrefixLayout, SystemClock,
+};
 use progressive_lsp_engine::{
     binary_name_for_pack, stub_pack_bytes, EngineSupervisor, PackAdapter,
 };
@@ -14,6 +16,7 @@ use progressive_lsp_install::{
     hex_encode, sha256, sha256_file, ExplicitPacks, Installer, LocalFs, Manifest, ManifestArtifact,
     PackSelector,
 };
+use progressive_lsp_log::{CliUsageAdapter, StderrEmitAdapter};
 use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
 use progressive_lsp_script::ScriptHost;
@@ -73,7 +76,9 @@ where
         "serve" => parse_serve(&args[1..]),
         "install" => parse_install(&args[1..]),
         "-h" | "--help" | "help" => Err(CliError::Usage(USAGE.trim_end().into())),
-        other => Err(CliError::Usage(format!("unknown command: {other}\n{USAGE}"))),
+        other => Err(CliError::Usage(format!(
+            "unknown command: {other}\n{USAGE}"
+        ))),
     }
 }
 
@@ -164,16 +169,38 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    match parse_args(args)? {
-        Command::Serve(opts) => run_serve(opts),
-        Command::Install(opts) => run_install(opts).map_err(|e| e.into()),
+    run_with_log(args, Arc::new(MemoryLog::new()))
+}
+
+pub fn run_with_log<I, S>(args: I, log: Arc<dyn LogPort>) -> Result<(), Box<dyn std::error::Error>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    match parse_args(args) {
+        Err(e) => {
+            CliUsageAdapter::new(Arc::clone(&log)).emit_usage(&e.to_string());
+            Err(e.into())
+        }
+        Ok(Command::Serve(opts)) => run_serve_with_log(opts, log),
+        Ok(Command::Install(opts)) => run_install(opts).map_err(|e| {
+            StderrEmitAdapter::new(Arc::clone(&log)).emit(&e.to_string());
+            e.into()
+        }),
     }
 }
 
 pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
+    run_serve_with_log(opts, Arc::new(MemoryLog::new()))
+}
+
+fn run_serve_with_log(
+    opts: ServeOpts,
+    log: Arc<dyn LogPort>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    serve_with_io(opts, BufReader::new(stdin.lock()), stdout.lock())
+    serve_with_io_and_log(opts, BufReader::new(stdin.lock()), stdout.lock(), log)
 }
 
 /// Same as [`run_serve`] but injectable stdio (IT-1 handshake + unit tests).
@@ -181,6 +208,19 @@ pub fn serve_with_io<R, W>(
     opts: ServeOpts,
     reader: R,
     writer: W,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    R: io::BufRead,
+    W: io::Write,
+{
+    serve_with_io_and_log(opts, reader, writer, Arc::new(MemoryLog::new()))
+}
+
+pub fn serve_with_io_and_log<R, W>(
+    opts: ServeOpts,
+    reader: R,
+    writer: W,
+    log: Arc<dyn LogPort>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     R: io::BufRead,
@@ -200,7 +240,7 @@ where
     supervisor.register(Box::new(PackAdapter::gopls()));
     supervisor.register(Box::new(PackAdapter::zls()));
     let _supervisor = supervisor;
-    let host = Arc::new(ServeHost::new(layout)?);
+    let host = Arc::new(ServeHost::new_with_log(layout, log)?);
     let advertised = opts.control_socket.as_ref().map(|p| {
         control_socket::advertised_socket_path(p)
             .display()
@@ -327,7 +367,10 @@ pub fn install_local_blob(
     installer.apply(&plan)
 }
 
-pub fn verify_existing(path: &Path, expected_hex: &str) -> Result<(), progressive_lsp_core::InstallError> {
+pub fn verify_existing(
+    path: &Path,
+    expected_hex: &str,
+) -> Result<(), progressive_lsp_core::InstallError> {
     let actual = sha256_file(path)?;
     progressive_lsp_install::verify_hash(&actual, expected_hex)
 }
@@ -386,7 +429,15 @@ mod tests {
     fn parse_install_requires_prefix_and_packs() {
         assert!(parse_args(["plsp", "install"]).is_err());
         assert!(parse_args(["plsp", "install", "--prefix", "/p"]).is_err());
-        let cmd = parse_args(["plsp", "install", "--prefix", "/p", "--packs", "python,rust"]).unwrap();
+        let cmd = parse_args([
+            "plsp",
+            "install",
+            "--prefix",
+            "/p",
+            "--packs",
+            "python,rust",
+        ])
+        .unwrap();
         assert_eq!(
             cmd,
             Command::Install(InstallOpts {
@@ -419,8 +470,15 @@ mod tests {
         let b = build_registry();
         #[cfg(feature = "lang-java")]
         {
-            assert!(a.get(&progressive_lsp_core::LanguageId::new("java")).is_ok());
-            assert_eq!(a.get(&progressive_lsp_core::LanguageId::new("java")).unwrap().grammar_id(), "tree-sitter-java");
+            assert!(a
+                .get(&progressive_lsp_core::LanguageId::new("java"))
+                .is_ok());
+            assert_eq!(
+                a.get(&progressive_lsp_core::LanguageId::new("java"))
+                    .unwrap()
+                    .grammar_id(),
+                "tree-sitter-java"
+            );
         }
         #[cfg(feature = "lang-php")]
         {
@@ -429,28 +487,49 @@ mod tests {
         for slot in KNOWN_LANGUAGE_SLOTS {
             if matches!(
                 *slot,
-                "java" | "php" | "html" | "css" | "javascript" | "typescript" | "go" | "zig"
-                    | "python" | "rust" | "c" | "cpp" | "csharp"
+                "java"
+                    | "php"
+                    | "html"
+                    | "css"
+                    | "javascript"
+                    | "typescript"
+                    | "go"
+                    | "zig"
+                    | "python"
+                    | "rust"
+                    | "c"
+                    | "cpp"
+                    | "csharp"
             ) {
                 continue;
             }
             assert!(
-                a.get(&progressive_lsp_core::LanguageId::new(*slot)).is_err(),
+                a.get(&progressive_lsp_core::LanguageId::new(*slot))
+                    .is_err(),
                 "unregistered {slot} must stay UnsupportedLanguage"
             );
         }
-        assert_eq!(a.contains(&progressive_lsp_core::LanguageId::new("java")), cfg!(feature = "lang-java"));
+        assert_eq!(
+            a.contains(&progressive_lsp_core::LanguageId::new("java")),
+            cfg!(feature = "lang-java")
+        );
         #[cfg(feature = "lang-python")]
         {
-            assert!(a.get(&progressive_lsp_core::LanguageId::new("python")).is_ok());
+            assert!(a
+                .get(&progressive_lsp_core::LanguageId::new("python"))
+                .is_ok());
         }
         #[cfg(not(feature = "lang-python"))]
         {
-            assert!(a.get(&progressive_lsp_core::LanguageId::new("python")).is_err());
+            assert!(a
+                .get(&progressive_lsp_core::LanguageId::new("python"))
+                .is_err());
         }
         #[cfg(feature = "lang-rust")]
         {
-            assert!(a.get(&progressive_lsp_core::LanguageId::new("rust")).is_ok());
+            assert!(a
+                .get(&progressive_lsp_core::LanguageId::new("rust"))
+                .is_ok());
         }
         #[cfg(feature = "lang-c")]
         {
@@ -462,7 +541,9 @@ mod tests {
         }
         #[cfg(feature = "lang-csharp")]
         {
-            assert!(a.get(&progressive_lsp_core::LanguageId::new("csharp")).is_ok());
+            assert!(a
+                .get(&progressive_lsp_core::LanguageId::new("csharp"))
+                .is_ok());
         }
         let _ = b.registered_ids();
     }
@@ -483,13 +564,13 @@ mod tests {
         assert!(ty.is_file());
         let man = dir.path().join("engines/python/manifest.json");
         assert!(man.is_file());
-        let found = progressive_lsp_engine::discover_pack(
-            &PrefixLayout::from_path(dir.path()),
-            "python",
-        )
-        .unwrap();
+        let found =
+            progressive_lsp_engine::discover_pack(&PrefixLayout::from_path(dir.path()), "python")
+                .unwrap();
         assert_eq!(found.path, ty);
-        assert!(progressive_lsp_engine::is_pack_stub(&std::fs::read(&ty).unwrap()));
+        assert!(progressive_lsp_engine::is_pack_stub(
+            &std::fs::read(&ty).unwrap()
+        ));
     }
 
     #[test]
@@ -537,7 +618,9 @@ mod tests {
         let path = dir.path().join("bin/progressive-lsp");
         let hex = progressive_lsp_install::hex_encode(&sha256(bytes));
         verify_existing(&path, &hex).unwrap();
-        assert!(verify_existing(&path, &progressive_lsp_install::hex_encode(&sha256(b"no"))).is_err());
+        assert!(
+            verify_existing(&path, &progressive_lsp_install::hex_encode(&sha256(b"no"))).is_err()
+        );
     }
 
     fn handshake_bytes(root: Option<&Path>) -> Vec<u8> {
@@ -558,12 +641,16 @@ mod tests {
             .unwrap(),
         );
         stdin.extend_from_slice(&framing::encode_message(
-            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}))
-                .unwrap(),
+            serde_json::to_vec(
+                &serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+            )
+            .unwrap(),
         ));
         stdin.extend_from_slice(&framing::encode_message(
-            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}))
-                .unwrap(),
+            serde_json::to_vec(
+                &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}),
+            )
+            .unwrap(),
         ));
         stdin.extend_from_slice(&framing::encode_message(
             serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","method":"exit"})).unwrap(),
@@ -634,7 +721,10 @@ mod tests {
         assert!(prefix.path().join("config.toml").is_file());
         assert!(prefix.path().join("cache").is_dir());
         assert!(!workspace.path().join(".progressivelsp/cache").exists());
-        assert!(workspace.path().join(".progressivelsp/.gitignore").is_file());
+        assert!(workspace
+            .path()
+            .join(".progressivelsp/.gitignore")
+            .is_file());
     }
 
     #[test]
@@ -694,5 +784,82 @@ mod tests {
     #[test]
     fn run_rejects_bad_cli() {
         assert!(run(["plsp", "nope"]).is_err());
+    }
+
+    #[test]
+    fn run_with_log_emits_cli_usage_on_bad_args() {
+        let log = progressive_lsp_core::FakeLog::new();
+        assert!(run_with_log(["plsp", "nope"], Arc::new(log.clone())).is_err());
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.operation.as_deref() == Some("cli")),
+            "{:?}",
+            log.records()
+        );
+    }
+
+    #[test]
+    fn product_crates_have_no_diagnostic_eprintln() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut hits = Vec::new();
+        walk_product_rs(&root.join("src"), &mut hits);
+        if let Ok(rd) = std::fs::read_dir(&root) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("progressive-lsp-") && p.is_dir() {
+                    walk_product_rs(&p, &mut hits);
+                }
+            }
+        }
+        assert!(
+            hits.is_empty(),
+            "diagnostic eprintln leftover (CLI usage is cli_usage.rs only): {hits:?}"
+        );
+    }
+
+    fn walk_product_rs(dir: &Path, hits: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().and_then(|n| n.to_str()) == Some("target") {
+                    continue;
+                }
+                walk_product_rs(&path, hits);
+                continue;
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+                continue;
+            }
+            if path.file_name().and_then(|n| n.to_str()) == Some("bakeoff.rs") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut in_tests = false;
+            for (i, line) in src.lines().enumerate() {
+                if line.trim_start().starts_with("#[cfg(test)]") {
+                    in_tests = true;
+                }
+                if in_tests {
+                    continue;
+                }
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+                if trimmed.contains("eprintln!") {
+                    if path.file_name().and_then(|n| n.to_str()) == Some("cli_usage.rs") {
+                        continue;
+                    }
+                    hits.push(format!("{}:{}:{line}", path.display(), i + 1));
+                }
+            }
+        }
     }
 }

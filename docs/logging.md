@@ -217,7 +217,7 @@ Pipe stderr; do **not** inherit it. Do **not** set `--log-file` into `$PREFIX/lo
 
 **Line parse (best-effort, never fail):** if a stderr line looks like `LEVEL module: message`, fill `level` / `source_crate`. Otherwise `level=info`, `message=line`. Invalid UTF-8 → lossy. No regex panic.
 
-**poc-ide `StdioLsp`:** today `stderr(Stdio::null())`. LOG-4 may pipe into `RunLog`; server-side capture is the product gate.
+**poc-ide `StdioLsp`:** LOG-3 left `stderr(Stdio::null())`. Do not inherit engine stderr into the IDE process. LOG-4 may pipe into `RunLog`; server-side capture is the product gate.
 
 ### Config
 
