@@ -151,6 +151,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `MemFs` | Test double | Same `FsPort`; no host disk |
 | `CountingFs` | Decorator / test double | Wraps `MemFs`; records `read_dir` paths; inner Port is unchanged; used to prove shallow load / idempotent expand |
 | `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder) |
+| `TreeExpansion` | Value object / collection | A path is expanded iff explicitly expanded; default is collapsed at every level. `for_root` / a new `FileTree` starts empty. `expand` / `collapse` are Commands. Collapse of a missing path is a no-op. Expanding a file is a no-op. Expanding a parent does not expand children. |
 | `LayoutState` | Value object | `left_width` > 0; clamp on set; no window handle in the lib |
 | `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
 | `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |

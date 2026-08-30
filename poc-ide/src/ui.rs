@@ -10,7 +10,8 @@ use poc_ide::{
     ControlClient, DialogPort, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
     Highlighter, IdeError, LayoutState, LspClient, NotifyWatch, OpenBuffer, ProtocolConsole,
     RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TranscriptKind,
-    TreeNode, UnixControl, WatchPort, WorkspaceRoot, CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
+    TreeExpansion, TreeNode, UnixControl, WatchPort, WorkspaceRoot, CONTROL_UNARY_METHODS,
+    STOCK_LSP_METHODS,
 };
 use serde_json::json;
 use std::sync::mpsc;
@@ -105,6 +106,7 @@ pub struct PocIdeApp {
     clipboard: ArboardClipboard,
     root: Option<WorkspaceRoot>,
     tree: Option<FileTree>,
+    expansion: TreeExpansion,
     tabs: TabStrip,
     buffers: BufferMap,
     highlighter: Highlighter,
@@ -149,6 +151,7 @@ impl PocIdeApp {
             clipboard: ArboardClipboard,
             root: None,
             tree: None,
+            expansion: TreeExpansion::new(),
             tabs: TabStrip::new(),
             buffers: BufferMap::new(),
             highlighter: Highlighter::new(),
@@ -211,6 +214,7 @@ impl PocIdeApp {
                 }
                 let watch_err = self.watch.watch_root(root.as_path()).err();
                 self.connect_lsp(&root);
+                self.expansion = TreeExpansion::for_root(&root);
                 self.root = Some(root);
                 self.tree = Some(tree);
                 self.status = watch_err
@@ -696,17 +700,26 @@ impl eframe::App for PocIdeApp {
                         ui.label(label);
                         ui.separator();
                         let mut clicked = None;
-                        let mut expand = Vec::new();
+                        let mut became_expanded = Vec::new();
+                        let mut became_collapsed = Vec::new();
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            let shown = show_nodes(ui, &nodes);
+                            let shown = show_nodes(ui, &nodes, &self.expansion);
                             clicked = shown.clicked;
-                            expand = shown.expand;
+                            became_expanded = shown.became_expanded;
+                            became_collapsed = shown.became_collapsed;
                         });
-                        if !expand.is_empty() {
+                        if !became_expanded.is_empty() || !became_collapsed.is_empty() {
                             ui.ctx().request_repaint();
                         }
+                        for path in became_collapsed {
+                            self.expansion.collapse(&path);
+                        }
                         if let Some(tree) = &mut self.tree {
-                            for path in expand {
+                            for path in became_expanded {
+                                if let Err(e) = self.expansion.expand(&path, tree) {
+                                    self.status = e.to_string();
+                                    continue;
+                                }
                                 match tree.expand(&path, &self.fs) {
                                     Ok(()) => {
                                         let n = tree
@@ -800,31 +813,46 @@ impl eframe::App for PocIdeApp {
 
 struct ShowTree {
     clicked: Option<PathBuf>,
-    expand: Vec<PathBuf>,
+    became_expanded: Vec<PathBuf>,
+    became_collapsed: Vec<PathBuf>,
 }
 
-fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode]) -> ShowTree {
+fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) -> ShowTree {
     let mut clicked = None;
-    let mut expand = Vec::new();
+    let mut became_expanded = Vec::new();
+    let mut became_collapsed = Vec::new();
     for node in nodes {
         if node.is_dir() {
-            egui::CollapsingHeader::new(node.name())
-                .default_open(true)
-                .show(ui, |ui| {
-                    if !node.is_loaded() {
-                        expand.push(node.path().to_path_buf());
-                    }
-                    let inner = show_nodes(ui, node.children());
-                    if clicked.is_none() {
-                        clicked = inner.clicked;
-                    }
-                    expand.extend(inner.expand);
-                });
+            let path = node.path();
+            let open = expansion.is_expanded(path);
+            let response = egui::CollapsingHeader::new(node.name())
+                .id_salt(path)
+                .default_open(false)
+                .open(Some(open))
+                .show(ui, |ui| show_nodes(ui, node.children(), expansion));
+            if let Some(inner) = response.body_returned {
+                if clicked.is_none() {
+                    clicked = inner.clicked;
+                }
+                became_expanded.extend(inner.became_expanded);
+                became_collapsed.extend(inner.became_collapsed);
+            }
+            if response.header_response.clicked() {
+                if open {
+                    became_collapsed.push(path.to_path_buf());
+                } else {
+                    became_expanded.push(path.to_path_buf());
+                }
+            }
         } else if ui.selectable_label(false, node.name()).clicked() {
             clicked = Some(node.path().to_path_buf());
         }
     }
-    ShowTree { clicked, expand }
+    ShowTree {
+        clicked,
+        became_expanded,
+        became_collapsed,
+    }
 }
 
 enum DiscoverKind {

@@ -21,7 +21,7 @@ poc-ide/                     workspace member; not a musl artifact
   src/main.rs               composition root: eframe, rfd (`RfdDialog`), wire ports
   src/ports.rs              DialogPort, ClipboardPort, FsPort, StdFs, WatchPort, ClockPort, LspTransport, ControlTransport
   src/layout.rs             LayoutState (left panel width)
-  src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite
+  src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite, TreeExpansion
   src/tabs.rs               TabStrip, TabId
   src/buffer.rs             OpenBuffer, BufferMap, Selection, DirtyFlag
   src/edit.rs               EditCommand
@@ -42,7 +42,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 ## Data flow
 
 1. `DialogPort.open_folder` / `open_file` → `WorkspaceRoot` (canonical absolute path). File → parent directory is the root; that file is also opened as a tab.
-2. `FsPort.read_tree` → `FileTree` shallow load of the workspace root's immediate children (skip `.git/`, `target/`, `node_modules/` — display filter, not server ignore). Child directories start unloaded. `FileTree::expand` lists one more directory via `FsPort.read_dir`.
+2. `FsPort.read_tree` → `FileTree` shallow load of the workspace root's immediate children (skip `.git/`, `target/`, `node_modules/` — display filter, not server ignore). Child directories start unloaded. `TreeExpansion` starts empty (collapsed at every level). `FileTree::expand` lists one more directory via `FsPort.read_dir` when the user expands a path.
 3. Click a file → `BufferMap.open` (read bytes, `LanguageCatalog.for_path`, `didOpen` if LSP is up).
 4. Keystrokes → `EditCommand` on `OpenBuffer` → dirty → `didChange` incremental.
 5. Save → `FsPort.write` → clear dirty → `didSave`.

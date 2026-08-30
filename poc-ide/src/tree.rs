@@ -1,5 +1,7 @@
-//! `WorkspaceRoot` value object and `FileTree` / `TreeNode` Composite.
+//! `WorkspaceRoot` value object, `FileTree` / `TreeNode` Composite, and
+//! [`TreeExpansion`] (collapsed by default).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::error::IdeError;
@@ -212,6 +214,73 @@ impl FileTree {
 
     pub fn find_mut(&mut self, path: &Path) -> Option<&mut TreeNode> {
         find_node_mut(&mut self.children, path)
+    }
+}
+
+/// Paths the user has explicitly expanded. A path is expanded iff it is in this
+/// collection; **default is collapsed at every level**. Opening a new
+/// [`FileTree`] / [`TreeExpansion::for_root`] starts empty.
+///
+/// [`TreeExpansion::expand`] / [`TreeExpansion::collapse`] are Commands.
+/// Expanding a parent does not expand children. Collapse of a missing path is a
+/// no-op. Expanding a file is a no-op.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TreeExpansion {
+    expanded: BTreeSet<PathBuf>,
+}
+
+impl TreeExpansion {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Empty expansion for a newly opened workspace root.
+    pub fn for_root(_root: &WorkspaceRoot) -> Self {
+        Self::new()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.expanded.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.expanded.len()
+    }
+
+    pub fn is_expanded(&self, path: &Path) -> bool {
+        self.expanded.contains(path)
+    }
+
+    pub fn expanded_paths(&self) -> impl Iterator<Item = &Path> {
+        self.expanded.iter().map(PathBuf::as_path)
+    }
+
+    /// Command: mark `path` expanded when it is a directory in `tree`.
+    /// The workspace root is always a directory. Expanding a file is a no-op.
+    /// A path not in the tree is [`IdeError::NotFound`]. Idempotent.
+    pub fn expand(&mut self, path: &Path, tree: &FileTree) -> Result<(), IdeError> {
+        if path == tree.root().as_path() {
+            self.expanded.insert(path.to_path_buf());
+            return Ok(());
+        }
+        match tree.find(path) {
+            None => Err(IdeError::NotFound(path.to_path_buf())),
+            Some(node) if node.is_file() => Ok(()),
+            Some(_) => {
+                self.expanded.insert(path.to_path_buf());
+                Ok(())
+            }
+        }
+    }
+
+    /// Command: collapse `path`. A path that is not expanded is a no-op.
+    pub fn collapse(&mut self, path: &Path) {
+        self.expanded.remove(path);
+    }
+
+    /// Drop every expanded path (new workspace root).
+    pub fn clear(&mut self) {
+        self.expanded.clear();
     }
 }
 
@@ -632,5 +701,134 @@ mod tests {
         assert!(!tree.find(Path::new("/ws/src")).unwrap().is_loaded());
         tree.expand(Path::new("/ws/src"), &spy).unwrap();
         assert!(tree.find(Path::new("/ws/src")).unwrap().is_loaded());
+    }
+
+    #[test]
+    fn tree_expansion_value_object_new_tree_has_no_expanded_paths() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &fs).unwrap();
+        let expansion = TreeExpansion::new();
+        assert!(expansion.is_empty());
+        assert_eq!(expansion.len(), 0);
+        assert!(!expansion.is_expanded(root.as_path()));
+        for node in tree.children() {
+            assert!(
+                !expansion.is_expanded(node.path()),
+                "{}",
+                node.path().display()
+            );
+        }
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
+        assert!(!expansion.is_expanded(Path::new("/ws/.github")));
+        assert!(!expansion.is_expanded(Path::new("/ws/README.md")));
+        assert!(!expansion.is_expanded(Path::new("/ws/nope")));
+        assert_eq!(expansion, TreeExpansion::for_root(&root));
+        assert_eq!(expansion.expanded_paths().count(), 0);
+    }
+
+    #[test]
+    fn tree_expansion_expand_collapse_cycle_ends_collapsed() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &fs).unwrap();
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(Path::new("/ws/src"), &tree).unwrap();
+        assert!(expansion.is_expanded(Path::new("/ws/src")));
+        assert_eq!(expansion.len(), 1);
+        let paths: Vec<_> = expansion.expanded_paths().collect();
+        assert_eq!(paths, vec![Path::new("/ws/src")]);
+        expansion.expand(Path::new("/ws/src"), &tree).unwrap();
+        assert_eq!(expansion.len(), 1);
+        expansion.collapse(Path::new("/ws/src"));
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
+        assert!(expansion.is_empty());
+        expansion.expand(Path::new("/ws/src"), &tree).unwrap();
+        expansion.collapse(Path::new("/ws/src"));
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
+    }
+
+    #[test]
+    fn tree_expansion_expanding_parent_does_not_auto_expand_children() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(Path::new("/ws/.github"), &tree).unwrap();
+        tree.expand(Path::new("/ws/.github"), &fs).unwrap();
+        assert!(expansion.is_expanded(Path::new("/ws/.github")));
+        assert!(!expansion.is_expanded(Path::new("/ws/.github/workflows")));
+        tree.expand(Path::new("/ws/.github/workflows"), &fs)
+            .unwrap();
+        assert!(!expansion.is_expanded(Path::new("/ws/.github/workflows")));
+        assert!(!expansion.is_expanded(Path::new("/ws/.github/workflows/ci.yml")));
+        expansion
+            .expand(Path::new("/ws/.github/workflows"), &tree)
+            .unwrap();
+        assert!(expansion.is_expanded(Path::new("/ws/.github")));
+        assert!(expansion.is_expanded(Path::new("/ws/.github/workflows")));
+        assert!(!expansion.is_expanded(Path::new("/ws/.github/workflows/ci.yml")));
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
+    }
+
+    #[test]
+    fn tree_expansion_setting_workspace_root_clears() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &fs).unwrap();
+        let mut expansion = TreeExpansion::for_root(&root);
+        expansion.expand(Path::new("/ws/src"), &tree).unwrap();
+        expansion.expand(Path::new("/ws/empty"), &tree).unwrap();
+        assert_eq!(expansion.len(), 2);
+        let other = WorkspaceRoot::from_canonical("/other").unwrap();
+        expansion = TreeExpansion::for_root(&other);
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
+        assert!(!expansion.is_expanded(Path::new("/ws/empty")));
+        assert!(expansion.is_empty());
+
+        let mut expansion = TreeExpansion::for_root(&root);
+        expansion.expand(Path::new("/ws/src"), &tree).unwrap();
+        expansion.clear();
+        assert!(expansion.is_empty());
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
+    }
+
+    #[test]
+    fn tree_expansion_collapse_missing_is_noop() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &fs).unwrap();
+        let mut expansion = TreeExpansion::new();
+        expansion.collapse(Path::new("/missing"));
+        expansion.collapse(Path::new("/ws/src"));
+        assert!(expansion.is_empty());
+        expansion.expand(Path::new("/ws/src"), &tree).unwrap();
+        expansion.collapse(Path::new("/missing"));
+        expansion.collapse(Path::new("/ws/nope"));
+        assert!(expansion.is_expanded(Path::new("/ws/src")));
+        assert_eq!(expansion.len(), 1);
+    }
+
+    #[test]
+    fn tree_expansion_expand_file_is_noop() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(Path::new("/ws/README.md"), &tree).unwrap();
+        assert!(!expansion.is_expanded(Path::new("/ws/README.md")));
+        assert!(expansion.is_empty());
+        assert!(expansion
+            .expand(Path::new("/ws/nope"), &tree)
+            .unwrap_err()
+            .is_not_found());
+        expansion.expand(root.as_path(), &tree).unwrap();
+        assert!(expansion.is_expanded(root.as_path()));
+        tree.expand(Path::new("/ws/src"), &fs).unwrap();
+        expansion
+            .expand(Path::new("/ws/src/lib.rs"), &tree)
+            .unwrap();
+        assert!(!expansion.is_expanded(Path::new("/ws/src/lib.rs")));
+        assert!(!expansion.is_expanded(Path::new("/ws/src")));
     }
 }

@@ -47,7 +47,7 @@ pub use ports::{
     LspTransport, MemFs, StdFs, SystemClock, WatchPort,
 };
 pub use tabs::{TabId, TabStrip};
-pub use tree::{FileTree, TreeNode, WorkspaceRoot};
+pub use tree::{FileTree, TreeExpansion, TreeNode, WorkspaceRoot};
 pub use watch::{DiskWatch, NotifyWatch};
 
 #[cfg(test)]
@@ -95,6 +95,7 @@ mod tests {
         let _ = STOCK_LSP_METHODS;
         let _ = CONTROL_UNARY_METHODS;
         assert!(FileTree::skips_display_name(".git"));
+        assert!(TreeExpansion::new().is_empty());
         assert!(IdeError::NotAbsolute(std::path::PathBuf::from("rel"))
             .to_string()
             .contains("absolute"));
