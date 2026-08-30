@@ -47,7 +47,7 @@ pub use ports::{
     LspTransport, MemFs, StdFs, SystemClock, WatchPort,
 };
 pub use tabs::{TabId, TabStrip};
-pub use tree::{FileTree, TreeExpansion, TreeNode, WorkspaceRoot};
+pub use tree::{CompactChain, FileTree, TreeExpansion, TreeNode, WorkspaceRoot};
 pub use watch::{DiskWatch, NotifyWatch};
 
 #[cfg(test)]
@@ -96,6 +96,12 @@ mod tests {
         let _ = CONTROL_UNARY_METHODS;
         assert!(FileTree::skips_display_name(".git"));
         assert!(TreeExpansion::new().is_empty());
+        let leaf = TreeNode::File {
+            name: "x.rs".into(),
+            path: "/ws/x.rs".into(),
+        };
+        assert!(CompactChain::from_node(&leaf).is_none());
+        assert_eq!(leaf.compact_tail().name(), "x.rs");
         assert!(IdeError::NotAbsolute(std::path::PathBuf::from("rel"))
             .to_string()
             .contains("absolute"));

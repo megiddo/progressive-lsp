@@ -1,4 +1,5 @@
-//! `WorkspaceRoot` value object, `FileTree` / `TreeNode` Composite, and
+//! `WorkspaceRoot` value object, `FileTree` / `TreeNode` Composite,
+//! [`CompactChain`] (compact single-child directory view), and
 //! [`TreeExpansion`] (collapsed by default).
 
 use std::collections::BTreeSet;
@@ -123,6 +124,20 @@ impl TreeNode {
         }
     }
 
+    /// Innermost directory of this node's [`CompactChain`] (self when the
+    /// node is a file or a non-compact directory).
+    pub fn compact_tail(&self) -> &TreeNode {
+        let mut current = self;
+        while current.is_dir() && current.is_loaded() {
+            let kids = current.children();
+            if kids.len() != 1 || !kids[0].is_dir() {
+                break;
+            }
+            current = &kids[0];
+        }
+        current
+    }
+
     /// Files are leaves (always loaded). Directories are loaded after
     /// [`TreeNode::load_children`] / [`FileTree::expand`].
     pub fn is_loaded(&self) -> bool {
@@ -214,6 +229,104 @@ impl FileTree {
 
     pub fn find_mut(&mut self, path: &Path) -> Option<&mut TreeNode> {
         find_node_mut(&mut self.children, path)
+    }
+
+    /// Compact view of `path` from **already-loaded** children. `None` if the
+    /// path is missing or a file. An unloaded directory is a chain of length 1
+    /// (not compact) — it cannot claim "exactly one child."
+    pub fn compact_chain(&self, path: &Path) -> Option<CompactChain> {
+        self.find(path).and_then(CompactChain::from_node)
+    }
+
+    /// Command: load `path` (one level) then, while that directory has exactly
+    /// one child directory, load that child. Used so a compact row can show
+    /// `a/b/c` after the user expands `a` without walking the workspace at
+    /// [`FileTree::load`]. Does not change [`TreeExpansion`]. The workspace
+    /// root is not a compact folder (no-op).
+    pub fn load_compact_chain(
+        &mut self,
+        path: &Path,
+        fs: &(impl FsPort + ?Sized),
+    ) -> Result<(), IdeError> {
+        if path == self.root.as_path() {
+            return Ok(());
+        }
+        let mut current = path.to_path_buf();
+        loop {
+            self.expand(&current, fs)?;
+            let Some(node) = self.find(&current) else {
+                return Err(IdeError::NotFound(current));
+            };
+            let kids = node.children();
+            if kids.len() != 1 || !kids[0].is_dir() {
+                break;
+            }
+            current = kids[0].path().to_path_buf();
+        }
+        Ok(())
+    }
+}
+
+/// View of a Composite directory chain that can be shown as `a/b/c`.
+///
+/// A chain walks **already-loaded** children only. It continues while the
+/// current directory is loaded and has exactly one child, and that child is a
+/// directory. It stops at a file child, an empty directory, an unloaded
+/// directory (`children: None` — cannot claim "exactly one child"), or a
+/// directory with two or more children. Skip-filtered names (`.git` / `target`
+/// / `node_modules`) are already absent from the Composite, so they cannot be
+/// the "one child."
+///
+/// [`CompactChain::path`] is the **innermost** directory (expand / open uses
+/// that real path). [`CompactChain::display_name`] is the `/`-joined names.
+/// A single directory (no compact) is a chain of length 1.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactChain {
+    names: Vec<String>,
+    path: PathBuf,
+}
+
+impl CompactChain {
+    /// `None` when `node` is a file. Directories always yield at least a
+    /// length-1 chain (the node itself).
+    pub fn from_node(node: &TreeNode) -> Option<Self> {
+        if node.is_file() {
+            return None;
+        }
+        let mut names = vec![node.name().to_string()];
+        let mut path = node.path().to_path_buf();
+        let mut current = node;
+        while current.is_loaded() {
+            let kids = current.children();
+            if kids.len() != 1 || !kids[0].is_dir() {
+                break;
+            }
+            current = &kids[0];
+            names.push(current.name().to_string());
+            path = current.path().to_path_buf();
+        }
+        Some(Self { names, path })
+    }
+
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    pub fn display_name(&self) -> String {
+        self.names.join("/")
+    }
+
+    /// Innermost directory of the chain. Expand / open this path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn is_compact(&self) -> bool {
+        self.names.len() >= 2
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
     }
 }
 
@@ -830,5 +943,280 @@ mod tests {
             .unwrap();
         assert!(!expansion.is_expanded(Path::new("/ws/src/lib.rs")));
         assert!(!expansion.is_expanded(Path::new("/ws/src")));
+    }
+
+    fn chain_fs() -> MemFs {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/a/b/c/file.rs", b"fn x() {}").unwrap();
+        fs
+    }
+
+    #[test]
+    fn compact_chain_value_object_is_view_of_composite() {
+        let fs = chain_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        tree.expand(Path::new("/ws/a"), &fs).unwrap();
+        tree.expand(Path::new("/ws/a/b"), &fs).unwrap();
+        tree.expand(Path::new("/ws/a/b/c"), &fs).unwrap();
+
+        let a = tree.find(Path::new("/ws/a")).unwrap();
+        let chain = CompactChain::from_node(a).unwrap();
+        assert_eq!(chain.display_name(), "a/b/c");
+        assert_eq!(chain.path(), Path::new("/ws/a/b/c"));
+        assert_eq!(
+            chain.names(),
+            &["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert!(chain.is_compact());
+        assert_eq!(chain.len(), 3);
+        assert_eq!(a.compact_tail().path(), Path::new("/ws/a/b/c"));
+        assert_eq!(a.compact_tail().name(), "c");
+        assert_eq!(a.compact_tail().children().len(), 1);
+        assert_eq!(a.compact_tail().children()[0].name(), "file.rs");
+        assert_eq!(tree.compact_chain(Path::new("/ws/a")).unwrap(), chain);
+        assert_eq!(
+            tree.compact_chain(Path::new("/ws/a/b/c"))
+                .unwrap()
+                .display_name(),
+            "c"
+        );
+        assert!(!tree
+            .compact_chain(Path::new("/ws/a/b/c"))
+            .unwrap()
+            .is_compact());
+        assert!(
+            CompactChain::from_node(tree.find(Path::new("/ws/a/b/c/file.rs")).unwrap()).is_none()
+        );
+        assert!(tree.compact_chain(Path::new("/ws/a/b/c/file.rs")).is_none());
+        assert!(tree.compact_chain(Path::new("/ws/nope")).is_none());
+        let file = tree.find(Path::new("/ws/a/b/c/file.rs")).unwrap();
+        assert_eq!(file.compact_tail().path(), file.path());
+        assert_eq!(chain, chain.clone());
+        assert_eq!(format!("{chain:?}"), format!("{:?}", chain.clone()));
+    }
+
+    #[test]
+    fn compact_chain_after_shallow_load_is_not_chained() {
+        let spy = CountingFs::wrap(chain_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &spy).unwrap();
+        assert_eq!(spy.read_dir_paths(), vec![PathBuf::from("/ws")]);
+        assert!(!spy.read_dir_called(Path::new("/ws/a")));
+        let a = tree.find(Path::new("/ws/a")).unwrap();
+        assert!(!a.is_loaded());
+        let chain = CompactChain::from_node(a).unwrap();
+        assert_eq!(chain.display_name(), "a");
+        assert_eq!(chain.path(), Path::new("/ws/a"));
+        assert!(!chain.is_compact());
+        assert_eq!(chain.len(), 1);
+        assert_eq!(a.compact_tail().path(), Path::new("/ws/a"));
+    }
+
+    #[test]
+    fn compact_chain_unloaded_dir_is_not_treated_as_single_child() {
+        let fs = chain_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        tree.expand(Path::new("/ws/a"), &fs).unwrap();
+        let a = tree.find(Path::new("/ws/a")).unwrap();
+        assert!(a.is_loaded());
+        assert_eq!(a.children().len(), 1);
+        assert!(!a.children()[0].is_loaded());
+        let chain = CompactChain::from_node(a).unwrap();
+        assert_eq!(chain.display_name(), "a/b");
+        assert_eq!(chain.path(), Path::new("/ws/a/b"));
+        assert!(chain.is_compact());
+        let b = tree.find(Path::new("/ws/a/b")).unwrap();
+        assert!(!b.is_loaded());
+        let from_b = CompactChain::from_node(b).unwrap();
+        assert_eq!(from_b.display_name(), "b");
+        assert!(!from_b.is_compact());
+        assert_eq!(from_b.path(), Path::new("/ws/a/b"));
+    }
+
+    #[test]
+    fn compact_chain_two_children_breaks_at_that_level() {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/a/b/c/file.rs", b"").unwrap();
+        fs.add_file("/ws/a/b/d/other.rs", b"").unwrap();
+        fs.add_file("/ws/two/x/only.rs", b"").unwrap();
+        fs.add_file("/ws/two/y/only.rs", b"").unwrap();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        tree.load_compact_chain(Path::new("/ws/a"), &fs).unwrap();
+        let chain = tree.compact_chain(Path::new("/ws/a")).unwrap();
+        assert_eq!(chain.display_name(), "a/b");
+        assert_eq!(chain.path(), Path::new("/ws/a/b"));
+        assert!(tree.find(Path::new("/ws/a/b")).unwrap().is_loaded());
+        assert_eq!(tree.find(Path::new("/ws/a/b")).unwrap().children().len(), 2);
+        assert!(!tree.find(Path::new("/ws/a/b/c")).unwrap().is_loaded());
+
+        tree.load_compact_chain(Path::new("/ws/two"), &fs).unwrap();
+        let two = tree.compact_chain(Path::new("/ws/two")).unwrap();
+        assert_eq!(two.display_name(), "two");
+        assert!(!two.is_compact());
+        assert_eq!(two.path(), Path::new("/ws/two"));
+        assert_eq!(tree.find(Path::new("/ws/two")).unwrap().children().len(), 2);
+    }
+
+    #[test]
+    fn compact_chain_single_file_child_does_not_compact() {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/a/file.rs", b"").unwrap();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        tree.load_compact_chain(Path::new("/ws/a"), &fs).unwrap();
+        let chain = tree.compact_chain(Path::new("/ws/a")).unwrap();
+        assert_eq!(chain.display_name(), "a");
+        assert_eq!(chain.path(), Path::new("/ws/a"));
+        assert!(!chain.is_compact());
+        let a = tree.find(Path::new("/ws/a")).unwrap();
+        assert_eq!(a.compact_tail().path(), Path::new("/ws/a"));
+        assert_eq!(a.children().len(), 1);
+        assert!(a.children()[0].is_file());
+    }
+
+    #[test]
+    fn compact_chain_empty_dir_does_not_compact() {
+        let mut fs = MemFs::new();
+        fs.add_dir("/ws/empty").unwrap();
+        fs.add_file("/ws/a/b/keep.rs", b"").unwrap();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        tree.load_compact_chain(Path::new("/ws/empty"), &fs)
+            .unwrap();
+        let empty = tree.compact_chain(Path::new("/ws/empty")).unwrap();
+        assert_eq!(empty.display_name(), "empty");
+        assert!(!empty.is_compact());
+        tree.load_compact_chain(Path::new("/ws/a"), &fs).unwrap();
+        assert_eq!(
+            tree.compact_chain(Path::new("/ws/a"))
+                .unwrap()
+                .display_name(),
+            "a/b"
+        );
+    }
+
+    #[test]
+    fn compact_chain_skip_names_cannot_be_the_one_child() {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/a/target/debug/x", b"").unwrap();
+        fs.add_file("/ws/a/.git/HEAD", b"").unwrap();
+        fs.add_file("/ws/a/node_modules/pkg/index.js", b"").unwrap();
+        fs.add_file("/ws/a/b/c/file.rs", b"").unwrap();
+        let spy = CountingFs::wrap(fs);
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        tree.load_compact_chain(Path::new("/ws/a"), &spy).unwrap();
+        let chain = tree.compact_chain(Path::new("/ws/a")).unwrap();
+        assert_eq!(chain.display_name(), "a/b/c");
+        assert_eq!(chain.path(), Path::new("/ws/a/b/c"));
+        assert!(tree.find(Path::new("/ws/a/target")).is_none());
+        assert!(tree.find(Path::new("/ws/a/.git")).is_none());
+        assert!(tree.find(Path::new("/ws/a/node_modules")).is_none());
+        assert!(tree.find(Path::new("/ws/a/b/c/file.rs")).unwrap().is_file());
+    }
+
+    #[test]
+    fn compact_chain_load_follows_single_child_dirs_without_expansion() {
+        let spy = CountingFs::wrap(chain_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        let expansion = TreeExpansion::new();
+        tree.load_compact_chain(Path::new("/ws/a"), &spy).unwrap();
+        assert!(spy.read_dir_called(Path::new("/ws/a")));
+        assert!(spy.read_dir_called(Path::new("/ws/a/b")));
+        assert!(spy.read_dir_called(Path::new("/ws/a/b/c")));
+        assert!(!spy.read_dir_called(Path::new("/ws/a/b/c/file.rs")));
+        let chain = tree.compact_chain(Path::new("/ws/a")).unwrap();
+        assert_eq!(chain.display_name(), "a/b/c");
+        assert_eq!(chain.path(), Path::new("/ws/a/b/c"));
+        assert!(tree.find(Path::new("/ws/a/b/c")).unwrap().is_loaded());
+        assert_eq!(
+            tree.find(Path::new("/ws/a/b/c")).unwrap().children()[0].name(),
+            "file.rs"
+        );
+        assert!(expansion.is_empty());
+        assert!(!expansion.is_expanded(Path::new("/ws/a")));
+        assert!(!expansion.is_expanded(Path::new("/ws/a/b")));
+        assert!(!expansion.is_expanded(Path::new("/ws/a/b/c")));
+        tree.load_compact_chain(Path::new("/ws/a"), &spy).unwrap();
+        let after = spy.read_dir_count();
+        tree.load_compact_chain(Path::new("/ws/a"), &spy).unwrap();
+        assert_eq!(spy.read_dir_count(), after);
+    }
+
+    #[test]
+    fn compact_chain_expand_row_loads_innermost_children() {
+        let fs = chain_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        tree.expand(Path::new("/ws/a"), &fs).unwrap();
+        let chain = tree.compact_chain(Path::new("/ws/a")).unwrap();
+        assert_eq!(chain.display_name(), "a/b");
+        assert_eq!(chain.path(), Path::new("/ws/a/b"));
+        assert!(!tree.find(Path::new("/ws/a/b")).unwrap().is_loaded());
+
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(chain.path(), &tree).unwrap();
+        assert!(expansion.is_expanded(Path::new("/ws/a/b")));
+        assert!(!expansion.is_expanded(Path::new("/ws/a")));
+        assert!(!expansion.is_expanded(Path::new("/ws/a/b/c")));
+        tree.expand(chain.path(), &fs).unwrap();
+        assert!(tree.find(Path::new("/ws/a/b")).unwrap().is_loaded());
+        assert_eq!(tree.find(Path::new("/ws/a/b")).unwrap().children().len(), 1);
+        assert_eq!(
+            tree.find(Path::new("/ws/a/b")).unwrap().children()[0].name(),
+            "c"
+        );
+        tree.load_compact_chain(chain.path(), &fs).unwrap();
+        let full = tree.compact_chain(Path::new("/ws/a")).unwrap();
+        assert_eq!(full.display_name(), "a/b/c");
+        assert_eq!(full.path(), Path::new("/ws/a/b/c"));
+        expansion.expand(full.path(), &tree).unwrap();
+        assert!(expansion.is_expanded(Path::new("/ws/a/b/c")));
+        assert!(!expansion.is_expanded(Path::new("/ws/a")));
+        assert_eq!(
+            tree.find(full.path()).unwrap().children()[0].name(),
+            "file.rs"
+        );
+        expansion.collapse(full.path());
+        assert!(!expansion.is_expanded(full.path()));
+        assert!(expansion.is_expanded(Path::new("/ws/a/b")));
+    }
+
+    #[test]
+    fn compact_chain_load_root_is_noop_and_errors_match_expand() {
+        let spy = CountingFs::wrap(chain_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        let after_load = spy.read_dir_count();
+        tree.load_compact_chain(Path::new("/ws"), &spy).unwrap();
+        assert_eq!(spy.read_dir_count(), after_load);
+        assert!(tree
+            .load_compact_chain(Path::new("/ws/nope"), &spy)
+            .unwrap_err()
+            .is_not_found());
+        assert!(tree
+            .load_compact_chain(Path::new("/ws/a/b/c/file.rs"), &spy)
+            .unwrap_err()
+            .is_not_found());
+        tree.expand(Path::new("/ws/a"), &spy).unwrap();
+        tree.expand(Path::new("/ws/a/b"), &spy).unwrap();
+        tree.expand(Path::new("/ws/a/b/c"), &spy).unwrap();
+        assert!(tree
+            .load_compact_chain(Path::new("/ws/a/b/c/file.rs"), &spy)
+            .unwrap_err()
+            .is_not_a_directory());
+
+        let spy = CountingFs::wrap(chain_fs());
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        spy.fail_next_read_dir();
+        assert!(tree
+            .load_compact_chain(Path::new("/ws/a"), &spy)
+            .unwrap_err()
+            .is_io());
+        assert!(!tree.find(Path::new("/ws/a")).unwrap().is_loaded());
     }
 }

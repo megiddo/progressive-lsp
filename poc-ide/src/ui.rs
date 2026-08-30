@@ -6,7 +6,7 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, position_at, BufferMap, ClipboardPort, ConflictChoice,
+    advertised_control_socket, position_at, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
     ControlClient, DialogPort, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
     Highlighter, IdeError, LayoutState, LspClient, NotifyWatch, OpenBuffer, ProtocolConsole,
     RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TranscriptKind,
@@ -716,17 +716,23 @@ impl eframe::App for PocIdeApp {
                         }
                         if let Some(tree) = &mut self.tree {
                             for path in became_expanded {
-                                if let Err(e) = self.expansion.expand(&path, tree) {
-                                    self.status = e.to_string();
-                                    continue;
-                                }
-                                match tree.expand(&path, &self.fs) {
+                                match tree.load_compact_chain(&path, &self.fs) {
                                     Ok(()) => {
                                         let n = tree
                                             .find(&path)
-                                            .map(|node| node.children().len())
+                                            .map(|node| node.compact_tail().children().len())
                                             .unwrap_or(0);
                                         self.run_log.log_tree_expand(&path, n, None);
+                                        let expand_row = tree
+                                            .find(&path)
+                                            .and_then(CompactChain::from_node)
+                                            .map(|chain| chain.path() == path)
+                                            .unwrap_or(true);
+                                        if expand_row {
+                                            if let Err(e) = self.expansion.expand(&path, tree) {
+                                                self.status = e.to_string();
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         self.run_log.log_tree_expand(
@@ -823,13 +829,17 @@ fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) 
     let mut became_collapsed = Vec::new();
     for node in nodes {
         if node.is_dir() {
-            let path = node.path();
+            let Some(chain) = CompactChain::from_node(node) else {
+                continue;
+            };
+            let path = chain.path();
             let open = expansion.is_expanded(path);
-            let response = egui::CollapsingHeader::new(node.name())
+            let tail = node.compact_tail();
+            let response = egui::CollapsingHeader::new(chain.display_name())
                 .id_salt(path)
                 .default_open(false)
                 .open(Some(open))
-                .show(ui, |ui| show_nodes(ui, node.children(), expansion));
+                .show(ui, |ui| show_nodes(ui, tail.children(), expansion));
             if let Some(inner) = response.body_returned {
                 if clicked.is_none() {
                     clicked = inner.clicked;
