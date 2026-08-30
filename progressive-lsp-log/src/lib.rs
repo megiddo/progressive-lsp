@@ -1,6 +1,5 @@
 //! WAL sqlite log crate plus capture Adapters. Core stays sqlite-free.
-//! Serve/install sqlite bootstrap is LOG-4 — this crate is not wired as the
-//! durable sink from `run` yet. MemoryLog bootstrap is OK on LOG-3.
+//! The composition root opens [`SqliteLogRepository`] (or keeps [`progressive_lsp_core::MemoryLog`]).
 
 pub mod actor;
 pub mod batch;

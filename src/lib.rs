@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use progressive_lsp_control::ControlServer;
 use progressive_lsp_core::{
-    apply_worktree_excludes, InstallError, LogPort, MemoryLog, PrefixLayout, SystemClock,
+    apply_worktree_excludes, ClockPort, Config, InstallError, LogPort, MemoryLog, NeverFailLog,
+    PrefixLayout, SystemClock,
 };
 use progressive_lsp_engine::{
     binary_name_for_pack, stub_pack_bytes, EngineSupervisor, PackAdapter,
@@ -16,7 +17,10 @@ use progressive_lsp_install::{
     hex_encode, sha256, sha256_file, ExplicitPacks, Installer, LocalFs, Manifest, ManifestArtifact,
     PackSelector,
 };
-use progressive_lsp_log::{CliUsageAdapter, StderrEmitAdapter};
+use progressive_lsp_log::{
+    CliUsageAdapter, LogCrateBridge, ServeLogPath, SqliteLogRepository, StderrEmitAdapter,
+    TracingBridge,
+};
 use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
 use progressive_lsp_script::ScriptHost;
@@ -169,7 +173,21 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    run_with_log(args, Arc::new(MemoryLog::new()))
+    match parse_args(args) {
+        Err(e) => {
+            CliUsageAdapter::new(Arc::new(MemoryLog::new())).emit_usage(&e.to_string());
+            Err(e.into())
+        }
+        Ok(Command::Serve(opts)) => {
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            serve_bootstrapped(opts, BufReader::new(stdin.lock()), stdout.lock(), true)
+        }
+        Ok(Command::Install(opts)) => install_bootstrapped(opts, None, true).map_err(|e| {
+            StderrEmitAdapter::new(Arc::new(MemoryLog::new())).emit(&e.to_string());
+            e.into()
+        }),
+    }
 }
 
 pub fn run_with_log<I, S>(args: I, log: Arc<dyn LogPort>) -> Result<(), Box<dyn std::error::Error>>
@@ -183,15 +201,17 @@ where
             Err(e.into())
         }
         Ok(Command::Serve(opts)) => run_serve_with_log(opts, log),
-        Ok(Command::Install(opts)) => run_install(opts).map_err(|e| {
-            StderrEmitAdapter::new(Arc::clone(&log)).emit(&e.to_string());
+        Ok(Command::Install(opts)) => apply_install(&opts, None, log.clone()).map_err(|e| {
+            StderrEmitAdapter::new(log).emit(&e.to_string());
             e.into()
         }),
     }
 }
 
 pub fn run_serve(opts: ServeOpts) -> Result<(), Box<dyn std::error::Error>> {
-    run_serve_with_log(opts, Arc::new(MemoryLog::new()))
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    serve_bootstrapped(opts, BufReader::new(stdin.lock()), stdout.lock(), false)
 }
 
 fn run_serve_with_log(
@@ -213,7 +233,66 @@ where
     R: io::BufRead,
     W: io::Write,
 {
-    serve_with_io_and_log(opts, reader, writer, Arc::new(MemoryLog::new()))
+    serve_bootstrapped(opts, reader, writer, false)
+}
+
+fn serve_bootstrapped<R, W>(
+    opts: ServeOpts,
+    reader: R,
+    writer: W,
+    install_bridges: bool,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    R: io::BufRead,
+    W: io::Write,
+{
+    let mem = MemoryLog::new();
+    let layout = PrefixLayout::resolve(opts.prefix.as_deref())?;
+    layout.ensure_dirs()?;
+    let (log, durable) = wire_process_log(&layout, mem);
+    if install_bridges {
+        let _ = LogCrateBridge::try_install(Arc::clone(&log));
+        let _ = TracingBridge::try_install(Arc::clone(&log));
+    }
+    let result = serve_with_io_and_log(opts, reader, writer, log);
+    if let Some(repo) = durable {
+        repo.inner().flush();
+    }
+    result
+}
+
+fn wire_process_log(
+    layout: &PrefixLayout,
+    mem: MemoryLog,
+) -> (
+    Arc<dyn LogPort>,
+    Option<Arc<NeverFailLog<SqliteLogRepository>>>,
+) {
+    let clock = Arc::new(SystemClock);
+    let config_path = std::fs::read_to_string(layout.config_path())
+        .ok()
+        .and_then(|src| Config::from_toml(&src).ok())
+        .and_then(|load| load.config.log_path);
+    let named = ServeLogPath::from_env_or_config(
+        layout.log_dir(),
+        clock.unix_ms(),
+        std::process::id(),
+        config_path.as_deref(),
+    );
+    match SqliteLogRepository::open(named.as_path(), clock) {
+        Ok(repo) => {
+            for rec in mem.drain() {
+                repo.emit(rec);
+            }
+            let durable = Arc::new(NeverFailLog::new(repo));
+            let log: Arc<dyn LogPort> = Arc::clone(&durable) as Arc<dyn LogPort>;
+            (log, Some(durable))
+        }
+        Err(_) => {
+            mem.warn("sqlite log open failed; keeping MemoryLog");
+            (Arc::new(mem), None)
+        }
+    }
 }
 
 pub fn serve_with_io_and_log<R, W>(
@@ -272,19 +351,49 @@ where
 }
 
 pub fn run_install(opts: InstallOpts) -> Result<(), InstallError> {
-    run_install_with_scripts(opts, None)
+    install_bootstrapped(opts, None, false)
 }
 
 /// Hash-gated prefix. `on_install_verify` Abort refuses the new binary (no rename).
 pub fn run_install_with_scripts(
     opts: InstallOpts,
+    scripts: Option<&mut ScriptHost>,
+) -> Result<(), InstallError> {
+    install_bootstrapped(opts, scripts, false)
+}
+
+fn install_bootstrapped(
+    opts: InstallOpts,
+    scripts: Option<&mut ScriptHost>,
+    install_bridges: bool,
+) -> Result<(), InstallError> {
+    let mem = MemoryLog::new();
+    let layout = PrefixLayout::from_path(&opts.prefix);
+    layout
+        .ensure_dirs()
+        .map_err(|e| InstallError::Io(e.to_string()))?;
+    let (log, durable) = wire_process_log(&layout, mem);
+    if install_bridges {
+        let _ = LogCrateBridge::try_install(Arc::clone(&log));
+        let _ = TracingBridge::try_install(Arc::clone(&log));
+    }
+    let result = apply_install(&opts, scripts, log);
+    if let Some(repo) = durable {
+        repo.inner().flush();
+    }
+    result
+}
+
+fn apply_install(
+    opts: &InstallOpts,
     mut scripts: Option<&mut ScriptHost>,
+    log: Arc<dyn LogPort>,
 ) -> Result<(), InstallError> {
     let layout = PrefixLayout::from_path(&opts.prefix);
     layout
         .ensure_dirs()
         .map_err(|e| InstallError::Io(e.to_string()))?;
-    let installer = Installer::new(LocalFs);
+    let installer = Installer::new(LocalFs).with_log(log);
     for pack in &opts.packs {
         install_verified_pack(&installer, &layout, pack, scripts.as_deref_mut())?;
     }
@@ -787,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn run_with_log_emits_cli_usage_on_bad_args() {
+    fn run_with_log_emits_cli_usage_adapter_on_bad_args() {
         let log = progressive_lsp_core::FakeLog::new();
         assert!(run_with_log(["plsp", "nope"], Arc::new(log.clone())).is_err());
         assert!(
@@ -798,6 +907,113 @@ mod tests {
             log.records()
         );
     }
+
+    fn sqlite_files(dir: &Path) -> Vec<PathBuf> {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("sqlite"))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn serve_handshake_writes_one_wal_sqlite_log_repository() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(prefix.path().join("config.toml"), "future = 1\n").unwrap();
+        let mut out = Vec::new();
+        serve_with_io(
+            ServeOpts {
+                prefix: Some(prefix.path().to_path_buf()),
+                control_socket: None,
+                control_fd: None,
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(Some(workspace.path()))),
+            &mut out,
+        )
+        .unwrap();
+        let files = sqlite_files(&prefix.path().join("log"));
+        assert_eq!(files.len(), 1, "{files:?}");
+        let msgs = progressive_lsp_log::actor::read_messages(&files[0]).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("future")),
+            "Flush must persist config warn: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn serve_log_env_overrides_path_value_object() {
+        let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        let prefix = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        let wal = dest.path().join("custom.sqlite");
+        let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, &wal);
+        let result = serve_with_io(
+            ServeOpts {
+                prefix: Some(prefix.path().to_path_buf()),
+                control_socket: None,
+                control_fd: None,
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(None)),
+            Vec::new(),
+        );
+        match old {
+            Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
+            None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
+        }
+        result.unwrap();
+        assert!(wal.is_file(), "{}", wal.display());
+        assert!(sqlite_files(&prefix.path().join("log")).is_empty());
+    }
+
+    #[test]
+    fn serve_sqlite_open_fail_keeps_memory_log_test_double() {
+        let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        let prefix = tempfile::tempdir().unwrap();
+        let blocker = prefix.path().join("not-a-dir");
+        std::fs::write(&blocker, b"x").unwrap();
+        let wal = blocker.join("serve.sqlite");
+        let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, &wal);
+        let result = serve_with_io(
+            ServeOpts {
+                prefix: Some(prefix.path().to_path_buf()),
+                control_socket: None,
+                control_fd: None,
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(None)),
+            Vec::new(),
+        );
+        match old {
+            Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
+            None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
+        }
+        result.unwrap();
+        assert!(!wal.exists());
+        assert!(sqlite_files(&prefix.path().join("log")).is_empty());
+    }
+
+    #[test]
+    fn install_writes_one_wal_sqlite_log_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        run_install(InstallOpts {
+            prefix: dir.path().to_path_buf(),
+            packs: vec!["python".into()],
+        })
+        .unwrap();
+        assert_eq!(sqlite_files(&dir.path().join("log")).len(), 1);
+    }
+
+    static ENV_LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn product_crates_have_no_diagnostic_eprintln() {

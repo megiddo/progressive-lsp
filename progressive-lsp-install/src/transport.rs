@@ -82,6 +82,8 @@ impl ArtifactTransport for LocalFs {
 pub struct FakeTransport {
     pub corrupt_hash: bool,
     pub fail_put: bool,
+    /// `put` creates a directory so later `remove_file` fails (Context Object emit).
+    pub put_as_dir: bool,
 }
 
 impl FakeTransport {
@@ -97,6 +99,11 @@ impl ArtifactTransport for FakeTransport {
         }
         if dest.as_os_str().is_empty() {
             return Err(InstallError::Transport("empty dest".into()));
+        }
+        if self.put_as_dir {
+            std::fs::create_dir_all(dest)
+                .map_err(|e| InstallError::Io(format!("fake mkdir {}: {e}", dest.display())))?;
+            return Ok(());
         }
         std::fs::write(dest, bytes)
             .map_err(|e| InstallError::Io(format!("fake write {}: {e}", dest.display())))
@@ -158,8 +165,9 @@ impl ArtifactTransport for FakeRemoteTransport {
         }
         if let Some(parent) = dest.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| InstallError::Io(format!("remote mkdir {}: {e}", parent.display())))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    InstallError::Io(format!("remote mkdir {}: {e}", parent.display()))
+                })?;
             }
         }
         std::fs::write(dest, bytes)
@@ -181,8 +189,9 @@ impl ArtifactTransport for FakeRemoteTransport {
         }
         if let Some(parent) = to.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| InstallError::Io(format!("remote mkdir {}: {e}", parent.display())))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    InstallError::Io(format!("remote mkdir {}: {e}", parent.display()))
+                })?;
             }
         }
         std::fs::rename(from, to).map_err(|e| InstallError::Io(e.to_string()))

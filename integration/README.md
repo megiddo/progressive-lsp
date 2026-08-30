@@ -37,7 +37,7 @@ integration/
   expected/             # golden find / ghost siblings per corpus
 ```
 
-**Darwin:** `harness/run-it1.sh auto` is host_smoke + a gap note when Docker or a musl ELF is missing. Do not treat that as IT-1.1. Linux CI bind-mounts a `check-static` musl ELF and runs the four distros.
+**Darwin:** `harness/run-it1.sh auto` is host_smoke + a gap note when Docker or a musl ELF is missing. Do not treat that as IT-1.1. Linux CI bind-mounts a `check-static` musl ELF and runs the four distros. After LOG-4, that ELF is rusqlite-linked: Linux CI must `check-static` it (no `DT_NEEDED` / `libdl`). Do not run `check-static` on a Darwin Mach-O and call it green. IT-1.1 also asserts a `serve-*.sqlite` WAL under `$PREFIX/log/` after handshake (Linux CI / Docker only).
 
 **IT-2 Darwin:** `harness/run-it2.sh auto` runs stock stdio against native Mach-O on in-tree supplements + fetched corpora. T3 rows are `skip_pack_missing` when packs are stubs. That is **not** a typed hover green. Linux CI with real musl packs is the T3 gate.
 

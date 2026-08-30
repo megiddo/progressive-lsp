@@ -41,7 +41,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `LspFacade` | Facade | JSON-RPC in; domain queries out; no watch internals leak |
 | `ControlServer` | Facade | Proto RPCs; same domain services as LSP, different encoding |
 | `IndexService` | Facade | Owns `DirtySet` + `PriorityIndex` + `IndexCache`; not a god server |
-| `WatchCoalescer` | Observer + Scheduler | N events in window → 1 batch; FakeClock advances window |
+| `WatchCoalescer` | Observer + Scheduler | N events in window → 1 batch; FakeClock advances window; overflow drop emits `LogPort` warn via `LogScope` (`operation=watch`) |
 | `WatchBackend` | Port / Adapter | Prod uses `notify`; tests use `FakeWatcher`; coalescer does not call OS APIs directly |
 | `WatchBatch` | Event / DTO | Overflow / `need_rescan` set; never silently drop FilesSince rows without `truncated` |
 | `WatchFilter` / `on_watch` | Decorator / Filter | Dropped paths never enter `DirtySet` |
@@ -57,15 +57,15 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues |
 | `NotReadyResolver` | Test double | T3 skip; must not drop a later T2 `FakeResolver` |
 | `DirectoryAdapter` / `MavenAdapter` / `GradleAdapter` / `EclipseAdapter` | Adapter | Detect from files only; no host JDK |
-| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer` |
+| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer`; `LogScope` around didOpen/didChange/definition (Context Object) |
 | `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
-| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only |
+| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`) |
 | `CacheKey` | Value object / identity | Path is `sanitize(grammar)/sanitize(lang)/hex(hash)`; `.`/`..` cannot escape the prefix |
 | `IndexedFile.has_error` / `unparsed_note` | Value object | ERROR/MISSING nodes ⇒ note; server stays up, no panic |
 | `sample_rss_bytes` / `rss_sample_label` | Value object | Darwin/Linux host sample; not an allocator-matrix CI-arch winner |
 | `Config` merge | Chain / Builder | Later file wins for keys it sets; unset key falls through |
-| `Installer` | Builder (plan) + Command (apply) | Hash fail → no rename to final path |
+| `Installer` | Builder (plan) + Command (apply) | Hash fail → no rename to final path; cleanup `remove_file` miss emits `LogPort` warn via `LogScope` (`operation=install`) |
 | `ArtifactTransport` | Strategy | `LocalFs` vs consumer SSH; install crate has no SSH types |
 | `LocalFs` | Concrete Strategy | In-tree transport; no network |
 | `HostProbe`, `BuildCensus`, `PackId` | Value objects | Census → packs is `PackSelector`, not a hardcoded match in the bin |
@@ -109,7 +109,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
 | `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
-| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail |
+| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail; `ConfigWarnAdapter` emits; `LogScope` around didOpen/didChange/definition |
 | `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
 | `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
 | `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |
@@ -126,7 +126,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 
 ## Global logging (LOG-1+)
 
-Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 landed sqlite Actor types in `progressive-lsp-log`. LOG-3 lands capture Adapters + `ChildIo`. poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
+Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 landed sqlite Actor types in `progressive-lsp-log`. LOG-3 landed capture Adapters + `ChildIo`. LOG-4 wired serve/install bootstrap (stack complete). poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|

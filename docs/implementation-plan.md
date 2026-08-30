@@ -364,12 +364,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-4 (`log4` branch)
 
-Do not open `log4` until LOG-3 stays signed off. Last LOG WP. No `log5`.
+**Status: SIGNED OFF** on `log4`. Last LOG WP. Stack complete. Do not open `log5`.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-4.1 | Bootstrap order in `run`; `LogScope` around didOpen/didChange/definition; index/watch/install silent-failure emits | LOG-3 | `Flush` + join on shutdown |
-| LOG-4.2 | User troubleshooting + host-deps / third-party lock vs impl; IT-1.7 still stderr | LOG-4.1 | optional sqlite file after `serve` handshake (Linux CI) |
+| LOG-4.1 | Bootstrap order in `run`; `LogScope` around didOpen/didChange/definition; index/watch/install silent-failure emits | LOG-3 | **SIGNED OFF.** `Flush` + join on shutdown; one WAL per serve/install; `PROGRESSIVE_LSP_LOG` override; sqlite open fail keeps `MemoryLog` |
+| LOG-4.2 | User troubleshooting + host-deps / third-party lock vs impl; IT-1.7 still stderr | LOG-4.1 | **SIGNED OFF.** sqlite under `$PREFIX/log/`; optional sqlite file after `serve` handshake (Linux CI); Darwin: do not fake musl greens |
+
+**Sign-off checklist (LOG-4)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **95.93%** lines
+- [x] 80% mutants on listed crates that changed — log **140/154 (90.9%)**; index **160/194 (82.5%)**; install **114/122 (93.4%)**; watch **97/101 (96.0%)**
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
+- [x] [design-patterns.md](design-patterns.md) names every type (no new types; existing rows updated)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## Spikes (do not skip hygiene on merge)
 

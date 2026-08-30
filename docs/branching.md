@@ -54,8 +54,10 @@ main   # after poc-discover-log merge (current main)
         └── log1      # LogPort + records (no sqlite in server)
               └── log2  # WAL repository crate
                     └── log3  # Facades, bridges, eprintln death
-                          └── log4  # Wire serve/install + docs lock
+                          └── log4  # Wire serve/install + docs lock (stack complete; do not open log5)
 ```
+
+Logging stack is **complete at `log4`**. Do not open `log5`.
 
 ## Rules
 
@@ -68,4 +70,4 @@ main   # after poc-discover-log merge (current main)
 
 ## Suggested branch names
 
-`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` stacked on **current `main`**, not `poc-no-console`. Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.
+`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` stacked on **current `main`**, not `poc-no-console`. **Stack complete at `log4`.** Do not open `log5`. Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.

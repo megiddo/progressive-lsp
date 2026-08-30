@@ -613,12 +613,31 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-4 — Wire serve/install + docs lock
 
-Do not start LOG-4 until LOG-3 stays signed off. Last LOG branch. Do not open `log5`.
+**Status: SIGNED OFF** on branch `log4`. Last LOG branch. Stack complete. Do not open `log5`. Parent is `log3`. poc-ide `RunLog` unchanged. IT-1.7 usage still stderr.
 
-- Bootstrap order from [logging.md](logging.md). `LogScope` around didOpen/didChange/definition. Index/watch/install silent-failure paths emit.
-- User troubleshooting: sqlite under `$PREFIX/log/`. IT-1.7 usage still stderr.
+- Bootstrap order from [logging.md](logging.md): `MemoryLog` → prefix/`ensure_dirs` → `SqliteLogRepository` (keep `MemoryLog` if open fails) → replay ring → bridges → config + `ConfigWarnAdapter` → serve/install → `Flush` + join on shutdown.
+- `LogScope` around didOpen/didChange/definition. Index/watch/install silent-failure paths emit.
+- User troubleshooting: sqlite under `$PREFIX/log/`. `PROGRESSIVE_LSP_LOG` overrides path. stdout stays JSON-RPC.
 
-**Exit:** one WAL file per serve/install process; `Flush` + join on shutdown; poc-ide `RunLog` unchanged.
+**Exit**
+
+- [x] One WAL file per serve/install process; `Flush` + join on shutdown; poc-ide `RunLog` unchanged.
+
+**Sign-off checklist (LOG-4)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1` (all passed)
+- [x] 95% llvm-cov on crates that exist — **95.93%** lines (ignore `xtask/`, `/src/main.rs$`, `tree-sitter`, `poc-ide/src/ui.rs`)
+- [x] 80% mutants on listed crates that changed — log **140 caught / 154 scored (90.9%)**, 13 unviable, 12 missed, 2 timeouts; index **160 caught / 194 scored (82.5%)**, 22 unviable, 34 missed; install **114 caught / 122 scored (93.4%)**, 6 unviable, 8 missed; watch **97 caught / 101 scored (96.0%)**, 15 unviable, 4 missed
+- [x] No `sleep`
+- [x] `check-static` — fixture ELFs including `libdl` `DT_NEEDED` fail-closed. Darwin: do not fake musl greens (no musl ELF on this host). Linux CI must `check-static` the rusqlite-linked core ELF.
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-4 gate on macOS.
+- The composition-root bin **is** wired to `SqliteLogRepository`. This host cannot produce a musl `progressive-lsp` ELF. Linux CI must `check-static` that ELF. Do not run `check-static` on a Darwin Mach-O and call it green.
+- IT-1.7 usage/help stays on stderr. Optional sqlite file after `serve` handshake is asserted on Linux CI / Docker (IT-1.1) and by the Darwin tempfile unit test.
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 

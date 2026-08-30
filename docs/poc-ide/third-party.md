@@ -50,3 +50,5 @@ Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file sta
 **IDE-5 pins:** `progressive-lsp-control` (workspace). Consumer MAY depend. Lib still no egui. `--mux` is `pending_mux` — do not silently retest the socket as mux. Still no `egui_dock` or `walkdir`.
 
 **poc-log pin** (post-IDE-5 slice on `main`, not IDE-6): `rusqlite` **=0.40.2** with `bundled`. Share this pin with `progressive-lsp-log` (LOG-2+). Two schemas: poc-ide `RunLog` (`events` category/event/payload) vs server WAL `LogRecord`. Do not merge. The amalgamation is an **our-artifact** (static C in the ELF), not a host `.so`. **Supersedes** “rusqlite is poc-ide only — never musl server crates.”
+
+**LOG-4 lock vs impl:** `rusqlite` is allowed in `progressive-lsp-log`. `serve` / `install` now write the **server** WAL (`LogRecord` columns under `$PREFIX/log/serve-<unix_ms>-<pid>.sqlite`). That file is still a **separate** schema from poc-ide `RunLog`. Do not merge. Do not write poc-ide rows into the server WAL.

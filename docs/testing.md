@@ -92,7 +92,7 @@ Separate from this unit/mutation gate. Spec: [../integration/README.md](../integ
 - May use containers, real engines, and a **deadline** wait on `workDoneProgress` / `TierReady` (poll protocol, not `sleep(5)`).
 - Must not weaken the crate suite: still no `thread::sleep` in `crates/` tests.
 - Nightly / release, not every library PR.
-- Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate.
+- Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate. After rusqlite is linked into the core ELF (LOG-4), Linux CI must `check-static` that ELF; do not run `check-static` on a Darwin Mach-O. Optional IT-1.1 WAL file after `serve` handshake is Linux CI / Docker only.
 - IT-2 may wait on `workDoneProgress` with a deadline (poll protocol, not `sleep(5)`). T3 rows are `skip_pack_missing` when packs are Darwin stubs — not typed-hover greens.
 - IT-3 may deadline-poll the control socket for `WatchBatch` / `TierReady`. `--mux` is `pending_mux` if unimplemented. T3 types rows stay `skip_pack_missing` on Darwin stubs.
 - PD4 T2 bake-off may fetch the stack-graphs pin and junit4 at SHA (cache under `target/`). Default T2 stays heuristic unless the winner rule fires. Do not treat Darwin RSS as a musl green.

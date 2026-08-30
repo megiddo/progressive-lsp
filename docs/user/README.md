@@ -76,3 +76,4 @@ Java never uses a JVM language server. PHP full types need the PHP pack; without
 - Java does **not** need a JDK for the server. Syntax and navigation do not start a JVM.
 - Do not expect tsserver, JDT, pylsp, or other Node/Java/Python language servers. This process is the server; packs are statically compiled engines, not those stacks.
 - Weak go-to-definition usually means that language’s pack is not installed — install it, or keep using the simpler built-in index.
+- Product logs are a SQLite WAL file under `$PREFIX/log/` named `serve-<unix_ms>-<pid>.sqlite` (plus `-wal` / `-shm` while the process is up). `$PREFIX` is the home from Install (`$HOME/.progressivelsp`, `PROGRESSIVE_LSP_HOME`, or `--prefix`). Override the file with `PROGRESSIVE_LSP_LOG` set to an **absolute** path. `serve` **stdout** stays JSON-RPC — do not look for logs there. `--help` / usage stay on **stderr**.

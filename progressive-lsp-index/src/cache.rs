@@ -5,8 +5,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use progressive_lsp_core::LanguageId;
+use progressive_lsp_core::{LanguageId, LogComponent, LogPort, LogScope, NullLog};
 use sha2::{Digest, Sha256};
 
 const MAGIC: &[u8; 4] = b"PLI1";
@@ -82,10 +83,20 @@ pub fn sanitize_component(s: &str) -> String {
 
 /// Repository: same `(grammar, lang, hash)` → skip parse.
 /// Optional disk dir is `$PREFIX/cache/` (injected in tests).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct IndexCache {
     hits: HashMap<CacheKey, u64>,
     disk_dir: Option<PathBuf>,
+    log: Arc<dyn LogPort>,
+}
+
+impl std::fmt::Debug for IndexCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexCache")
+            .field("hits", &self.hits)
+            .field("disk_dir", &self.disk_dir)
+            .finish()
+    }
 }
 
 impl Default for IndexCache {
@@ -100,17 +111,44 @@ impl IndexCache {
         Self {
             hits: HashMap::new(),
             disk_dir: None,
+            log: Arc::new(NullLog),
         }
     }
 
     /// Persist under `dir` (normally [`PrefixLayout::cache_dir`](progressive_lsp_core::PrefixLayout::cache_dir)).
     pub fn open(dir: impl Into<PathBuf>) -> Self {
+        Self::open_with_log(dir, Arc::new(NullLog))
+    }
+
+    pub fn open_with_log(dir: impl Into<PathBuf>, log: Arc<dyn LogPort>) -> Self {
         let dir = dir.into();
-        let _ = std::fs::create_dir_all(&dir);
-        Self {
+        let created = std::fs::create_dir_all(&dir);
+        let cache = Self {
             hits: HashMap::new(),
             disk_dir: Some(dir),
+            log,
+        };
+        if let Err(e) = created {
+            cache.emit_io_warn(&format!(
+                "create_dir_all {}: {e}",
+                cache.disk_dir.as_ref().unwrap().display()
+            ));
         }
+        cache
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
+    }
+
+    pub(crate) fn emit_io_warn(&self, message: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("index")
+                .component(LogComponent::index()),
+        );
+        self.log.warn(message);
     }
 
     pub fn disk_dir(&self) -> Option<&Path> {
@@ -150,20 +188,35 @@ impl IndexCache {
             return;
         };
         if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                self.emit_io_warn(&format!("create_dir_all {}: {e}", parent.display()));
                 return;
             }
         }
         let mut bytes = Vec::with_capacity(12);
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&generation.to_le_bytes());
-        let _ = std::fs::write(path, bytes);
+        if let Err(e) = std::fs::write(&path, bytes) {
+            self.emit_io_warn(&format!("cache write {}: {e}", path.display()));
+        }
     }
 
     fn read_disk(&self, key: &CacheKey) -> Option<u64> {
         let path = self.disk_path(key)?;
-        let bytes = std::fs::read(path).ok()?;
-        parse_cache_record(&bytes)
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let parsed = parse_cache_record(&bytes);
+                if parsed.is_none() {
+                    self.emit_io_warn(&format!("cache read corrupt {}", path.display()));
+                }
+                parsed
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                self.emit_io_warn(&format!("cache read {}: {e}", path.display()));
+                None
+            }
+        }
     }
 }
 
@@ -189,7 +242,9 @@ mod tests {
         assert!(c.is_empty());
         assert_eq!(c.len(), 0);
         assert!(c.disk_dir().is_none());
-        assert!(c.disk_path(&CacheKey::new("g", LanguageId::new("java"), b"x")).is_none());
+        assert!(c
+            .disk_path(&CacheKey::new("g", LanguageId::new("java"), b"x"))
+            .is_none());
         let a = CacheKey::new("tree-sitter-java", LanguageId::new("java"), b"class A {}");
         let b = CacheKey::new("tree-sitter-java", LanguageId::new("java"), b"class A {}");
         let d = CacheKey::new("tree-sitter-java", LanguageId::new("java"), b"class B {}");
@@ -211,7 +266,11 @@ mod tests {
     fn disk_cold_start_hits_same_triple() {
         let dir = tempfile::tempdir().unwrap();
         let cache_dir = dir.path().join("cache");
-        let key = CacheKey::new("tree-sitter-java@0.23", LanguageId::new("java"), b"class A {}");
+        let key = CacheKey::new(
+            "tree-sitter-java@0.23",
+            LanguageId::new("java"),
+            b"class A {}",
+        );
         {
             let mut c = IndexCache::open(&cache_dir);
             assert_eq!(c.disk_dir().unwrap(), cache_dir.as_path());
@@ -226,17 +285,17 @@ mod tests {
         assert!(cold.is_empty(), "cold start must not preload memory");
         assert!(cold.contains(&key));
         assert_eq!(cold.get(&key), Some(11));
-        let miss = CacheKey::new("tree-sitter-java@0.23", LanguageId::new("java"), b"class B {}");
+        let miss = CacheKey::new(
+            "tree-sitter-java@0.23",
+            LanguageId::new("java"),
+            b"class B {}",
+        );
         assert!(!cold.contains(&miss));
     }
 
     #[test]
     fn disk_path_is_grammar_lang_hash_and_never_escapes() {
-        let key = CacheKey::with_hash(
-            "tree-sitter-java",
-            LanguageId::new("java"),
-            [0xab; 32],
-        );
+        let key = CacheKey::with_hash("tree-sitter-java", LanguageId::new("java"), [0xab; 32]);
         let rel = key.rel_path();
         assert_eq!(
             rel,
@@ -251,7 +310,10 @@ mod tests {
         assert_eq!(sanitize_component("a..b"), "_");
         assert_eq!(sanitize_component("ok-id_1.2"), "ok-id_1.2");
         let escape = CacheKey::new("..", LanguageId::new("java"), b"x");
-        assert_eq!(escape.rel_path().components().next().unwrap().as_os_str(), "_");
+        assert_eq!(
+            escape.rel_path().components().next().unwrap().as_os_str(),
+            "_"
+        );
     }
 
     #[test]
@@ -277,25 +339,31 @@ mod tests {
     }
 
     #[test]
-    fn write_failure_keeps_memory_hit() {
+    fn repository_write_failure_keeps_memory_hit_and_log_scope_context_object() {
         let dir = tempfile::tempdir().unwrap();
         let blocker = dir.path().join("not-a-dir");
         std::fs::write(&blocker, b"file").unwrap();
-        let mut c = IndexCache::open(&blocker);
+        let log = progressive_lsp_core::FakeLog::new();
+        let mut c = IndexCache::open_with_log(&blocker, std::sync::Arc::new(log.clone()));
         let key = CacheKey::new("g", LanguageId::new("java"), b"x");
         c.remember(key.clone(), 2);
         assert_eq!(c.get(&key), Some(2));
         assert!(!IndexCache::open(&blocker).contains(&key));
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("index")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[test]
     fn memory_only_does_not_create_workspace_cache() {
         let workspace = tempfile::tempdir().unwrap();
         let mut c = IndexCache::new();
-        c.remember(
-            CacheKey::new("g", LanguageId::new("java"), b"x"),
-            1,
-        );
+        c.remember(CacheKey::new("g", LanguageId::new("java"), b"x"), 1);
         assert!(!workspace.path().join(".progressivelsp").exists());
         assert!(!workspace.path().join("cache").exists());
     }

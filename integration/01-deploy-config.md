@@ -57,6 +57,7 @@ sha256sum -c SHA256SUMS
 - `socket` is JSON `null` (default serve: control off).
 - `mux` is `false`.
 - Container has no `node`, `java`, `python3` on PATH (assert `command -v` fails).
+- After handshake, `$PREFIX/log/` contains at least one `serve-<unix_ms>-<pid>.sqlite` WAL (Linux CI / Docker matrix; `install` may have written its own file first). Darwin host_smoke does not claim this as a musl green; the crate unit test `serve_handshake_writes_one_wal_sqlite_log_repository` covers the same path on tempfile.
 
 ### IT-1.2 — Default home without `--prefix`
 
@@ -107,6 +108,8 @@ sha256sum -c SHA256SUMS
 
 **Pass:** non-zero exit, usage on stderr, process does not hang.
 
+LOG-4 did not move usage off stderr. `CliUsageAdapter` still writes `--help` / usage / unknown-command text to stderr (and also `LogPort::warn` with `operation=cli`). stdout stays JSON-RPC for `serve`.
+
 ## Darwin vs CI
 
 This suite’s greens are **Linux CI** with a prebuilt musl ELF bind-mounted into the four images (`integration/compose.yaml`). On a Darwin laptop:
@@ -115,6 +118,7 @@ This suite’s greens are **Linux CI** with a prebuilt musl ELF bind-mounted int
 - That is **not** IT-1.1 and must not be recorded as a distro pass.
 - Missing Docker daemon or missing musl ELF is the same class of gap as M0 (`xtask musl` / `check-static` on this host).
 - Never run `check-static` on the Mach-O or on `xtask dist` stubs and call it IT-1.6.
+- Linux CI must `check-static` the rusqlite-linked musl ELF (no `DT_NEEDED`, no interpreter, no `libdl`). Do not green a Darwin Mach-O.
 
 ## Explicit non-goals for IT-1
 

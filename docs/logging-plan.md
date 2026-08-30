@@ -78,6 +78,8 @@ Docs only. Wire [logging.md](logging.md) and this plan into the docs tree. Draft
 
 ### LOG-4 — Wire serve/install + docs lock
 
+**SIGNED OFF** on `log4`. Stack complete. Do not open `log5`.
+
 | File | Change |
 |---|---|
 | `src/lib.rs` `run` | bootstrap order from [logging.md](logging.md) |
@@ -86,7 +88,7 @@ Docs only. Wire [logging.md](logging.md) and this plan into the docs tree. Draft
 | `docs/user/README.md` | troubleshooting: sqlite under `$PREFIX/log/` |
 | `docs/host-deps.md` | sqlite amalgamation is our artifact |
 | `docs/poc-ide/third-party.md` | rusqlite allowed in `progressive-lsp-log` |
-| Integration | IT-1.7 usage **still** stderr; optional sqlite file after `serve` handshake (Linux CI) |
+| Integration | IT-1.7 usage **still** stderr (`CliUsageAdapter` unchanged); optional sqlite file after `serve` handshake (Linux CI / Docker). Darwin: do not fake musl greens. |
 
 ## Call-site rules
 

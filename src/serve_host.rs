@@ -14,7 +14,7 @@ use progressive_lsp_control::{
 };
 use progressive_lsp_core::{
     apply_worktree_excludes, Config, ConfigError, ConfigLoad, ConfigOverlay, FakeClock,
-    InitializeFailed, LogPort, NullLog, PrefixLayout, OVERLAY_DIR_NAME,
+    InitializeFailed, LogPort, LogScope, NullLog, PrefixLayout, OVERLAY_DIR_NAME,
 };
 use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes};
 use progressive_lsp_install::{hex_encode, sha256, Installer, LocalFs, Manifest, ManifestArtifact};
@@ -72,7 +72,11 @@ impl ServeHost {
         let load = load_config_file(&layout.config_path())?;
         ConfigWarnAdapter::new(Arc::clone(&log)).emit_warnings(&load.warnings);
         Ok(Self {
-            session: WorkspaceSession::with_prefix_and_t2(&layout, load.config.t2_for("java")),
+            session: WorkspaceSession::with_prefix_and_t2_log(
+                &layout,
+                load.config.t2_for("java"),
+                Arc::clone(&log),
+            ),
             layout,
             config: Mutex::new(load.config),
             disk_watch: ServeDiskWatch::new(),
@@ -265,15 +269,29 @@ impl ServeHost {
 
 impl LspIntelligence for ServeHost {
     fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(q.file.as_str())
+                .line(q.position.line)
+                .operation("textDocument/definition"),
+        );
         self.poll_disk_watch();
         self.session.resolve(q)
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        let _g = LogScope::enter(LogScope::new().path(path).operation("textDocument/didOpen"));
         self.session.did_open(uri, language_id, text);
     }
 
     fn did_change(&self, uri: &str, text: &str) {
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(path)
+                .operation("textDocument/didChange"),
+        );
         self.session.did_change(uri, text);
     }
 
@@ -731,6 +749,34 @@ mod tests {
         assert!(host.drain_progress().is_empty());
         let q = ResolveQuery::workspace_symbol("T");
         let _ = host.resolve(&q);
+    }
+
+    #[test]
+    fn host_did_open_change_definition_log_scope_is_context_object() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        host.did_open("file:///T.java", "java", "class T {}");
+        host.did_change("file:///T.java", "class T { void a() {} }");
+        let q = ResolveQuery::new(
+            progressive_lsp_core::FileId::new("/T.java"),
+            progressive_lsp_resolve::Position::new(0, 1),
+            progressive_lsp_resolve::QueryKind::Definition,
+        );
+        let _ = host.resolve(&q);
+        let ops: Vec<_> = log
+            .records()
+            .iter()
+            .filter_map(|r| r.operation.clone())
+            .collect();
+        assert!(ops.iter().any(|o| o == "textDocument/didOpen"), "{ops:?}");
+        assert!(ops.iter().any(|o| o == "textDocument/didChange"), "{ops:?}");
+        assert!(
+            ops.iter().any(|o| o == "textDocument/definition"),
+            "{ops:?}"
+        );
     }
 
     #[test]

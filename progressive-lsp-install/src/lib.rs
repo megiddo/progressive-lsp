@@ -8,8 +8,9 @@ pub mod selector;
 pub mod transport;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use progressive_lsp_core::InstallError;
+use progressive_lsp_core::{InstallError, LogComponent, LogPort, LogScope, NullLog};
 
 pub use dist_manifest::{
     DistArtifact, DistManifest, DIST_PAYLOAD_STUB, DIST_PROTO, DIST_TRIPLES, MUSL_TRIPLES,
@@ -21,9 +22,18 @@ pub use selector::{CensusSelector, ExplicitPacks, PackId, PackSelector};
 pub use transport::{ArtifactTransport, FakeRemoteTransport, FakeTransport, LocalFs};
 
 /// Plan + apply. Hash fail → no rename to the final path.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Installer<T> {
     transport: T,
+    log: Arc<dyn LogPort>,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Installer<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Installer")
+            .field("transport", &self.transport)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,7 +47,28 @@ pub struct InstallPlan {
 
 impl<T: ArtifactTransport> Installer<T> {
     pub fn new(transport: T) -> Self {
-        Self { transport }
+        Self {
+            transport,
+            log: Arc::new(NullLog),
+        }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
+    }
+
+    fn remove_or_emit(&self, path: &Path) {
+        if let Err(e) = std::fs::remove_file(path) {
+            let _g = LogScope::enter(
+                LogScope::new()
+                    .path(path.to_string_lossy().into_owned())
+                    .operation("install")
+                    .component(LogComponent::install()),
+            );
+            self.log
+                .warn(&format!("remove_file {}: {e}", path.display()));
+        }
     }
 
     pub fn transport(&self) -> &T {
@@ -95,20 +126,20 @@ impl<T: ArtifactTransport> Installer<T> {
         }
         let actual = self.transport.read_hash(&plan.tmp)?;
         if actual != plan.expected_sha256 {
-            let _ = std::fs::remove_file(&plan.tmp);
+            self.remove_or_emit(&plan.tmp);
             return Err(InstallError::Hash {
                 expected: hex_encode(&plan.expected_sha256),
                 actual: hex_encode(&actual),
             });
         }
         if let Err(e) = verify(plan) {
-            let _ = std::fs::remove_file(&plan.tmp);
+            self.remove_or_emit(&plan.tmp);
             return Err(e);
         }
         self.transport.rename_atomic(&plan.tmp, &plan.dest)?;
         let after = self.transport.read_hash(&plan.dest)?;
         if after != plan.expected_sha256 {
-            let _ = std::fs::remove_file(&plan.dest);
+            self.remove_or_emit(&plan.dest);
             return Err(InstallError::Hash {
                 expected: hex_encode(&plan.expected_sha256),
                 actual: hex_encode(&after),
@@ -179,7 +210,9 @@ mod tests {
         let bytes = b"hello".to_vec();
         let expected = sha256(&bytes);
         let installer = Installer::new(LocalFs);
-        let plan = installer.plan(&dest, bytes.clone(), expected, true).unwrap();
+        let plan = installer
+            .plan(&dest, bytes.clone(), expected, true)
+            .unwrap();
         installer.apply(&plan).unwrap();
         assert!(dest.is_file(), "apply must place the final path");
         assert_eq!(std::fs::read(&dest).unwrap(), bytes);
@@ -216,7 +249,11 @@ mod tests {
         };
         let installer = Installer::new(LocalFs);
         installer
-            .apply_manifest(dir.path(), &manifest, &[("progressive-lsp".into(), bytes.clone())])
+            .apply_manifest(
+                dir.path(),
+                &manifest,
+                &[("progressive-lsp".into(), bytes.clone())],
+            )
             .unwrap();
         assert_eq!(
             std::fs::read(dir.path().join("bin/progressive-lsp")).unwrap(),
@@ -250,9 +287,7 @@ mod tests {
         fake.corrupt_hash = true;
         let installer = Installer::new(fake);
         let bytes = b"abc".to_vec();
-        let plan = installer
-            .plan(&dest, bytes, sha256(b"abc"), false)
-            .unwrap();
+        let plan = installer.plan(&dest, bytes, sha256(b"abc"), false).unwrap();
         let err = installer.apply(&plan).unwrap_err();
         assert!(matches!(err, InstallError::Hash { .. }));
         assert!(!dest.exists());
@@ -262,6 +297,33 @@ mod tests {
     fn installer_exposes_transport() {
         let installer = Installer::new(LocalFs);
         let _ = installer.transport().probe().unwrap();
+    }
+
+    #[test]
+    fn hash_mismatch_tmp_dir_remove_emits_log_scope_context_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("artifact");
+        let log = progressive_lsp_core::FakeLog::new();
+        let installer = Installer::new(FakeTransport {
+            corrupt_hash: true,
+            fail_put: false,
+            put_as_dir: true,
+        })
+        .with_log(std::sync::Arc::new(log.clone()));
+        let plan = installer
+            .plan(&dest, b"new".to_vec(), sha256(b"new"), false)
+            .unwrap();
+        let err = installer.apply(&plan).unwrap_err();
+        assert!(matches!(err, InstallError::Hash { .. }));
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("install")
+                    && r.message.contains("remove_file")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[test]
@@ -288,9 +350,7 @@ mod tests {
         remote.corrupt_hash = true;
         let installer = Installer::new(remote);
         let bytes = b"abc".to_vec();
-        let plan = installer
-            .plan(&dest, bytes, sha256(b"abc"), true)
-            .unwrap();
+        let plan = installer.plan(&dest, bytes, sha256(b"abc"), true).unwrap();
         let err = installer.apply(&plan).unwrap_err();
         assert!(matches!(err, InstallError::Hash { .. }));
         assert!(!dest.exists());
