@@ -42,6 +42,13 @@ main   # after IDE-5 merge
                                                   └── poc-open-unblock   # non-recursive watch + deferred LSP initialize (not IDE-6)
                                                         └── poc-tree-sort   # dirs then files; dot names last (not IDE-6)
                                                               └── poc-discover-log   # discover uri/position/count in RunLog (not IDE-6)
+
+main   # after poc-discover-log merge (current main)
+  └── log0   # global logging docs (not a crate)
+        └── log1   # LogPort + records (no sqlite in server)
+              └── log2   # WAL repository crate
+                    └── log3   # Facades, bridges, eprintln death
+                          └── log4   # Wire serve/install + docs lock
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -276,6 +283,61 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | IDE-5.1 | `ControlClient` Envelope Adapter | IDE-4 | **SIGNED OFF.** `progressive-lsp-control`; `FakeControl`; payload > 16 MiB fails. |
 | IDE-5.2 | `ProtocolConsole` LSP + control | IDE-5.1 | **SIGNED OFF.** mux `pending_mux`. llvm-cov **95.99%** lines. Mutants poc-ide **683/711 (96.1%)**, 115 unviable |
 
+## LOG-0 (`log0` branch)
+
+**Status: SIGNED OFF** on `log0`. Parent is current `main` (PR #4 / `poc-discover-log` already merged). LOG-1 may start after this WP; do not open `log1` from this branch.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-0.1 | Ingest [logging.md](logging.md) + [logging-plan.md](logging-plan.md); pattern rows; stack | current `main` | **SIGNED OFF.** Docs only. No `progressive-lsp-log` crate. No rusqlite in server. No `eprintln!` changes. Tests / 95% llvm-cov / 80% mutants / `sleep` / `check-static` are **N/A**. |
+
+**Sign-off checklist (LOG-0.1)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — **N/A** (no crates)
+- [x] 95% llvm-cov on crates that exist — **N/A** (none added)
+- [x] 80% mutants on listed crates that exist — **N/A** (none added)
+- [x] No `sleep` — **N/A** (no tests)
+- [x] `check-static` if ELF changed — **N/A** (no ELFs)
+- [x] [design-patterns.md](design-patterns.md) names every type in [logging.md](logging.md)
+- [x] Docs in this tree updated if a locked decision was refined (`log0`–`log4` on current `main`; rusqlite amalgamation is our artifact; poc-ide `RunLog` stays a separate schema)
+
+## LOG-1 (`log1` branch)
+
+Do not open `log1` until LOG-0 stays signed off. No rusqlite in server. No `eprintln!` changes.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-1.1 | `LogPort` + `LogRecord` + scope / Fake / Memory / Null / NeverFail in `progressive-lsp-core` | LOG-0 | core stays sqlite-free |
+| LOG-1.2 | `[log]` config overlay (`level`, `path`); invalid level → warn + default | LOG-1.1 | merge chain; unknown keys still warn |
+
+## LOG-2 (`log2` branch)
+
+Do not open `log2` until LOG-1 stays signed off. No product `eprintln!` death yet.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-2.1 | `progressive-lsp-log` workspace member: `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, `ServeLogPath` | LOG-1 | pin `rusqlite = { version = "=0.40.2", features = ["bundled"] }` |
+| LOG-2.2 | musl amalgamation + `check-static` on the core ELF | LOG-2.1 | fail closed if `libdl` is `DT_NEEDED`; tempfile WAL; `BATCH_MAX=1`; no `thread::sleep` |
+
+## LOG-3 (`log3` branch)
+
+Do not open `log3` until LOG-2 stays signed off.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-3.1 | `LogCrateBridge` / `TracingBridge` / `ChildStderrAdapter` / `LogFileTailAdapter` / `LspLogMessageAdapter` | LOG-2 | never attach stderr Adapter to engine stdout |
+| LOG-3.2 | Composition-root `LogPort`; emit `ConfigLoad.warnings`; replace product `eprintln!` | LOG-3.1 | CLI usage/help still stderr (IT-1.7); grep gate; allowlist clangd `--log=`; optional gopls `-logfile`; not `-rpc.trace` |
+
+## LOG-4 (`log4` branch)
+
+Do not open `log4` until LOG-3 stays signed off. Last LOG WP. No `log5`.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-4.1 | Bootstrap order in `run`; `LogScope` around didOpen/didChange/definition; index/watch/install silent-failure emits | LOG-3 | `Flush` + join on shutdown |
+| LOG-4.2 | User troubleshooting + host-deps / third-party lock vs impl; IT-1.7 still stderr | LOG-4.1 | optional sqlite file after `serve` handshake (Linux CI) |
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -292,5 +354,6 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 2. Implement only that WP’s crates/files.
 3. Map new types in [design-patterns.md](design-patterns.md).
 4. Do not add Node/JVM/CPython, `$/` FilesSince, or SSH in the install crate.
-5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off).
+5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off; `logN+1` until `logN` signed off).
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
+7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`.

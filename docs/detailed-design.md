@@ -1,6 +1,6 @@
 # Detailed design
 
-Types, traits, merge rules, errors. Patterns: [design-patterns.md](design-patterns.md). Proto: [control-protocol.md](control-protocol.md). Plugins: [plugin-sdk.md](plugin-sdk.md).
+Types, traits, merge rules, errors. Patterns: [design-patterns.md](design-patterns.md). Proto: [control-protocol.md](control-protocol.md). Plugins: [plugin-sdk.md](plugin-sdk.md). Logging: [logging.md](logging.md).
 
 Names below are the intended Rust surface. Implement them rather than inventing parallel layers.
 
@@ -8,14 +8,18 @@ Names below are the intended Rust surface. Implement them rather than inventing 
 
 The `progressive-lsp` bin crate is the **composition root**. It:
 
-1. Resolves prefix (`PROGRESSIVE_LSP_HOME`, `--prefix`, else `$HOME/.progressivelsp`).
-2. Builds `ClockPort` (real vs test).
-3. Calls `register_builtins()` / `inventory` into `PluginRegistry`.
-4. Loads config merge chain into `Config`.
-5. Constructs `ScriptHost`, `WatchCoalescer`, `IndexService`, `EngineSupervisor`.
-6. Starts `LspFacade` on stdio; optionally `ControlServer`.
+1. Builds `ClockPort` (real vs test).
+2. Starts `MemoryLog` (ring, cap 4096) so prefix/config failures are not silent.
+3. Resolves prefix (`PROGRESSIVE_LSP_HOME`, `--prefix`, else `$HOME/.progressivelsp`); `ensure_dirs` (creates `log/`).
+4. Opens `SqliteLogRepository` (or keeps `MemoryLog` on failure); replays the ring (best-effort).
+5. Installs `LogCrateBridge` / `TracingBridge`.
+6. Calls `register_builtins()` / `inventory` into `PluginRegistry`.
+7. Loads config merge chain into `Config`; `ConfigWarnAdapter` emits warnings.
+8. Constructs `ScriptHost`, `WatchCoalescer`, `IndexService`, `EngineSupervisor` (libs take `Arc<dyn LogPort>`).
+9. Starts `LspFacade` on stdio; optionally `ControlServer`.
+10. On shutdown: `Flush` + join the writer.
 
-No other crate `new()`s the whole graph.
+No other crate `new()`s the whole graph. Process-wide `OnceLock<LogPort>` is forbidden. The bin is the only place that constructs the sqlite Adapter. Spec: [logging.md](logging.md). `LogPort::emit` returns `()` (never `Result`). `LogRecord` construction never fails. Tests inject `FakeLog` / `MemoryLog` / `NullLog`. Production uses `NeverFailLog` around `SqliteLogRepository`.
 
 ## Core types (`progressive-lsp-core`)
 
@@ -40,9 +44,13 @@ pub trait ClockPort: Send + Sync {
 }
 
 pub struct PrefixLayout { /* bin, engines, cache, log, run, scripts */ }
+
+pub trait LogPort: Send + Sync {
+    fn emit(&self, record: LogRecord);
+}
 ```
 
-Tests inject `FakeClock` (same trait). Production uses the wall clock. Never `thread::sleep` in tests.
+Tests inject `FakeClock` (same trait). Production uses the wall clock. Never `thread::sleep` in tests. `LogPort` is the same injection rule: tests use `FakeLog` / `MemoryLog` / `NullLog`; never open `$HOME`.
 
 `WorkspaceId` is a hash of the canonical absolute workspace path (stable across reconnects).
 
@@ -74,7 +82,7 @@ Files (later wins on duplicate keys that the overlay **sets**):
 
 `initialize` `initializationOptions` may override a documented subset (scripts list, pack list, prefix). Overlay still wins over home for on-disk keys.
 
-Unknown keys: ignore with a log at warn (forward compatible). Required keys: none for boot (empty config is valid).
+Unknown keys: ignore with a log at warn (forward compatible) via `ConfigWarnAdapter`. Required keys: none for boot (empty config is valid). `[log].level` / `[log].path` merge on this same chain; invalid `level` → warn + default `info`. `PROGRESSIVE_LSP_LOG` env overrides `path` for the process.
 
 ## LSP Facade (`progressive-lsp-protocol`)
 

@@ -511,6 +511,64 @@ Stacked on `poc-open-unblock` (not IDE-6). Tree listing order is non-dot directo
 
 Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `uri`, `line`, `character`, and `location_count` so an empty server result is distinguishable from a jump. `file_uri` percent-encodes spaces. No new milestone number.
 
+## LOG-0 — Global logging documentation
+
+**Status: SIGNED OFF** on branch `log0`. Do not start LOG-1 crates until this section is signed off (it is). Parent is **current `main`** (PR #4 / `poc-discover-log` already merged). Do not stack on `poc-no-console`.
+
+**Scope:** [logging.md](logging.md), [logging-plan.md](logging-plan.md), [logging/agent-context.md](logging/agent-context.md) plus index/branch/milestone/pattern/testing/architecture/detailed-design/host-deps updates. No `progressive-lsp-log` crate. No rusqlite in server. No `eprintln!` changes.
+
+**Exit**
+
+- [x] [logging.md](logging.md) is the source of truth; [logging-plan.md](logging-plan.md) is the mutation plan (LOG-1–LOG-4 file-level).
+- [x] branching / implementation-plan / this file list `log0`–`log4` stacked on current `main`.
+- [x] [design-patterns.md](design-patterns.md) names every LOG type in [logging.md](logging.md) (types do not exist in Rust yet).
+- [x] [testing.md](testing.md) states `progressive-lsp-log` on 95% / 80% once it exists.
+- [x] [host-deps.md](host-deps.md): sqlite amalgamation is our artifact (static C in the ELF).
+- [x] [poc-ide/third-party.md](poc-ide/third-party.md): rusqlite allowed in `progressive-lsp-log`; two schemas.
+- [x] poc-ide `RunLog` stays a separate schema. Do not merge.
+
+**Sign-off checklist (LOG-0)**
+
+- [x] Exit criteria met
+- [x] Tests / llvm-cov / mutants / `sleep` / `check-static` — **N/A** (docs only)
+- [x] Docs in this tree updated
+
+## LOG-1 — Port + records (no sqlite in server)
+
+Do not start LOG-1 until LOG-0 stays signed off. No `progressive-lsp-log` crate. No rusqlite in server. No `eprintln!` changes.
+
+- `LogPort`, `LogRecord`, `LogLevel`, `LogOrigin`, `LogComponent`, `LogScope`, `FakeLog`, `MemoryLog`, `NullLog`, `NeverFailLog` in `progressive-lsp-core`.
+- `[log]` overlay: `level`, `path`; invalid level → warning + default `info`.
+
+**Exit:** FakeLog records; scope nest/restore; never-fail NullLog; config `[log]` unknown key still warns. Core stays sqlite-free.
+
+## LOG-2 — WAL repository crate
+
+Do not start LOG-2 until LOG-1 stays signed off. No product `eprintln!` death yet.
+
+- `progressive-lsp-log` workspace member: `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, `ServeLogPath`.
+- Pin `rusqlite` **=0.40.2** `bundled`. Amalgamation is our artifact. `check-static` on the core ELF.
+
+**Exit:** tempfile WAL; `PRAGMA journal_mode` returns `wal`; injected COMMIT failure retries without panic; `BATCH_MAX=1`; FakeClock; re-entrancy; Drop flushes. No `thread::sleep`.
+
+## LOG-3 — Facades, bridges, eprintln death
+
+Do not start LOG-3 until LOG-2 stays signed off.
+
+- Bridges + child/file/LSP capture Adapters. Composition root passes `LogPort`. `ConfigLoad.warnings` emit. Product diagnostic `eprintln!` gone except CLI usage/help (IT-1.7).
+- Allowlist clangd `--log=`; optional gopls `-logfile`. Not `-rpc.trace`, `RA_LOG_FILE`, or `TY_LOG_PROFILE`.
+
+**Exit:** grep of diagnostic `eprintln!` in `src/` and `progressive-lsp-*` is empty except tests and the CLI usage exception. Engine stdout is never a log Adapter.
+
+## LOG-4 — Wire serve/install + docs lock
+
+Do not start LOG-4 until LOG-3 stays signed off. Last LOG branch. Do not open `log5`.
+
+- Bootstrap order from [logging.md](logging.md). `LogScope` around didOpen/didChange/definition. Index/watch/install silent-failure paths emit.
+- User troubleshooting: sqlite under `$PREFIX/log/`. IT-1.7 usage still stderr.
+
+**Exit:** one WAL file per serve/install process; `Flush` + join on shutdown; poc-ide `RunLog` unchanged.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

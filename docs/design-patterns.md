@@ -2,9 +2,9 @@
 
 **Rule:** every component and major type maps to a named pattern in this file. Ad-hoc “manager” / “helper” / “util” layers that hide a missing pattern are a defect. Tests should be able to name the invariant.
 
-Every type named in [detailed-design.md](detailed-design.md) appears in this table. Plugin traits from [plugin-sdk.md](plugin-sdk.md) that are not a `Resolver` step are here too.
+Every type named in [detailed-design.md](detailed-design.md) appears in this table. Plugin traits from [plugin-sdk.md](plugin-sdk.md) that are not a `Resolver` step are here too. Types from [logging.md](logging.md) are in the Global logging section (locked on LOG-0; Rust lands LOG-1+).
 
-Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md).
+Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md), [logging.md](logging.md).
 
 ## Pattern map
 
@@ -124,12 +124,47 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `It3ProgressiveDriver` (`plsp-it1 progressive`) | Adapter | LSP stdio + Envelope socket; IT-3.1–3.7; `--mux` is `pending_mux` (do not silently retest socket) |
 | `It3ReportRow` | DTO | `backend`, `rpc`, `result`, `notes`; T3 stub → `skip_pack_missing`; mux → `pending_mux` |
 
+## Global logging (LOG-1+)
+
+Types from [logging.md](logging.md). They do not exist in Rust yet — this table is the locked map. poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
+
+| Component / type | Pattern | Invariant (testable) |
+|---|---|---|
+| `LogPort` | Dependency injection / Port | `fn emit(&self, record: LogRecord)` returns `()`; no `Result`; same injection rule as `ClockPort`; libs take `Arc<dyn LogPort>`; process-wide `OnceLock<LogPort>` is forbidden |
+| `LogFacade` | Facade | Wraps `LogSink` + `ReentrancyGuard` + min-level filter; records below configured min level are dropped **here**; never logs onto stdout |
+| `LogRecord` | DTO | Construction never fails; omit unknown fields (sqlite NULL); `message` truncates at 64 KiB, lossy UTF-8; `sanitize_extras` drops `text` / `content` / `body` / `clipboard` / `password` / `secret` / `token`; indexes `(ts_unix_ms)`, `(level)`, `(component)`, `(content_path)`, `(source_repo)` |
+| `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail) |
+| `LogOrigin` | Value object | `FirstParty` (`progressive-lsp`) vs `ThirdParty`; `source_repo` is one of those two strings |
+| `LogComponent` | Value object | Stable strings only: `core`, `protocol`, `control`, `engine`, `index`, `watch`, `install`, `script`, `lang-<id>`, pack name, `xtask` (only if a lib path logs) |
+| `LogScope` | Context Object | Task-local / thread-local: `content_path`, `content_line`, `operation`, `component`; `emit` copies scope fields when the caller left them unset; Drop of the guard restores the previous scope (stack) |
+| `LogSink` | Port | Durable append; prod `SqliteLogRepository`; tests `FakeLog` (mutex `Vec` for assertions) |
+| `NeverFailLog` | Decorator | Wraps a `LogSink` that may return `Result`; swallows errors so a full disk cannot panic `serve`; `emit` still returns `()` |
+| `FakeLog` | Test double | Same `LogPort` / `LogSink`; records into a mutex `Vec`; tests never open `$HOME` |
+| `MemoryLog` | Test double / bootstrap ring | Cap 4096; used before prefix exists and when sqlite open fails; replay into sqlite is best-effort |
+| `NullLog` | Test double | Never-fail no-op; `emit` is a no-op and does not panic |
+| `SqliteLogRepository` | Adapter / Repository | One WAL file per serve/install process; `Drop` sends `Shutdown` and joins the Actor without `thread::sleep` (`BATCH_MAX=1` so join is immediate); composition root `Flush` before process end |
+| `WriterActor` | Actor | Owns the `rusqlite::Connection`; receives `LogRecord` / `Flush` / `Shutdown` on mpsc; `check_same_thread` stays true; the writer thread **never** calls `LogPort` |
+| `CrashSafeBatch` | Unit of Work | Commit when `len >= BATCH_MAX` (default 32) **or** `ClockPort` elapsed ≥ `BATCH_MS` (default 50; production only) **or** incoming `level == Error` (including that record) **or** `Flush` / `Shutdown` / `Drop`; each commit is `BEGIN IMMEDIATE` … `COMMIT`; tests set `BATCH_MAX = 1` or call `Flush` — never `thread::sleep`; COMMIT failure keeps a retry `Vec` (cap 1024), overflow drops oldest, increments `dropped_count`, inserts one `warn` meta row (`operation = "log"`) on the next successful commit; pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `wal_autocheckpoint=1000` |
+| `ServeLogPath` | Value object | `{log_dir}/serve-{unix_ms}-{pid}.sqlite`; tests inject `:memory:` (shared-cache URI) or a tempfile; empty / unset `PROGRESSIVE_LSP_LOG` / `[log].path` → this default |
+| `ReentrancyGuard` | Proxy / Guard | Thread-local `IN_EMIT`; if `emit` is already on the stack, enqueue on the Actor channel without taking Facade locks that could deadlock |
+| `StderrEmitAdapter` | Adapter | Former diagnostic `eprintln!` sites; after LOG-3, grep of diagnostic `eprintln!` in `src/` and `progressive-lsp-*` is empty except tests and the CLI usage exception |
+| `LogCrateBridge` | Adapter | `log::Log::log`; origin is third-party unless target starts with `progressive_lsp`; installed once in the composition root |
+| `TracingBridge` | Adapter | `tracing` `Event`s; same origin rule as `LogCrateBridge`; server default features have no tracing emitters |
+| `ChildStderrAdapter` | Observer + Adapter | Line-delimited stderr of a pack; origin third-party; stdout of the child is **never** this Adapter; bounded drain so stderr cannot stall LSP; invalid UTF-8 → lossy; no regex panic |
+| `LogFileTailAdapter` | Adapter | Engine log **file**; origin third-party; prefer `$PREFIX/log/<pack>/`; do not parse LSP from the file |
+| `LspLogMessageAdapter` | Adapter | `window/logMessage` / `window/showMessage` / `$/logTrace`; origin third-party; secondary — never a substitute for crash/panic on stderr |
+| `ConfigWarnAdapter` | Adapter | `ConfigLoad.warnings`; first-party; unknown keys emit `warn` + `operation=config` |
+| `CliUsageAdapter` | Adapter | `--help` / usage; first-party; **also** writes stderr (IT-1.7); `LogPort::warn` with `operation=cli` |
+| `NullStderrAdapter` | Adapter | `stderr(Stdio::null())`; **Forbidden** on production pack spawn |
+| `InheritStderrAdapter` | Adapter | `stderr(Stdio::inherit())`; operator/CI harness bins only — never `serve` |
+
 ## Patterns we do not use (v1)
 
 | Pattern | Why not |
 |---|---|
 | Plugin `dlopen` | Fights musl-static |
 | Singleton global `REGISTRY` without injection | Untestable; use composition root |
+| Process-wide `OnceLock<LogPort>` | Untestable; the bin injects `Arc<dyn LogPort>` |
 | God `LspServer` that owns watches, engines, and Rhai | Split Facades + Supervisor |
 | Scripts as Strategy for `textDocument/definition` | Forbidden; tests assert |
 | Ad-hoc manager / helper / util crates | Missing pattern; add a row here instead |

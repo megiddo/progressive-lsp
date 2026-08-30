@@ -8,7 +8,7 @@ Related: [architecture.md](architecture.md), [testing.md](testing.md) (`check-st
 
 | Bucket | Examples | Rule |
 |---|---|---|
-| **Our artifacts** | `progressive-lsp`, engine packs we ship (clangd, ty, RA, tsgo, gopls, zls, biome, superhtml, csharp-ls, PHPantom / static phpactor) | Fully static ELF: **no interpreter, no `DT_NEEDED`**. musl default; glibc-static optional **same** bar. |
+| **Our artifacts** | `progressive-lsp`, engine packs we ship (clangd, ty, RA, tsgo, gopls, zls, biome, superhtml, csharp-ls, PHPantom / static phpactor), **sqlite amalgamation** compiled into the core ELF via `rusqlite` `bundled` (LOG-2+; not a host `libsqlite3.so`) | Fully static ELF: **no interpreter, no `DT_NEEDED`**. musl default; glibc-static optional **same** bar. Loadable sqlite extensions off (`SQLITE_OMIT_LOAD_EXTENSION`). |
 | **Project artifacts** | `compile_commands.json`, jars, `node_modules` **as source**, `Cargo.toml`, rustc **sysroot** and proc-macro `.so` produced by the **user’s** rustc, `.csproj` outputs, project `go` / `zig` on PATH, `composer.json` | We read them. We do not ship them. Missing → degrade tier and say so. |
 | **Forbidden as our runtime** | Node, JVM, CPython, host `php` on PATH as T3, any `.so` we ship | Never. |
 
@@ -44,7 +44,7 @@ If phpactor: still a **static** ELF (static php), documented here. Host `php` is
 
 ## Runtime host deps for **our** binaries
 
-**Empty.** No libstdc++.so, no libphp, no libjvm.
+**Empty.** No libstdc++.so, no libphp, no libjvm. No host `libsqlite3.so` — the amalgamation is **static C in our ELF** ([logging.md](logging.md)). `check-static` must stay green after rusqlite is linked (no `DT_NEEDED`, no interpreter, no `libdl` from sqlite extensions).
 
 Allowed **project** compilers on PATH for **accuracy**, not for our libc: `rustc` sysroot, `go`, `zig`. Absence is degrade-to-T2, not a dynamic link of our ELF.
 
@@ -70,4 +70,4 @@ What actually shipped through M5, mapped to the three buckets. No M6 dist tarbal
 | **Project artifacts** | `compile_commands.json` (read; one-shot cmake only if `CMakeLists.txt` exists). Jars / `.class` as disk facts. `node_modules` **as source**. `Cargo.toml` + rustc **sysroot** / proc-macro `.so` from the **user’s** rustc. `*.csproj` outputs. Project `go` / `zig` on PATH. `composer.json`. Manifests listed in [architecture.md](architecture.md). | We do not ship a JDK, Node, CPython, PHP runtime, Go SDK, or Zig toolchain. Missing project artifact → degrade tier and say so. |
 | **Forbidden as our runtime** | Empty. No libstdc++.so, no libphp, no libjvm, no libnode. | Node, JVM, CPython, host `php` on PATH as T3, any `.so` **we** ship. tsserver, JDT-LS, pylsp, pyright, ruff-as-types, intelephense. |
 
-C# stays T1/T2. Java stays T1/T2 (no T3). PHP T3 is PHPantom when the pack is present; else T2. Darwin `xtask dist` stubs are not musl ELF greens and must not be `check-static` greened. Allocator-matrix cells stay mimalloc placeholders until a matching CI arch job records a winner.
+C# stays T1/T2. Java stays T1/T2 (no T3). PHP T3 is PHPantom when the pack is present; else T2. Darwin `xtask dist` stubs are not musl ELF greens and must not be `check-static` greened. Allocator-matrix cells stay mimalloc placeholders until a matching CI arch job records a winner. sqlite amalgamation in `progressive-lsp-log` is locked ([logging.md](logging.md)) and lands LOG-2 — not shipped on this branch.

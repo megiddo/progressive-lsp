@@ -48,6 +48,7 @@ flowchart TB
 
 ```text
 progressive-lsp/                 bin: serve + install, register_builtins
+  progressive-lsp-log            SqliteLogRepository + capture Adapters (LOG-2+; rusqlite bundled)
   progressive-lsp-protocol       LSP Facade, JSON-RPC, experimental caps
   progressive-lsp-control        proto + codec   (consumers MAY depend)
   progressive-lsp-plugin         PluginRegistry + public traits
@@ -58,9 +59,11 @@ progressive-lsp/                 bin: serve + install, register_builtins
   progressive-lsp-resolve
   progressive-lsp-workspace
   progressive-lsp-engine         EngineAdapter impls + supervisor
-  progressive-lsp-core           ids, errors, ClockPort, LanguageVersion, prefix
+  progressive-lsp-core           ids, errors, ClockPort, LogPort, LanguageVersion, prefix
   progressive-lsp-lang-*         one crate per language, LanguageFactory
 ```
+
+`progressive-lsp-core` stays sqlite-free. The bin is the only place that constructs `SqliteLogRepository`. Product logs are one WAL file per `serve`/`install` process under `$PREFIX/log/` ([logging.md](logging.md)). poc-ide `RunLog` is a **separate** schema.
 
 **Dependency rule:** stock editors depend on nothing from this repo. Progressive consumers may depend on `progressive-lsp-install` and `progressive-lsp-control`. `progressive-lsp-plugin` is for people compiling *this* binary.
 
@@ -73,7 +76,7 @@ $HOME/.progressivelsp/                 # default prefix; never a git tree
   bin/progressive-lsp
   engines/
   cache/                               # index; content-addressed
-  log/
+  log/                                 # serve-<unix_ms>-<pid>.sqlite WAL (LOG-2+); never share one file across two serve processes
   run/control.sock                     # protobuf control (optional)
   config.toml                          # user global
   scripts/                             # user Rhai

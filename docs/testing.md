@@ -15,11 +15,14 @@ Empty Factory slots still count: tests that they return `UnsupportedLanguage` wi
 
 `poc-ide` is a workspace member. Its **library** is in the 95% denominator. eframe/`rfd` stay in `main.rs` (already ignored) or `poc-ide/src/ui.rs`. Do not put egui types in the lib.
 
+`progressive-lsp-log` is on the 95% llvm-cov denominator and the 80% mutants list **once it exists** (LOG-2+). Tests: `FakeLog` / `MemoryLog`; sqlite tests use tempfile or shared-cache memory URI. No `$HOME`. No `thread::sleep`. `BATCH_MAX=1` or explicit `Flush`.
+
 ## Mutation — 80% kill rate
 
 `cargo-mutants` on crates that **exist** in the milestone:
 
 - Always when present: `progressive-lsp-core`, `-control`, `-install`, `-watch`, `-index`, `-resolve`, `-script`, `-workspace`
+- `progressive-lsp-log` once the crate exists (LOG-2+): `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, capture Adapters — not rusqlite C
 - Language crates once they have real resolvers (not empty slots)
 - `progressive-lsp-engine`: supervisor crash/backoff/hash/discovery only
 - `poc-ide` once the crate exists (IDE-1+): Ports, Commands, Facades — not eframe
@@ -51,7 +54,7 @@ musl default malloc is **unacceptable**. Go/Zig/C# keep their own heaps (not in 
 
 ## Static check
 
-`xtask check-static` fails if a shipped ELF has a dynamic interpreter **or** any `DT_NEEDED`. Same bar for musl and glibc-static. Go packs: `CGO_ENABLED=0`.
+`xtask check-static` fails if a shipped ELF has a dynamic interpreter **or** any `DT_NEEDED`. Same bar for musl and glibc-static. Go packs: `CGO_ENABLED=0`. After rusqlite is linked (LOG-2+), fail closed if sqlite pulls `libdl` as `DT_NEEDED`.
 
 ## Performance budgets (publish numbers in M5 benches)
 
@@ -114,4 +117,4 @@ Separate from the server’s musl bar. Spec: [poc-ide/README.md](poc-ide/README.
 - [ ] pattern table updated if a type was added
 - [ ] exit row in [milestones.md](milestones.md)
 
-**Docs-0:** tests, llvm-cov, mutants, `sleep`, and `check-static` are **N/A** (no crates). Do not invent tests to fill this checklist.
+**Docs-0 / LOG-0:** tests, llvm-cov, mutants, `sleep`, and `check-static` are **N/A** (no crates). Do not invent tests to fill this checklist.
