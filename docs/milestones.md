@@ -503,6 +503,10 @@ Stacked on `poc-no-console` (not IDE-6). Open Folder / Open File records `Pendin
 
 Stacked on `poc-dialog-defer` (not IDE-6). Opening a large tree no longer blocks the UI on a recursive `notify` watch or on `initialize`. Watch is `WatchDepth::Immediate`; nested dirs are watched on expand. LSP spawn+initialize runs on a worker thread (`LspSessionState::Connecting`) and `didOpen` is replayed when ready. No new milestone number.
 
+## poc-tree-sort — directories first, dots last
+
+Stacked on `poc-open-unblock` (not IDE-6). Tree listing order is non-dot directories, non-dot files, dot directories, dot files; lexicographic within each group. No new milestone number.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

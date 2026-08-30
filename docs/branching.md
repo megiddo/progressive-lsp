@@ -46,6 +46,7 @@ main   # after IDE-5 merge
                                       └── poc-no-console  # drop the hand-typed protocol console; debug is RunLog (not IDE-6)
                                             └── poc-dialog-defer  # File Open Folder/File after the menu closes (not IDE-6)
                                                   └── poc-open-unblock  # non-recursive watch + deferred LSP initialize (not IDE-6)
+                                                        └── poc-tree-sort  # dirs then files; dot names last (not IDE-6)
 ```
 
 ## Rules

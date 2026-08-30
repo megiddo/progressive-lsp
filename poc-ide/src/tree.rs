@@ -251,6 +251,16 @@ impl FileTree {
         matches!(name, ".git" | "target" | "node_modules")
     }
 
+    /// Sort key: non-dot directories, non-dot files, dot directories, dot
+    /// files; lexicographic within each group.
+    pub fn display_key(name: &str, is_dir: bool) -> (u8, u8, &str) {
+        (
+            u8::from(name.starts_with('.')),
+            u8::from(!is_dir),
+            name,
+        )
+    }
+
     pub fn load(root: &WorkspaceRoot, fs: &(impl FsPort + ?Sized)) -> Result<Self, IdeError> {
         if !fs.is_dir(root.as_path()) {
             return Err(IdeError::NotADirectory(root.as_path().to_path_buf()));
@@ -461,7 +471,9 @@ impl TreeExpansion {
 /// One-level listing Command used by [`FileTree::load`] and [`TreeNode::load_children`].
 fn list_immediate(dir: &Path, fs: &(impl FsPort + ?Sized)) -> Result<Vec<TreeNode>, IdeError> {
     let mut entries = fs.read_dir(dir)?;
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.sort_by(|a, b| {
+        FileTree::display_key(&a.name, a.is_dir).cmp(&FileTree::display_key(&b.name, b.is_dir))
+    });
     let mut nodes = Vec::new();
     for entry in entries {
         if entry.is_dir && FileTree::skips_display_name(&entry.name) {
@@ -716,7 +728,7 @@ mod tests {
             .iter()
             .map(|n| n.name().to_string())
             .collect();
-        assert_eq!(names, vec![".github", "README.md", "empty", "src"]);
+        assert_eq!(names, vec!["empty", "src", "README.md", ".github"]);
         assert!(tree.find(Path::new("/ws/.git")).is_none());
         assert!(tree.find(Path::new("/ws/target")).is_none());
         assert!(tree.find(Path::new("/ws/node_modules")).is_none());
@@ -728,6 +740,49 @@ mod tests {
         assert!(empty.is_loaded());
         assert!(empty.children().is_empty());
         assert!(tree.find(Path::new("/ws/nope")).is_none());
+    }
+
+    #[test]
+    fn file_tree_display_order_dirs_then_files_dots_last() {
+        assert_eq!(
+            FileTree::display_key("src", true),
+            (0, 0, "src")
+        );
+        assert_eq!(
+            FileTree::display_key("README.md", false),
+            (0, 1, "README.md")
+        );
+        assert_eq!(
+            FileTree::display_key(".github", true),
+            (1, 0, ".github")
+        );
+        assert_eq!(
+            FileTree::display_key(".gitignore", false),
+            (1, 1, ".gitignore")
+        );
+        assert!(FileTree::display_key("src", true) < FileTree::display_key("a.rs", false));
+        assert!(FileTree::display_key("z.rs", false) < FileTree::display_key(".config", true));
+        assert!(FileTree::display_key(".config", true) < FileTree::display_key(".env", false));
+        assert!(FileTree::display_key("empty", true) < FileTree::display_key("src", true));
+
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/z.rs", b"").unwrap();
+        fs.add_file("/ws/a.rs", b"").unwrap();
+        fs.add_file("/ws/.env", b"").unwrap();
+        fs.add_dir("/ws/src").unwrap();
+        fs.add_dir("/ws/empty").unwrap();
+        fs.add_dir("/ws/.config").unwrap();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &fs).unwrap();
+        let names: Vec<_> = tree
+            .children()
+            .iter()
+            .map(|n| n.name().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["empty", "src", "a.rs", "z.rs", ".config", ".env"]
+        );
     }
 
     #[test]
