@@ -1,0 +1,29 @@
+[package]
+name = "poc-ide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "POC IDE consumer sample: folder/file, tree, tabs, layout"
+
+[lib]
+name = "poc_ide"
+path = "src/lib.rs"
+
+[[bin]]
+name = "poc-ide"
+path = "src/main.rs"
+
+[dependencies]
+thiserror.workspace = true
+eframe = "=0.36.1"
+egui = "=0.36.1"
+egui_extras = "=0.36.1"
+rfd = "=0.15.4"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# eframe / rfd live in main.rs and ui.rs; mutants score Ports/Commands only.
+[package.metadata.mutants]
+exclude_globs = ["src/main.rs", "src/ui.rs"]

@@ -33,6 +33,8 @@ Run (after IDE-1+):
 
 ```text
 cargo run -p poc-ide
+cargo run -p poc-ide -- --folder DIR
+cargo run -p poc-ide -- --file PATH
 ```
 
 Spawn of `progressive-lsp serve` uses (first hit wins): `PROGRESSIVE_LSP` env, `target/{debug,release}/progressive-lsp`, then `progressive-lsp` on `PATH`.

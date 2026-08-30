@@ -141,6 +141,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
 | `poc-ide` bin (`main.rs`) | Composition root | Only the bin wires eframe/`rfd`; lib takes Ports |
+| `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test |
+| `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
 | `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
 | `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |

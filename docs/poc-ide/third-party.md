@@ -6,13 +6,13 @@ Lean on OSS. Do not write an editor, highlighter, or dialog toolkit. If a crate 
 
 | Concern | Crate | Role | Fallback |
 |---|---|---|---|
-| Window + immediate mode | `eframe` **0.36.x** + `egui` **0.36.x** | Window, `SidePanel` resize, modal | none (POC is native egui) |
-| Extra widgets / syntect layouter | `egui_extras` **0.36.x** (`syntect` feature if required) | Editor view highlighting | call `syntect` from `Highlighter` and paint runs |
-| Tabs | `egui_dock` **0.21.x** (egui 0.36) | Tab bar | custom `TabStrip` view in `main.rs` only |
-| Native open file/folder | `rfd` | `DialogPort` prod | `FakeDialog` in tests; CLI flags `--folder` / `--file` also acceptable as a second Adapter |
+| Window + immediate mode | `eframe` **0.36.1** + `egui` **0.36.1** | Window, `Panel::left` resize, modal | none (POC is native egui) |
+| Extra widgets / syntect layouter | `egui_extras` **0.36.1** (`syntect` feature if required) | Editor view highlighting | call `syntect` from `Highlighter` and paint runs |
+| Tabs | `egui_dock` **0.21.x** (egui 0.36) | Tab bar | **IDE-1 uses the fallback:** custom `TabStrip` in `ui.rs`. Published 0.21.1 declares rust-version **1.95**; this workspace is rustc **1.87**. |
+| Native open file/folder | `rfd` **0.15.4** | `DialogPort` prod | `FakeDialog` in tests; CLI flags `--folder` / `--file` also acceptable as a second Adapter |
 | Rope buffer | `ropey` | `OpenBuffer` storage | none |
 | Syntax tokens | `syntect` | `Highlighter` Adapter | none (do not use Tree-sitter in the IDE; tokens from syntect, intelligence from LSP) |
-| Walk tree | `walkdir` | `FsPort.read_tree` | `std::fs` recursion behind the same Port |
+| Walk tree | `walkdir` | `FsPort.read_tree` | **IDE-1 uses the fallback:** `std::fs` recursion behind `FsPort` / `FileTree::load` |
 | Disk events | `notify` | `WatchPort` prod Adapter | `FakeWatch` |
 | Clipboard | `arboard` **or** egui ctx clipboard | `ClipboardPort` prod in **main** | `FakeClipboard` |
 | LSP DTOs | `lsp-types` | params/results | `serde_json::Value` for the console inspector |
@@ -37,3 +37,5 @@ Lean on OSS. Do not write an editor, highlighter, or dialog toolkit. If a crate 
 Pin the **egui trio** (`egui`, `eframe`, `egui_extras`) to the same minor. `egui_dock` must declare that egui. If `egui_dock` lags on a future bump, drop docking and keep `TabStrip` — do not upgrade egui out of sync to chase docking.
 
 Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file stays the policy.
+
+**IDE-1 pins** (also in `poc-ide/Cargo.toml`): `eframe` / `egui` / `egui_extras` **=0.36.1**, `rfd` **=0.15.4**, `thiserror` workspace **2.0**. No `egui_dock`, `walkdir`, `ropey`, `syntect`, or `notify` on this crate yet.

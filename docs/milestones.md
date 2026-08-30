@@ -358,26 +358,26 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 ## IDE-1 — Shell: open, tree, tabs, layout
 
-**Status: UNSIGNED.** Do not start IDE-2 until this section is signed off. No buffers-as-rope, no LSP.
+**Status: SIGNED OFF** on branch `ide1`. Do not start IDE-2 until this section stays signed off. No buffers-as-rope, no LSP.
 
 - `poc-ide` crate: lib + tiny `main.rs` composition root.
 - `DialogPort` + `rfd` (bin); `FakeDialog` tests: open folder sets `WorkspaceRoot`; open file sets root to parent and a selected path.
-- `FileTree` Composite via `walkdir` / `FsPort`; `MemFs` tests.
+- `FileTree` Composite via `FsPort` (`std::fs` recursion / `MemFs`); display-skip `.git` / `target` / `node_modules`.
 - `LayoutState` left-panel width; persist in-process only (no config file required).
-- `TabStrip` (egui_dock in bin or custom view); tests: open/focus/close tabs by path.
+- `TabStrip` custom view in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on rustc 1.87); tests: open/focus/close tabs by path.
 
-**Exit:** domain can open a folder or file, list a tree, hold tabs, and record a resizable panel width. `cargo run -p poc-ide` shows left tree + tabs + empty editor pane with a draggable splitter. No `thread::sleep`.
+**Exit:** domain can open a folder or file, list a tree, hold tabs, and record a resizable panel width. `cargo run -p poc-ide` shows left tree + tabs + empty editor pane with a draggable splitter. CLI `--folder DIR` / `--file PATH` skip the dialog. No `thread::sleep`.
 
 **Sign-off checklist (IDE-1)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch
-- [ ] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, `poc-ide/src/ui.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`)
-- [ ] 80% mutants on listed crates that changed — **poc-ide** once it has real types
-- [ ] No `sleep` in crate unit tests
-- [ ] `check-static` if ELF changed — **N/A** (GUI is not a shipped musl ELF)
-- [ ] [design-patterns.md](design-patterns.md) table updated for IDE-1 types
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov on crates that exist (exclude `xtask/`, bin `main.rs`, `poc-ide/src/ui.rs`, vendored Tree-sitter C, engine pack source we do not own, `integration/`) — **95.43% lines**
+- [x] 80% mutants on listed crates that changed — poc-ide **100 caught / 100 scored (100%)**, 23 unviable
+- [x] No `sleep` in crate unit tests
+- [x] `check-static` if ELF changed — **N/A** (GUI is not a shipped musl ELF)
+- [x] [design-patterns.md](design-patterns.md) table updated for IDE-1 types (`IdeError`, `DirEntry`)
+- [x] Docs in this tree updated if a locked decision was refined (egui 0.36 `Panel::left`; custom tab bar; `std::fs` tree walk)
 
 ## IDE-2 — Edit + highlight + save
 

@@ -221,12 +221,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## IDE-1 (`ide1` branch)
 
-**Status: UNSIGNED.** Do not open `ide2` until this table is signed off.
+**Status: SIGNED OFF** on `ide1`. Do not open `ide2` until this table stays signed off.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| IDE-1.1 | `poc-ide` crate skeleton, composition-root bin | IDE-0 | lib + `main.rs`; not musl |
-| IDE-1.2 | `DialogPort` + `FileTree` + `LayoutState` + `TabStrip` | IDE-1.1 | `FakeDialog` / `MemFs`; resizable width is a value |
+| IDE-1.1 | `poc-ide` crate skeleton, composition-root bin | IDE-0 | **SIGNED OFF.** lib + `main.rs`; not musl. Pins: eframe/egui/egui_extras **0.36.1**, rfd **0.15.4**. |
+| IDE-1.2 | `DialogPort` + `FileTree` + `LayoutState` + `TabStrip` | IDE-1.1 | **SIGNED OFF.** `FakeDialog` / `MemFs`; resizable width is a value. llvm-cov **95.43%** lines. Mutants poc-ide **100/100 (100%)**, 23 unviable. |
 
 ## IDE-2 (`ide2` branch)
 

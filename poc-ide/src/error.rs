@@ -1,0 +1,84 @@
+//! Domain Result for the POC IDE. User paths never `unwrap`.
+
+use std::io;
+use std::path::PathBuf;
+
+/// Typed failure from Ports and value-object constructors.
+#[derive(Debug, thiserror::Error)]
+pub enum IdeError {
+    #[error("path is not absolute: {0}")]
+    NotAbsolute(PathBuf),
+    #[error("path not found: {0}")]
+    NotFound(PathBuf),
+    #[error("not a directory: {0}")]
+    NotADirectory(PathBuf),
+    #[error("path has no parent: {0}")]
+    NoParent(PathBuf),
+    #[error("{0}")]
+    Io(#[from] io::Error),
+}
+
+impl IdeError {
+    pub fn is_not_absolute(&self) -> bool {
+        matches!(self, Self::NotAbsolute(_))
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound(_))
+    }
+
+    pub fn is_not_a_directory(&self) -> bool {
+        matches!(self, Self::NotADirectory(_))
+    }
+
+    pub fn is_no_parent(&self) -> bool {
+        matches!(self, Self::NoParent(_))
+    }
+
+    pub fn is_io(&self) -> bool {
+        matches!(self, Self::Io(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn ide_error_domain_result_display_names_each_variant() {
+        assert_eq!(
+            IdeError::NotAbsolute(PathBuf::from("rel")).to_string(),
+            "path is not absolute: rel"
+        );
+        assert_eq!(
+            IdeError::NotFound(PathBuf::from("/missing")).to_string(),
+            "path not found: /missing"
+        );
+        assert_eq!(
+            IdeError::NotADirectory(PathBuf::from("/tmp/file")).to_string(),
+            "not a directory: /tmp/file"
+        );
+        assert_eq!(
+            IdeError::NoParent(PathBuf::from("/")).to_string(),
+            "path has no parent: /"
+        );
+        let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+        assert!(io.to_string().contains("denied"));
+    }
+
+    #[test]
+    fn ide_error_domain_result_classifiers() {
+        assert!(IdeError::NotAbsolute(PathBuf::from("x")).is_not_absolute());
+        assert!(!IdeError::NotAbsolute(PathBuf::from("x")).is_not_found());
+        assert!(IdeError::NotFound(PathBuf::from("/n")).is_not_found());
+        assert!(!IdeError::NotFound(PathBuf::from("/n")).is_not_a_directory());
+        assert!(IdeError::NotADirectory(PathBuf::from("/f")).is_not_a_directory());
+        assert!(!IdeError::NotADirectory(PathBuf::from("/f")).is_no_parent());
+        assert!(IdeError::NoParent(PathBuf::from("/")).is_no_parent());
+        assert!(!IdeError::NoParent(PathBuf::from("/")).is_io());
+        let io = IdeError::from(io::Error::other("x"));
+        assert!(io.is_io());
+        assert!(!io.is_not_absolute());
+    }
+}

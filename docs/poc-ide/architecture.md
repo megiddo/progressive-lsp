@@ -108,8 +108,8 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 
 ## UI mapping (bin only)
 
-- Left: `egui::SidePanel::left("tree").resizable(true)` bound to `LayoutState.left_width`.
-- Center: `TabStrip` rendered with **egui_dock** if the pin matches egui; else a thin custom tab bar with the same `TabStrip` tests.
+- Left: `egui::Panel::left("tree").resizable(true)` bound to `LayoutState.left_width` (egui 0.36 renamed `SidePanel` to `Panel`).
+- Center: `TabStrip` rendered with a thin custom tab bar in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on this workspace’s rustc). Same `TabStrip` tests.
 - Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view.
 - Modal: `egui::Modal` / `Window` for `ConflictModal`.
 - Bottom or right: `ProtocolConsole` (collapsible); transcript rows are append-only `TranscriptEntry` DTOs.
