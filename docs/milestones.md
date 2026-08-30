@@ -499,6 +499,10 @@ Stacked on `poc-navigate` (not IDE-6). The bin no longer draws a bottom Protocol
 
 Stacked on `poc-no-console` (not IDE-6). Open Folder / Open File records `PendingDialog` and applies on the next frame so `rfd` is not invoked from inside `menu_button` (that freeze looks like a hung UI with no dialog). Cancel is `DialogOutcome::Cancelled`. No new milestone number.
 
+## poc-open-unblock — progressive folder bind
+
+Stacked on `poc-dialog-defer` (not IDE-6). Opening a large tree no longer blocks the UI on a recursive `notify` watch or on `initialize`. Watch is `WatchDepth::Immediate`; nested dirs are watched on expand. LSP spawn+initialize runs on a worker thread (`LspSessionState::Connecting`) and `didOpen` is replayed when ready. No new milestone number.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

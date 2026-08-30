@@ -8,8 +8,8 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
     advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
     ControlClient, CursorOffsets, DialogPort, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
-    FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, NotifyWatch,
-    DialogOutcome, OpenBuffer, PendingDialog, PendingDiscover, RunLog, Selection, ServeMode,
+    FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, LspSessionState,
+    NotifyWatch, DialogOutcome, OpenBuffer, PendingDialog, PendingDiscover, RunLog, Selection, ServeMode,
     SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl, WatchPort,
     WorkspaceRoot,
 };
@@ -62,9 +62,12 @@ impl LiveWatch {
 
 impl WatchPort for LiveWatch {
     fn watch(&mut self, path: &Path) -> Result<(), IdeError> {
+        if self.mapped.is_watching(path) {
+            return Ok(());
+        }
         if let Some(watcher) = &mut self.watcher {
             watcher
-                .watch(path, RecursiveMode::Recursive)
+                .watch(path, RecursiveMode::NonRecursive)
                 .map_err(|e| IdeError::watch(e.to_string()))?;
         }
         self.mapped.watch(path)
@@ -113,6 +116,8 @@ pub struct PocIdeApp {
     watch: LiveWatch,
     disk: DiskWatch,
     lsp: Option<LspClient<StdioLsp>>,
+    lsp_inbox: Option<mpsc::Receiver<Result<LspClient<StdioLsp>, String>>>,
+    lsp_session: LspSessionState,
     lsp_error: Option<String>,
     serve_mode: ServeMode,
     control_socket_path: Option<PathBuf>,
@@ -153,6 +158,8 @@ impl PocIdeApp {
             watch: LiveWatch::new(),
             disk: DiskWatch::new(),
             lsp: None,
+            lsp_inbox: None,
+            lsp_session: LspSessionState::Idle,
             lsp_error: None,
             serve_mode,
             control_socket_path: control_socket,
@@ -204,15 +211,13 @@ impl PocIdeApp {
                     self.shutdown_lsp();
                 }
                 let watch_err = self.watch.watch_root(root.as_path()).err();
-                self.connect_lsp(&root);
+                self.spawn_lsp(&root);
                 self.expansion = TreeExpansion::for_root(&root);
                 self.root = Some(root);
                 self.tree = Some(tree);
                 self.status = watch_err
                     .map(|e| e.to_string())
-                    .or_else(|| self.lsp_error.clone())
-                    .or_else(|| self.control_error.clone())
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| "Connecting language server…".into());
                 if let Some(file) = open_file {
                     self.open_path(&file);
                 }
@@ -254,6 +259,9 @@ impl PocIdeApp {
                 let text = buf.text();
                 self.tabs.open(&opened);
                 self.run_log.log_tab_open(&opened);
+                if let Some(parent) = opened.parent() {
+                    let _ = self.watch.watch(parent);
+                }
                 if let Some(lsp) = &mut self.lsp {
                     match lsp.did_open(&opened, &text) {
                         Ok(_) => self.run_log.log_lsp("textDocument/didOpen", None),
@@ -309,49 +317,81 @@ impl PocIdeApp {
         }
     }
 
-    fn connect_lsp(&mut self, root: &WorkspaceRoot) {
+    fn spawn_lsp(&mut self, root: &WorkspaceRoot) {
         self.shutdown_lsp();
-        match SpawnSpec::resolve() {
-            Ok(spec) => {
-                match StdioLsp::spawn_serve(
-                    &spec,
-                    self.serve_mode,
-                    self.control_socket_path.as_deref(),
-                ) {
-                    Ok(transport) => {
-                        let mut client = LspClient::new(transport).with_mode(self.serve_mode);
-                        match client.initialize(root.as_path()) {
-                            Ok(()) => {
-                                self.run_log.log_lsp("initialize", None);
-                                self.connect_control(client.progressive_cap());
-                                self.lsp = Some(client);
-                                self.lsp_error = None;
-                            }
-                            Err(e) => {
-                                self.run_log.log_lsp("initialize", Some(&e.to_string()));
-                                self.lsp = None;
-                                self.lsp_error = Some(e.to_string());
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        self.run_log.log_lsp("initialize", Some(&e.to_string()));
-                        self.lsp = None;
-                        self.lsp_error = Some(e.to_string());
-                        if self.serve_mode.is_control_socket() {
-                            self.control_error = Some(e.to_string());
-                        }
-                    }
+        self.lsp_session = self.lsp_session.begin_connect();
+        self.run_log.log_lsp("initialize_start", None);
+        let (tx, rx) = mpsc::channel();
+        self.lsp_inbox = Some(rx);
+        let root = root.as_path().to_path_buf();
+        let mode = self.serve_mode;
+        let socket = self.control_socket_path.clone();
+        let _ = std::thread::Builder::new()
+            .name("poc-ide-lsp".into())
+            .spawn(move || {
+                let result = spawn_initialized_client(root, mode, socket.as_deref());
+                let _ = tx.send(result.map_err(|e| e.to_string()));
+            });
+    }
+
+    fn poll_lsp_inbox(&mut self) {
+        let incoming = match &self.lsp_inbox {
+            None => return,
+            Some(rx) => match rx.try_recv() {
+                Ok(v) => Some(v),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("language server thread ended".into()))
                 }
-            }
+            },
+        };
+        let Some(incoming) = incoming else {
+            return;
+        };
+        self.lsp_inbox = None;
+        match incoming {
+            Ok(client) => self.finish_lsp(client),
             Err(e) => {
-                self.run_log.log_lsp("initialize", Some(&e.to_string()));
+                self.run_log.log_lsp("initialize", Some(&e));
                 self.lsp = None;
-                self.lsp_error = Some(e.to_string());
+                self.lsp_error = Some(e.clone());
+                self.lsp_session = self.lsp_session.finish_err();
                 if self.serve_mode.is_control_socket() {
-                    self.control_error = Some(e.to_string());
+                    self.control_error = Some(e.clone());
+                }
+                self.status = e;
+            }
+        }
+    }
+
+    fn finish_lsp(&mut self, mut client: LspClient<StdioLsp>) {
+        self.run_log.log_lsp("initialize", None);
+        self.connect_control(client.progressive_cap());
+        let opens: Vec<(PathBuf, String)> = self
+            .tabs
+            .tabs()
+            .iter()
+            .filter_map(|tab| {
+                self.buffers
+                    .get(tab.as_path())
+                    .map(|buf| (buf.path().to_path_buf(), buf.text()))
+            })
+            .collect();
+        for (path, text) in opens {
+            match client.did_open(&path, &text) {
+                Ok(_) => self.run_log.log_lsp("textDocument/didOpen", None),
+                Err(e) => {
+                    self.run_log
+                        .log_lsp("textDocument/didOpen", Some(&e.to_string()));
+                    self.status = e.to_string();
                 }
             }
+        }
+        self.lsp = Some(client);
+        self.lsp_error = None;
+        self.lsp_session = self.lsp_session.finish_ok();
+        if self.status == "Connecting language server…" {
+            self.status.clear();
         }
     }
 
@@ -386,7 +426,9 @@ impl PocIdeApp {
     }
 
     fn shutdown_lsp(&mut self) {
+        self.lsp_inbox = None;
         self.control = None;
+        self.lsp_session = LspSessionState::Idle;
         if let Some(mut client) = self.lsp.take() {
             let _ = client.shutdown();
         }
@@ -455,6 +497,10 @@ impl PocIdeApp {
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.apply_pending_dialog();
+        self.poll_lsp_inbox();
+        if self.lsp_inbox.is_some() {
+            ui.ctx().request_repaint();
+        }
         let already: Vec<PathBuf> = self
             .disk
             .pending()
@@ -534,69 +580,69 @@ impl eframe::App for PocIdeApp {
                     .root
                     .as_ref()
                     .map(|root| root.as_path().display().to_string());
-                let children = self.tree.as_ref().map(|tree| tree.children().to_vec());
-                match (root_label, children) {
-                    (Some(label), Some(nodes)) => {
-                        ui.label(label);
-                        ui.separator();
-                        let mut clicked = None;
-                        let mut discover = None;
-                        let mut became_expanded = Vec::new();
-                        let mut became_collapsed = Vec::new();
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            let shown = show_nodes(ui, &nodes, &self.expansion);
+                if root_label.is_some() && self.tree.is_some() {
+                    let label = root_label.unwrap();
+                    ui.label(label);
+                    ui.separator();
+                    let mut clicked = None;
+                    let mut discover = None;
+                    let mut became_expanded = Vec::new();
+                    let mut became_collapsed = Vec::new();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(tree) = self.tree.as_ref() {
+                            let shown = show_nodes(ui, tree.children(), &self.expansion);
                             clicked = shown.clicked;
                             discover = shown.discover;
                             became_expanded = shown.became_expanded;
                             became_collapsed = shown.became_collapsed;
-                        });
-                        if !became_expanded.is_empty() || !became_collapsed.is_empty() {
-                            ui.ctx().request_repaint();
                         }
-                        for path in became_collapsed {
-                            self.expansion.collapse(&path);
-                        }
-                        if let Some(tree) = &mut self.tree {
-                            for path in became_expanded {
-                                match tree.load_compact_chain(&path, &self.fs) {
-                                    Ok(()) => {
-                                        let n = tree
-                                            .find(&path)
-                                            .map(|node| node.compact_tail().children().len())
-                                            .unwrap_or(0);
-                                        self.run_log.log_tree_expand(&path, n, None);
-                                        let expand_row = tree
-                                            .find(&path)
-                                            .and_then(CompactChain::from_node)
-                                            .map(|chain| chain.path() == path)
-                                            .unwrap_or(true);
-                                        if expand_row {
-                                            if let Err(e) = self.expansion.expand(&path, tree) {
-                                                self.status = e.to_string();
-                                            }
+                    });
+                    if !became_expanded.is_empty() || !became_collapsed.is_empty() {
+                        ui.ctx().request_repaint();
+                    }
+                    for path in became_collapsed {
+                        self.expansion.collapse(&path);
+                    }
+                    if let Some(tree) = &mut self.tree {
+                        for path in became_expanded {
+                            match tree.load_compact_chain(&path, &self.fs) {
+                                Ok(()) => {
+                                    let n = tree
+                                        .find(&path)
+                                        .map(|node| node.compact_tail().children().len())
+                                        .unwrap_or(0);
+                                    self.run_log.log_tree_expand(&path, n, None);
+                                    let expand_row = tree
+                                        .find(&path)
+                                        .and_then(CompactChain::from_node)
+                                        .map(|chain| chain.path() == path)
+                                        .unwrap_or(true);
+                                    if expand_row {
+                                        if let Err(e) = self.expansion.expand(&path, tree) {
+                                            self.status = e.to_string();
                                         }
                                     }
-                                    Err(e) => {
-                                        self.run_log.log_tree_expand(
-                                            &path,
-                                            0,
-                                            Some(&e.to_string()),
-                                        );
-                                        self.status = e.to_string();
-                                    }
+                                    let _ = self.watch.watch(&path);
+                                }
+                                Err(e) => {
+                                    self.run_log.log_tree_expand(
+                                        &path,
+                                        0,
+                                        Some(&e.to_string()),
+                                    );
+                                    self.status = e.to_string();
                                 }
                             }
                         }
-                        if let Some(path) = clicked {
-                            self.open_path(&path);
-                        }
-                        if let Some(kind) = discover {
-                            self.queue_discover(kind);
-                        }
                     }
-                    _ => {
-                        ui.label("Open a folder or file.");
+                    if let Some(path) = clicked {
+                        self.open_path(&path);
                     }
+                    if let Some(kind) = discover {
+                        self.queue_discover(kind);
+                    }
+                } else {
+                    ui.label("Open a folder or file.");
                 }
             });
         self.layout
@@ -861,4 +907,16 @@ fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -
         );
     }
     job
+}
+
+fn spawn_initialized_client(
+    root: PathBuf,
+    mode: ServeMode,
+    control_socket: Option<&Path>,
+) -> Result<LspClient<StdioLsp>, IdeError> {
+    let spec = SpawnSpec::resolve()?;
+    let transport = StdioLsp::spawn_serve(&spec, mode, control_socket)?;
+    let mut client = LspClient::new(transport).with_mode(mode);
+    client.initialize(&root)?;
+    Ok(client)
 }

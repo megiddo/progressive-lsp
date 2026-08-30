@@ -40,9 +40,10 @@ pub use log::{
     EVENT_TREE_EXPAND, EVENT_TREE_LOAD,
 };
 pub use lsp::{
-    file_uri, path_from_file_uri, position_at, LspClient, LspLocation, ProgressiveLspCap,
-    SpawnSpec, StdioLsp,
+    file_uri, path_from_file_uri, position_at, LspClient, LspLocation, LspSessionState,
+    ProgressiveLspCap, SpawnSpec, StdioLsp,
 };
+pub use watch::{DiskWatch, NotifyWatch, WatchDepth};
 pub use ports::{
     ClipboardPort, ClockPort, ControlTransport, DialogPort, DiskEvent, DiskEventKind,
     FakeClipboard, FakeClock, FakeControl, FakeDialog, FakeLsp, FakeWatch, FsPort, LspCall,
@@ -53,7 +54,6 @@ pub use tree::{
     CompactChain, DialogAction, DialogOutcome, FileTree, PendingDialog, TreeExpansion, TreeNode,
     WorkspaceRoot,
 };
-pub use watch::{DiskWatch, NotifyWatch};
 
 #[cfg(test)]
 mod tests {
@@ -81,6 +81,8 @@ mod tests {
         let _ = Highlighter::new();
         let _ = HighlightSpan::new(0, 1, 0, 0, 0);
         let _ = FakeWatch::new();
+        let _ = WatchDepth::Immediate;
+        let _ = LspSessionState::Idle;
         let _ = FakeClock::at_unix_ms(1);
         let _ = SystemClock;
         let _ = DiskWatch::new();

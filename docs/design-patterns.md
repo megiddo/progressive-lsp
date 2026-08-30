@@ -168,6 +168,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
+| `WatchDepth` | Value object | `immediate` vs `recursive`; folder open uses immediate so a large tree does not block on a recursive OS watch |
+| `LspSessionState` | Value object | `idle` / `connecting` / `ready` / `failed`; connecting is not ready; tree paint must not wait for `ready` |
 | `FakeWatch` | Test double | Same `WatchPort`; tests inject events; no `thread::sleep` |
 | `DiskEvent` / `DiskEventKind` | Event / DTO | path + kind + mtime; `KeepMemory` ignores a later event with the same mtime |
 | `ClockPort` / `FakeClock` (poc-ide) | Port / test double | Tests never `thread::sleep`; advance with FakeClock |

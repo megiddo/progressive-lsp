@@ -411,7 +411,59 @@ impl<T: LspTransport> LspClient<T> {
     pub fn into_inner(self) -> T {
         self.transport
     }
+}
 
+/// LSP bind after a folder is on screen. Connecting does not block tree paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LspSessionState {
+    Idle,
+    Connecting,
+    Ready,
+    Failed,
+}
+
+impl LspSessionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Connecting => "connecting",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "idle" => Some(Self::Idle),
+            "connecting" => Some(Self::Connecting),
+            "ready" => Some(Self::Ready),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn is_connecting(self) -> bool {
+        matches!(self, Self::Connecting)
+    }
+
+    pub fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    pub fn begin_connect(self) -> Self {
+        Self::Connecting
+    }
+
+    pub fn finish_ok(self) -> Self {
+        Self::Ready
+    }
+
+    pub fn finish_err(self) -> Self {
+        Self::Failed
+    }
+}
+
+impl<T: LspTransport> LspClient<T> {
     pub fn initialize(&mut self, root: impl AsRef<Path>) -> Result<(), IdeError> {
         if self.ready {
             return Err(IdeError::lsp("already initialized"));
@@ -1285,6 +1337,27 @@ mod tests {
         assert_eq!(links[0].start_character(), 2);
         assert!(client.definition("/ws/lib.rs", 0, 0).unwrap_err().is_lsp());
         assert!(client.references("/ws/lib.rs", 0, 0).unwrap_err().is_lsp());
+    }
+
+    #[test]
+    fn lsp_session_state_value_object_connecting_does_not_count_as_ready() {
+        assert_eq!(LspSessionState::Idle.as_str(), "idle");
+        assert_eq!(LspSessionState::Connecting.as_str(), "connecting");
+        assert_eq!(LspSessionState::Ready.as_str(), "ready");
+        assert_eq!(LspSessionState::Failed.as_str(), "failed");
+        assert_eq!(
+            LspSessionState::parse("connecting"),
+            Some(LspSessionState::Connecting)
+        );
+        assert_eq!(LspSessionState::parse("nope"), None);
+        assert!(LspSessionState::Idle.begin_connect().is_connecting());
+        assert!(!LspSessionState::Connecting.is_ready());
+        assert!(LspSessionState::Connecting.finish_ok().is_ready());
+        assert_eq!(
+            LspSessionState::Connecting.finish_err(),
+            LspSessionState::Failed
+        );
+        assert_ne!(LspSessionState::Idle, LspSessionState::Ready);
     }
 
     #[test]
