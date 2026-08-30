@@ -147,11 +147,37 @@ fn check_dynamic(data: &[u8], be: bool, ph_off: usize, is64: bool) -> Result<(),
             break;
         }
         if tag == DT_NEEDED {
-            return Err(StaticLinkError::DtNeeded("DT_NEEDED".into()));
+            let name = needed_name(data, pos, is64, be).unwrap_or_else(|| "DT_NEEDED".into());
+            if is_libdl(&name) {
+                return Err(StaticLinkError::DtNeeded("libdl".into()));
+            }
+            return Err(StaticLinkError::DtNeeded(name));
         }
         pos += entry;
     }
     Ok(())
+}
+
+/// Fail closed: sqlite loadable extensions pull `libdl` (`DT_NEEDED`).
+fn is_libdl(name: &str) -> bool {
+    name == "libdl" || name.starts_with("libdl.so") || name.contains("libdl.so")
+}
+
+fn needed_name(data: &[u8], entry_pos: usize, is64: bool, be: bool) -> Option<String> {
+    let val_off = if is64 { entry_pos + 8 } else { entry_pos + 4 };
+    let val = if is64 {
+        u64_at(data, val_off, be).ok()? as usize
+    } else {
+        u32_at(data, val_off, be).ok()? as usize
+    };
+    if val == 0 || val >= data.len() {
+        return None;
+    }
+    let n = data[val..].iter().position(|&b| b == 0)?;
+    if n == 0 {
+        return None;
+    }
+    String::from_utf8(data[val..val + n].to_vec()).ok()
 }
 
 fn u16_at(data: &[u8], off: usize, be: bool) -> Result<u16, StaticLinkError> {
@@ -235,6 +261,31 @@ pub fn fixture_dynamic_elf64() -> Vec<u8> {
     e
 }
 
+/// ELF64 LE with PT_DYNAMIC / DT_NEEDED = `libdl.so.2` (no PT_INTERP).
+#[allow(dead_code)]
+pub fn fixture_libdl_elf64() -> Vec<u8> {
+    let mut e = vec![0u8; 320];
+    e[0..4].copy_from_slice(ELF_MAGIC);
+    e[4] = 2;
+    e[5] = 1;
+    e[6] = 1;
+    e[16] = 2;
+    e[18] = 62;
+    e[20] = 1;
+    e[32] = 64;
+    e[52] = 64;
+    e[54] = 56;
+    e[56] = 1;
+    e[64] = 2;
+    e[64 + 8..64 + 16].copy_from_slice(&200u64.to_le_bytes());
+    e[64 + 32..64 + 40].copy_from_slice(&16u64.to_le_bytes());
+    e[200..208].copy_from_slice(&1i64.to_le_bytes());
+    let name = b"libdl.so.2";
+    e[208..208 + 8].copy_from_slice(&216u64.to_le_bytes());
+    e[216..216 + name.len()].copy_from_slice(name);
+    e
+}
+
 #[allow(dead_code)]
 pub fn fixture_macho() -> Vec<u8> {
     let mut e = vec![0u8; 32];
@@ -302,6 +353,17 @@ mod tests {
     }
 
     #[test]
+    fn libdl_dt_needed_fails_closed() {
+        let err = check_bytes(&fixture_libdl_elf64()).unwrap_err();
+        assert_eq!(err, StaticLinkError::DtNeeded("libdl".into()));
+        assert!(err.to_string().contains("libdl"));
+        assert!(is_libdl("libdl"));
+        assert!(is_libdl("libdl.so.2"));
+        assert!(!is_libdl("libc.so.6"));
+        assert!(!is_libdl("DT_NEEDED"));
+    }
+
+    #[test]
     fn dt_needed_without_interp_fails() {
         let mut e = fixture_static_elf64();
         e[56] = 1;
@@ -310,10 +372,7 @@ mod tests {
         e[64 + 32..64 + 40].copy_from_slice(&16u64.to_le_bytes());
         e.resize(256, 0);
         e[200..208].copy_from_slice(&1i64.to_le_bytes());
-        assert!(matches!(
-            check_bytes(&e),
-            Err(StaticLinkError::DtNeeded(_))
-        ));
+        assert!(matches!(check_bytes(&e), Err(StaticLinkError::DtNeeded(_))));
     }
 
     #[test]

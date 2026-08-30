@@ -26,6 +26,7 @@ members = [
     "progressive-lsp-lang-c",
     "progressive-lsp-lang-cpp",
     "progressive-lsp-lang-csharp",
+    "progressive-lsp-log",
     "xtask",
     "poc-ide",
 ]
@@ -60,6 +61,8 @@ progressive-lsp-lang-rust = { path = "progressive-lsp-lang-rust" }
 progressive-lsp-lang-c = { path = "progressive-lsp-lang-c" }
 progressive-lsp-lang-cpp = { path = "progressive-lsp-lang-cpp" }
 progressive-lsp-lang-csharp = { path = "progressive-lsp-lang-csharp" }
+progressive-lsp-log = { path = "progressive-lsp-log" }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-c = "0.23"

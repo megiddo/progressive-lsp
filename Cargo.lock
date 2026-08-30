@@ -3482,6 +3482,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "progressive-lsp-log"
+version = "0.1.0"
+dependencies = [
+ "progressive-lsp-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "progressive-lsp-plugin"
 version = "0.1.0"
 dependencies = [

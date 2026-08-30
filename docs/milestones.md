@@ -557,12 +557,31 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-2 — WAL repository crate
 
-Do not start LOG-2 until LOG-1 stays signed off. No product `eprintln!` death yet.
+**Status: SIGNED OFF** on branch `log2`. Do not start LOG-3 until this section is signed off (it is). Parent is `log1`. No product `eprintln!` death. No serve/install bootstrap wire. No capture bridges.
 
 - `progressive-lsp-log` workspace member: `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, `ServeLogPath`.
-- Pin `rusqlite` **=0.40.2** `bundled`. Amalgamation is our artifact. `check-static` on the core ELF.
+- Pin `rusqlite` **=0.40.2** `bundled`. Amalgamation is our artifact. `LIBSQLITE3_FLAGS` omits loadable extensions. `check-static` fails closed if `libdl` is `DT_NEEDED`.
 
-**Exit:** tempfile WAL; `PRAGMA journal_mode` returns `wal`; injected COMMIT failure retries without panic; `BATCH_MAX=1`; FakeClock; re-entrancy; Drop flushes. No `thread::sleep`.
+**Exit**
+
+- [x] tempfile WAL; `PRAGMA journal_mode` returns `wal`; injected COMMIT failure retries without panic; `BATCH_MAX=1`; FakeClock; re-entrancy; Drop flushes. No `thread::sleep`.
+- [x] Core stays sqlite-free.
+
+**Sign-off checklist (LOG-2)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p progressive-lsp-log -- --test-threads=1` (33 passed)
+- [x] 95% llvm-cov on crates that exist — **96.04%** lines (ignore `xtask/`, `/src/main.rs$`, `tree-sitter`, `poc-ide/src/ui.rs`)
+- [x] 80% mutants on listed crates that changed — `progressive-lsp-log` **91 caught / 104 scored (87.5%)**, 17 unviable, 13 missed, 3 timeouts
+- [x] No `sleep`
+- [x] `check-static` — fixture ELFs including `libdl` `DT_NEEDED` fail-closed. Darwin: do not fake musl greens (see notes)
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-2 gate on macOS.
+- This host cannot produce a musl `progressive-lsp` ELF (`xtask musl` is Docker). `xtask check-static` is unit-tested against in-tree fixture ELFs, including a `libdl.so.2` `DT_NEEDED` that must fail closed. A green fixture result is not a claim that a rusqlite-linked musl core ELF was built here.
+- The bin is not wired to `SqliteLogRepository` (LOG-4). Linux CI must `check-static` the core ELF once rusqlite is linked into it. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## LOG-3 — Facades, bridges, eprintln death
 

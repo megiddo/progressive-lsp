@@ -1,2 +1,7 @@
 [alias]
 xtask = "run --package xtask --"
+
+# Bundled libsqlite3-sys defaults to SQLITE_ENABLE_LOAD_EXTENSION=1 (dlopen / libdl).
+# Fail closed: amalgamation must omit loadable extensions (host-deps.md, logging.md).
+[env]
+LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_LOAD_EXTENSION -DSQLITE_OMIT_LOAD_EXTENSION"

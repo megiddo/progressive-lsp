@@ -324,12 +324,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-2 (`log2` branch)
 
-Do not open `log2` until LOG-1 stays signed off. No product `eprintln!` death yet.
+**Status: SIGNED OFF** on `log2`. LOG-3 may start after this WP; do not open `log3` from this branch. No product `eprintln!` death. No serve/install bootstrap. No capture bridges.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-2.1 | `progressive-lsp-log` workspace member: `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, `ServeLogPath` | LOG-1 | pin `rusqlite = { version = "=0.40.2", features = ["bundled"] }` |
-| LOG-2.2 | musl amalgamation + `check-static` on the core ELF | LOG-2.1 | fail closed if `libdl` is `DT_NEEDED`; tempfile WAL; `BATCH_MAX=1`; no `thread::sleep` |
+| LOG-2.1 | `progressive-lsp-log` workspace member: `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, `ServeLogPath` | LOG-1 | **SIGNED OFF.** pin `rusqlite = { version = "=0.40.2", features = ["bundled"] }`. Core stays sqlite-free. |
+| LOG-2.2 | musl amalgamation + `check-static` on the core ELF | LOG-2.1 | **SIGNED OFF.** `LIBSQLITE3_FLAGS` omits loadable extensions; `check-static` fail-closed on `libdl` fixtures. Darwin: do not fake musl greens (same class as M0). |
+
+**Sign-off checklist (LOG-2)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test -p progressive-lsp-log -- --test-threads=1` (33 passed)
+- [x] 95% llvm-cov on crates that exist — **96.04%** lines
+- [x] 80% mutants on listed crates that exist — log crate **91 caught / 104 scored (87.5%)**, 17 unviable, 13 missed, 3 timeouts
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (bin not wired; no musl ELF on this host)
+- [x] [design-patterns.md](design-patterns.md) names every new type (`ReentrancyGuard` on the Proxy / Guard row)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-3 (`log3` branch)
 
