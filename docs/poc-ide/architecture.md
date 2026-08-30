@@ -32,11 +32,12 @@ poc-ide/                     workspace member; not a musl artifact
   src/control.rs             ControlClient Adapter, UnixControl
   src/console.rs             ProtocolConsole Facade, TranscriptEntry
   src/watch.rs              DiskWatch Observer, NotifyWatch
+  src/log.rs                RunLog Repository (per-run sqlite debug sink)
 ```
 
 **Dependency rule:** the lib does not import `egui` / `eframe` / `egui_dock` / `rfd`. Those belong in `main.rs`. Tests never open a window.
 
-Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thiserror`, `progressive-lsp-control`, `notify` only behind `WatchPort` (prod adapter in lib or thin `notify` adapter; tests inject `FakeWatch`).
+Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thiserror`, `progressive-lsp-control`, `rusqlite` (`bundled`, poc-ide only — never the musl server crates), `notify` only behind `WatchPort` (prod adapter in lib or thin `notify` adapter; tests inject `FakeWatch`).
 
 ## Data flow
 
@@ -60,8 +61,11 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 | `ClockPort` | reuse `progressive-lsp-core::ClockPort` **or** a local copy of the trait in poc-ide to avoid pulling core if that crate is too server-shaped | `FakeClock` |
 | `LspTransport` | `StdioLsp` (child stdio Content-Length) | `FakeLsp` |
 | `ControlTransport` | `UnixControl` (Unix socket + `encode_frame` / `decode_frame`) | `FakeControl` |
+| `RunLog` (Repository) | rusqlite file under run-log dir | `:memory:` / tempfile path |
 
 Prefer a **local `ClockPort`** in poc-ide (same invariant: tests never `thread::sleep`) rather than depending on `progressive-lsp-core`. Do not take a dependency on core just for the clock.
+
+`RunLog` is a per-process sqlite Repository. Each `cargo run -p poc-ide` writes a new file under `$HOME/.progressivelsp/poc-ide-runs/poc-ide-{unix_ms}-{pid}.sqlite` (override with `POC_IDE_LOG_DIR`). Tests inject `:memory:` or a tempfile path. Rows are `timestamp_ms`, `category`, `event`, optional JSON payload (method + error, never file bodies / clipboard / secrets). A failed write is `IdeError::Log` and is ignored at the composition root — the editor does not panic.
 
 ## LSP client
 

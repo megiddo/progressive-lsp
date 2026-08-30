@@ -460,6 +460,16 @@ impl ClockPort for FakeClock {
     }
 }
 
+impl ClockPort for std::sync::Arc<FakeClock> {
+    fn now(&self) -> Instant {
+        (**self).now()
+    }
+
+    fn unix_ms(&self) -> u64 {
+        (**self).unix_ms()
+    }
+}
+
 /// Disk events go through this Port. Production [`crate::watch::NotifyWatch`] maps
 /// `notify` types; the composition root owns the OS watcher. Tests use [`FakeWatch`].
 pub trait WatchPort {
@@ -1187,6 +1197,9 @@ mod tests {
         let stamped = DiskEvent::at_clock("/ws/a.rs", DiskEventKind::Modify, &clock);
         assert_eq!(stamped.mtime(), 1_700_000_000_300);
         assert_eq!(stamped.kind(), DiskEventKind::Modify);
+        let shared = std::sync::Arc::new(FakeClock::at_unix_ms(5));
+        assert_eq!(ClockPort::unix_ms(&shared), 5);
+        let _ = ClockPort::now(&shared);
     }
 
     #[test]

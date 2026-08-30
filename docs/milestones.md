@@ -467,6 +467,10 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 - [x] Pattern table updated (`ControlPush`, `TranscriptKind`, `IdeError::Control`)
 - [x] Docs updated if a locked decision was refined (`progressive-lsp-control` consumer MAY; `--mux` is `pending_mux`)
 
+## poc-log — per-run sqlite debug log
+
+Post-IDE-5 slice on current `main` (branch `poc-log`). **Not IDE-6.** Adds `RunLog` so each `cargo run -p poc-ide` writes a sqlite file under `$HOME/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`). Tests inject `:memory:` / tempfile. No new milestone number.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

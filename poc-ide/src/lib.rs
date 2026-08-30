@@ -1,7 +1,8 @@
 //! POC IDE domain: Ports, file-tree Composite, tabs, layout, buffers, syntect,
 //! disk-conflict Observer, language catalog, stock LSP client, control Adapter,
-//! and protocol console. The lib does not import `egui`, `eframe`, `egui_dock`,
-//! or `rfd`. Those stay in the composition-root bin (`main.rs` / `ui.rs`).
+//! protocol console, and per-run sqlite [`RunLog`] Repository. The lib does not
+//! import `egui`, `eframe`, `egui_dock`, or `rfd`. Those stay in the
+//! composition-root bin (`main.rs` / `ui.rs`).
 
 pub mod buffer;
 pub mod conflict;
@@ -12,6 +13,7 @@ pub mod error;
 pub mod highlight;
 pub mod language;
 pub mod layout;
+pub mod log;
 pub mod lsp;
 pub mod ports;
 pub mod tabs;
@@ -29,6 +31,12 @@ pub use error::IdeError;
 pub use highlight::{HighlightSpan, Highlighter};
 pub use language::{LanguageCatalog, ServeMode};
 pub use layout::LayoutState;
+pub use log::{
+    default_run_log_dir, run_log_dir, sanitize_payload, LogCategory, LogRow, RunLog, RunLogPath,
+    EVENT_CONFLICT_ENQUEUE, EVENT_CONFLICT_RESOLVE, EVENT_CONTROL_CONNECT_ERROR, EVENT_OPEN_FILE,
+    EVENT_OPEN_FOLDER, EVENT_RUN_START, EVENT_SAVE, EVENT_TAB_CLOSE, EVENT_TAB_OPEN,
+    EVENT_TREE_LOAD,
+};
 pub use lsp::{
     file_uri, path_from_file_uri, position_at, LspClient, LspLocation, ProgressiveLspCap,
     SpawnSpec, StdioLsp,
@@ -101,5 +109,22 @@ mod tests {
         assert!(ProtocolConsole::new().is_empty());
         assert!(!STOCK_LSP_METHODS.is_empty());
         assert_eq!(CONTROL_UNARY_METHODS.len(), 9);
+        let _ = RunLog::unavailable(FakeClock::at_unix_ms(1));
+        let _ = LogCategory::Run;
+        let _ = LogRow::new(0, LogCategory::Run, EVENT_RUN_START, None);
+        let _ = RunLogPath::new("/tmp/logs", 1, 1);
+        let _ = run_log_dir(Some("/injected"), None);
+        let _ = default_run_log_dir();
+        let _ = sanitize_payload(None);
+        assert_eq!(EVENT_OPEN_FOLDER, "open_folder");
+        assert_eq!(EVENT_OPEN_FILE, "open_file");
+        assert_eq!(EVENT_TREE_LOAD, "tree_load");
+        assert_eq!(EVENT_TAB_OPEN, "tab_open");
+        assert_eq!(EVENT_TAB_CLOSE, "tab_close");
+        assert_eq!(EVENT_SAVE, "save");
+        assert_eq!(EVENT_CONTROL_CONNECT_ERROR, "control_connect_error");
+        assert_eq!(EVENT_CONFLICT_ENQUEUE, "conflict_enqueue");
+        assert_eq!(EVENT_CONFLICT_RESOLVE, "conflict_resolve");
+        assert!(IdeError::log("x").is_log());
     }
 }

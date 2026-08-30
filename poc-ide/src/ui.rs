@@ -9,8 +9,8 @@ use poc_ide::{
     advertised_control_socket, position_at, BufferMap, ClipboardPort, ConflictChoice,
     ControlClient, DialogPort, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
     Highlighter, IdeError, LayoutState, LspClient, NotifyWatch, OpenBuffer, ProtocolConsole,
-    Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TranscriptKind, TreeNode,
-    UnixControl, WatchPort, WorkspaceRoot, CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
+    RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TranscriptKind,
+    TreeNode, UnixControl, WatchPort, WorkspaceRoot, CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
 };
 use serde_json::json;
 use std::sync::mpsc;
@@ -123,6 +123,7 @@ pub struct PocIdeApp {
     console_method: String,
     console_body: String,
     status: String,
+    run_log: RunLog,
 }
 
 impl PocIdeApp {
@@ -130,6 +131,7 @@ impl PocIdeApp {
         folder: Option<PathBuf>,
         file: Option<PathBuf>,
         control_socket: Option<PathBuf>,
+        run_log: RunLog,
     ) -> Self {
         let serve_mode = if control_socket.is_some() {
             ServeMode::ControlSocket
@@ -165,6 +167,7 @@ impl PocIdeApp {
             console_method,
             console_body: String::new(),
             status: String::new(),
+            run_log,
         };
         if let Some(dir) = folder {
             app.apply_folder_path(&dir);
@@ -177,14 +180,20 @@ impl PocIdeApp {
 
     fn apply_folder_path(&mut self, path: &Path) {
         match WorkspaceRoot::from_folder_path(path, &self.fs) {
-            Ok(root) => self.set_root(root, None),
+            Ok(root) => {
+                self.run_log.log_open_folder(root.as_path());
+                self.set_root(root, None);
+            }
             Err(e) => self.status = e.to_string(),
         }
     }
 
     fn apply_file_path(&mut self, path: &Path) {
         match WorkspaceRoot::from_file_path(path, &self.fs) {
-            Ok((root, file)) => self.set_root(root, Some(file)),
+            Ok((root, file)) => {
+                self.run_log.log_open_file(&file);
+                self.set_root(root, Some(file));
+            }
             Err(e) => self.status = e.to_string(),
         }
     }
@@ -192,6 +201,8 @@ impl PocIdeApp {
     fn set_root(&mut self, root: WorkspaceRoot, open_file: Option<PathBuf>) {
         match self.fs.read_tree(&root) {
             Ok(tree) => {
+                self.run_log
+                    .log_tree_load(root.as_path(), tree.children().len(), None);
                 if self.root.as_ref() != Some(&root) {
                     self.tabs = TabStrip::new();
                     self.buffers = BufferMap::new();
@@ -210,18 +221,24 @@ impl PocIdeApp {
                     self.open_path(&file);
                 }
             }
-            Err(e) => self.status = e.to_string(),
+            Err(e) => {
+                self.run_log
+                    .log_tree_load(root.as_path(), 0, Some(&e.to_string()));
+                self.status = e.to_string();
+            }
         }
     }
 
     fn pick_folder(&mut self) {
         if let Ok(Some(root)) = WorkspaceRoot::open_folder(&mut self.dialog, &self.fs) {
+            self.run_log.log_open_folder(root.as_path());
             self.set_root(root, None);
         }
     }
 
     fn pick_file(&mut self) {
         if let Ok(Some((root, file))) = WorkspaceRoot::open_file(&mut self.dialog, &self.fs) {
+            self.run_log.log_open_file(&file);
             self.set_root(root, Some(file));
         }
     }
@@ -232,10 +249,16 @@ impl PocIdeApp {
                 let opened = buf.path().to_path_buf();
                 let text = buf.text();
                 self.tabs.open(&opened);
+                self.run_log.log_tab_open(&opened);
                 if let Some(lsp) = &mut self.lsp {
-                    if let Err(e) = lsp.did_open(&opened, &text) {
-                        self.status = e.to_string();
-                        return;
+                    match lsp.did_open(&opened, &text) {
+                        Ok(_) => self.run_log.log_lsp("textDocument/didOpen", None),
+                        Err(e) => {
+                            self.run_log
+                                .log_lsp("textDocument/didOpen", Some(&e.to_string()));
+                            self.status = e.to_string();
+                            return;
+                        }
                     }
                 }
                 self.status.clear();
@@ -250,6 +273,7 @@ impl PocIdeApp {
         }
         self.buffers.close(id.as_path());
         self.tabs.close(id);
+        self.run_log.log_tab_close(id.as_path());
     }
 
     fn save_focused(&mut self) {
@@ -259,15 +283,24 @@ impl PocIdeApp {
         if let Some(buf) = self.buffers.get_mut(id.as_path()) {
             match buf.save(&mut self.fs) {
                 Ok(()) => {
+                    self.run_log.log_save(id.as_path(), None);
                     if let Some(lsp) = &mut self.lsp {
-                        if let Err(e) = lsp.did_save(id.as_path()) {
-                            self.status = e.to_string();
-                            return;
+                        match lsp.did_save(id.as_path()) {
+                            Ok(()) => self.run_log.log_lsp("textDocument/didSave", None),
+                            Err(e) => {
+                                self.run_log
+                                    .log_lsp("textDocument/didSave", Some(&e.to_string()));
+                                self.status = e.to_string();
+                                return;
+                            }
                         }
                     }
                     self.status.clear();
                 }
-                Err(e) => self.status = e.to_string(),
+                Err(e) => {
+                    self.run_log.log_save(id.as_path(), Some(&e.to_string()));
+                    self.status = e.to_string();
+                }
             }
         }
     }
@@ -285,17 +318,20 @@ impl PocIdeApp {
                         let mut client = LspClient::new(transport).with_mode(self.serve_mode);
                         match client.initialize(root.as_path()) {
                             Ok(()) => {
+                                self.run_log.log_lsp("initialize", None);
                                 self.connect_control(client.progressive_cap());
                                 self.lsp = Some(client);
                                 self.lsp_error = None;
                             }
                             Err(e) => {
+                                self.run_log.log_lsp("initialize", Some(&e.to_string()));
                                 self.lsp = None;
                                 self.lsp_error = Some(e.to_string());
                             }
                         }
                     }
                     Err(e) => {
+                        self.run_log.log_lsp("initialize", Some(&e.to_string()));
                         self.lsp = None;
                         self.lsp_error = Some(e.to_string());
                         if self.serve_mode.is_control_socket() {
@@ -305,6 +341,7 @@ impl PocIdeApp {
                 }
             }
             Err(e) => {
+                self.run_log.log_lsp("initialize", Some(&e.to_string()));
                 self.lsp = None;
                 self.lsp_error = Some(e.to_string());
                 if self.serve_mode.is_control_socket() {
@@ -322,6 +359,7 @@ impl PocIdeApp {
         }
         let Some(cap) = cap else {
             let err = IdeError::control_socket_missing();
+            self.run_log.log_control_connect_error(&err.to_string());
             self.control_error = Some(err.to_string());
             self.console.record_control_unavailable(&err);
             return;
@@ -333,11 +371,13 @@ impl PocIdeApp {
                     self.control_error = None;
                 }
                 Err(e) => {
+                    self.run_log.log_control_connect_error(&e.to_string());
                     self.control_error = Some(e.to_string());
                     self.console.record_control_unavailable(&e);
                 }
             },
             Err(e) => {
+                self.run_log.log_control_connect_error(&e.to_string());
                 self.control_error = Some(e.to_string());
                 self.console.record_control_unavailable(&e);
             }
@@ -372,23 +412,34 @@ impl PocIdeApp {
             self.status = self.missing_server_status();
             return;
         };
+        let method = match kind {
+            DiscoverKind::Definition => "textDocument/definition",
+            DiscoverKind::Implementation => "textDocument/implementation",
+            DiscoverKind::References => "textDocument/references",
+        };
         let result = match kind {
             DiscoverKind::Definition => lsp.definition(&path, line, character),
             DiscoverKind::Implementation => lsp.implementation(&path, line, character),
             DiscoverKind::References => lsp.references(&path, line, character),
         };
         match result {
-            Ok(locations) => match LspClient::<StdioLsp>::jump(
-                &locations,
-                &mut self.tabs,
-                &mut self.buffers,
-                &self.fs,
-            ) {
-                Ok(0) => self.status = "No locations".into(),
-                Ok(_) => self.status.clear(),
-                Err(e) => self.status = e.to_string(),
-            },
-            Err(e) => self.status = e.to_string(),
+            Ok(locations) => {
+                self.run_log.log_lsp(method, None);
+                match LspClient::<StdioLsp>::jump(
+                    &locations,
+                    &mut self.tabs,
+                    &mut self.buffers,
+                    &self.fs,
+                ) {
+                    Ok(0) => self.status = "No locations".into(),
+                    Ok(_) => self.status.clear(),
+                    Err(e) => self.status = e.to_string(),
+                }
+            }
+            Err(e) => {
+                self.run_log.log_lsp(method, Some(&e.to_string()));
+                self.status = e.to_string();
+            }
         }
     }
 
@@ -548,6 +599,7 @@ impl PocIdeApp {
             });
         });
         if let Some(choice) = choice {
+            self.run_log.log_conflict_resolve(modal.path(), choice);
             if let Err(e) = self
                 .disk
                 .resolve(modal.path(), choice, &mut self.buffers, &self.fs)
@@ -560,7 +612,23 @@ impl PocIdeApp {
 
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let already: Vec<PathBuf> = self
+            .disk
+            .pending()
+            .iter()
+            .map(|m| m.path().to_path_buf())
+            .collect();
         self.disk.ingest(&mut self.watch, &self.buffers);
+        let newly: Vec<(PathBuf, u64)> = self
+            .disk
+            .pending()
+            .iter()
+            .filter(|m| !already.iter().any(|p| p == m.path()))
+            .map(|m| (m.path().to_path_buf(), m.mtime()))
+            .collect();
+        for (path, mtime) in newly {
+            self.run_log.log_conflict_enqueue(&path, mtime);
+        }
         self.show_conflict_modal(ui);
         self.show_console_panel(ui);
 
@@ -680,8 +748,15 @@ impl eframe::App for PocIdeApp {
                         let change = show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
                         if let Some((path, old, new)) = change {
                             if let Some(lsp) = &mut self.lsp {
-                                if let Err(e) = lsp.did_change(&path, &old, &new) {
-                                    self.status = e.to_string();
+                                match lsp.did_change(&path, &old, &new) {
+                                    Ok(()) => self.run_log.log_lsp("textDocument/didChange", None),
+                                    Err(e) => {
+                                        self.run_log.log_lsp(
+                                            "textDocument/didChange",
+                                            Some(&e.to_string()),
+                                        );
+                                        self.status = e.to_string();
+                                    }
                                 }
                             }
                         }

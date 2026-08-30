@@ -30,6 +30,8 @@ pub enum IdeError {
     MissingBinary,
     #[error("control: {0}")]
     Control(String),
+    #[error("log: {0}")]
+    Log(String),
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -83,6 +85,10 @@ impl IdeError {
         matches!(self, Self::Control(_))
     }
 
+    pub fn is_log(&self) -> bool {
+        matches!(self, Self::Log(_))
+    }
+
     pub fn is_control_socket_missing(&self) -> bool {
         matches!(self, Self::Control(m) if m == "control socket missing")
     }
@@ -121,6 +127,10 @@ impl IdeError {
 
     pub fn pending_mux() -> Self {
         Self::Control("pending_mux".into())
+    }
+
+    pub fn log(msg: impl Into<String>) -> Self {
+        Self::Log(msg.into())
     }
 }
 
@@ -175,6 +185,10 @@ mod tests {
             "control: control socket missing"
         );
         assert_eq!(IdeError::pending_mux().to_string(), "control: pending_mux");
+        assert_eq!(
+            IdeError::log("sink unavailable").to_string(),
+            "log: sink unavailable"
+        );
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -212,10 +226,15 @@ mod tests {
         assert!(IdeError::pending_mux().is_pending_mux());
         assert!(IdeError::pending_mux().is_control());
         assert!(!IdeError::pending_mux().is_control_socket_missing());
+        assert!(!IdeError::control("x").is_log());
         assert!(!IdeError::control("x").is_io());
+        assert!(IdeError::log("x").is_log());
+        assert!(!IdeError::log("x").is_io());
+        assert!(!IdeError::log("x").is_control());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());
         assert!(!io.is_control());
+        assert!(!io.is_log());
     }
 }

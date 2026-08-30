@@ -16,6 +16,7 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 | Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` |
 | Language by extension | `LanguageCatalog` Registry; one `progressive-lsp serve` per workspace |
 | Exercise protocols | `ProtocolConsole` Facade: JSON-RPC inspector + Envelope RPCs |
+| Per-run debug log | `RunLog` Repository → sqlite under `~/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`); one file per process |
 
 ## What it must not do
 
@@ -41,4 +42,4 @@ Spawn of `progressive-lsp serve` uses (first hit wins): `PROGRESSIVE_LSP` env, `
 
 ## Milestones
 
-Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`. Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).
+Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slice `poc-log` (not IDE-6). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).

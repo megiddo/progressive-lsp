@@ -4,8 +4,14 @@ mod ui;
 
 use std::path::PathBuf;
 
+use poc_ide::{RunLog, SystemClock};
+
 fn main() -> eframe::Result<()> {
     let launch = parse_args(std::env::args().skip(1));
+    let run_log = match RunLog::open_default(SystemClock) {
+        Ok(log) => log,
+        Err(_) => RunLog::memory(SystemClock).unwrap_or_else(|_| RunLog::unavailable(SystemClock)),
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("poc-ide")
@@ -21,6 +27,7 @@ fn main() -> eframe::Result<()> {
                 launch.folder,
                 launch.file,
                 launch.control_socket,
+                run_log,
             )))
         }),
     )

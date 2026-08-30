@@ -35,6 +35,9 @@ main
                     └── ide3  # DiskWatch + ConflictModal
                           └── ide4  # LanguageCatalog + stock LSP discovery
                                 └── ide5  # ProtocolConsole + progressive.v1
+
+main   # after IDE-5 merge
+  └── poc-log         # per-run sqlite debug log (not IDE-6)
 ```
 
 ## Rules
