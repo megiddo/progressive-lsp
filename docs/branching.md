@@ -38,6 +38,7 @@ main
 
 main   # after IDE-5 merge
   └── poc-log         # per-run sqlite debug log (not IDE-6)
+        └── poc-tree-lazy  # shallow FileTree load (not IDE-6)
 ```
 
 ## Rules

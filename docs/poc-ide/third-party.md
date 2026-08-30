@@ -12,7 +12,7 @@ Lean on OSS. Do not write an editor, highlighter, or dialog toolkit. If a crate 
 | Native open file/folder | `rfd` **0.15.4** | `DialogPort` prod | `FakeDialog` in tests; CLI flags `--folder` / `--file` also acceptable as a second Adapter |
 | Rope buffer | `ropey` | `OpenBuffer` storage | none |
 | Syntax tokens | `syntect` | `Highlighter` Adapter | none (do not use Tree-sitter in the IDE; tokens from syntect, intelligence from LSP) |
-| Walk tree | `walkdir` | `FsPort.read_tree` | **IDE-1 uses the fallback:** `std::fs` recursion behind `FsPort` / `FileTree::load` |
+| Walk tree | `walkdir` | `FsPort.read_tree` | **IDE-1 used the fallback:** `std::fs` one-level listing behind `FsPort` / `FileTree::load`. `poc-tree-lazy` keeps that Adapter; load is shallow, expand lists one more level. |
 | Disk events | `notify` | `WatchPort` prod Adapter | `FakeWatch` |
 | Clipboard | `arboard` **or** egui ctx clipboard | `ClipboardPort` prod in **main** | `FakeClipboard` |
 | LSP DTOs | `lsp-types` | params/results | `serde_json::Value` for the console inspector |

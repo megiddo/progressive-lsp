@@ -63,6 +63,10 @@ impl WorkspaceRoot {
 }
 
 /// Directory or file node. Directories contain children; files are leaves.
+///
+/// A directory's `children` is `None` until [`TreeNode::load_children`] /
+/// [`FileTree::expand`] lists that one level. `Some(vec![])` is an empty
+/// loaded folder — not the same as unloaded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TreeNode {
     File {
@@ -72,7 +76,7 @@ pub enum TreeNode {
     Directory {
         name: String,
         path: PathBuf,
-        children: Vec<TreeNode>,
+        children: Option<Vec<TreeNode>>,
     },
 }
 
@@ -99,24 +103,60 @@ impl TreeNode {
 
     pub fn children(&self) -> &[TreeNode] {
         match self {
-            Self::Directory { children, .. } => children,
-            Self::File { .. } => &[],
+            Self::Directory {
+                children: Some(children),
+                ..
+            } => children,
+            Self::Directory { children: None, .. } | Self::File { .. } => &[],
         }
     }
 
-    fn from_entry(entry: DirEntry, fs: &(impl FsPort + ?Sized)) -> Result<Self, IdeError> {
+    fn children_mut(&mut self) -> &mut [TreeNode] {
+        match self {
+            Self::Directory {
+                children: Some(children),
+                ..
+            } => children,
+            Self::Directory { children: None, .. } | Self::File { .. } => &mut [],
+        }
+    }
+
+    /// Files are leaves (always loaded). Directories are loaded after
+    /// [`TreeNode::load_children`] / [`FileTree::expand`].
+    pub fn is_loaded(&self) -> bool {
+        match self {
+            Self::File { .. } => true,
+            Self::Directory { children, .. } => children.is_some(),
+        }
+    }
+
+    /// Command: list this directory's **immediate** children. Already-loaded
+    /// directories are a no-op (do not re-walk). Files are [`IdeError::NotADirectory`].
+    pub fn load_children(&mut self, fs: &(impl FsPort + ?Sized)) -> Result<(), IdeError> {
+        match self {
+            Self::File { path, .. } => Err(IdeError::NotADirectory(path.clone())),
+            Self::Directory {
+                children: Some(_), ..
+            } => Ok(()),
+            Self::Directory { path, children, .. } => {
+                *children = Some(list_immediate(path, fs)?);
+                Ok(())
+            }
+        }
+    }
+
+    fn from_entry(entry: DirEntry) -> Self {
         if entry.is_dir {
-            let children = load_children(&entry.path, fs)?;
-            Ok(Self::Directory {
+            Self::Directory {
                 name: entry.name,
                 path: entry.path,
-                children,
-            })
+                children: None,
+            }
         } else {
-            Ok(Self::File {
+            Self::File {
                 name: entry.name,
                 path: entry.path,
-            })
+            }
         }
     }
 }
@@ -137,7 +177,7 @@ impl FileTree {
         if !fs.is_dir(root.as_path()) {
             return Err(IdeError::NotADirectory(root.as_path().to_path_buf()));
         }
-        let children = load_children(root.as_path(), fs)?;
+        let children = list_immediate(root.as_path(), fs)?;
         Ok(Self {
             root: root.clone(),
             children,
@@ -152,12 +192,31 @@ impl FileTree {
         &self.children
     }
 
+    /// Command: load one directory's immediate children via [`FsPort::read_dir`].
+    /// The workspace root is already listed by [`FileTree::load`] — expanding it
+    /// is a no-op. A path not yet in the tree is [`IdeError::NotFound`]. A file
+    /// path is [`IdeError::NotADirectory`]. Expanding twice is idempotent.
+    pub fn expand(&mut self, path: &Path, fs: &(impl FsPort + ?Sized)) -> Result<(), IdeError> {
+        if path == self.root.as_path() {
+            return Ok(());
+        }
+        match self.find_mut(path) {
+            None => Err(IdeError::NotFound(path.to_path_buf())),
+            Some(node) => node.load_children(fs),
+        }
+    }
+
     pub fn find(&self, path: &Path) -> Option<&TreeNode> {
         find_node(&self.children, path)
     }
+
+    pub fn find_mut(&mut self, path: &Path) -> Option<&mut TreeNode> {
+        find_node_mut(&mut self.children, path)
+    }
 }
 
-fn load_children(dir: &Path, fs: &(impl FsPort + ?Sized)) -> Result<Vec<TreeNode>, IdeError> {
+/// One-level listing Command used by [`FileTree::load`] and [`TreeNode::load_children`].
+fn list_immediate(dir: &Path, fs: &(impl FsPort + ?Sized)) -> Result<Vec<TreeNode>, IdeError> {
     let mut entries = fs.read_dir(dir)?;
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     let mut nodes = Vec::new();
@@ -165,7 +224,7 @@ fn load_children(dir: &Path, fs: &(impl FsPort + ?Sized)) -> Result<Vec<TreeNode
         if entry.is_dir && FileTree::skips_display_name(&entry.name) {
             continue;
         }
-        nodes.push(TreeNode::from_entry(entry, fs)?);
+        nodes.push(TreeNode::from_entry(entry));
     }
     Ok(nodes)
 }
@@ -175,8 +234,22 @@ fn find_node<'a>(nodes: &'a [TreeNode], path: &Path) -> Option<&'a TreeNode> {
         if node.path() == path {
             return Some(node);
         }
-        if node.is_dir() {
+        if node.is_loaded() {
             if let Some(hit) = find_node(node.children(), path) {
+                return Some(hit);
+            }
+        }
+    }
+    None
+}
+
+fn find_node_mut<'a>(nodes: &'a mut [TreeNode], path: &Path) -> Option<&'a mut TreeNode> {
+    if let Some(i) = nodes.iter().position(|node| node.path() == path) {
+        return Some(&mut nodes[i]);
+    }
+    for node in nodes {
+        if node.is_loaded() {
+            if let Some(hit) = find_node_mut(node.children_mut(), path) {
                 return Some(hit);
             }
         }
@@ -187,7 +260,67 @@ fn find_node<'a>(nodes: &'a [TreeNode], path: &Path) -> Option<&'a TreeNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::MemFs;
+    use crate::ports::{DirEntry, FsPort, MemFs};
+    use std::cell::{Cell, RefCell};
+
+    /// Decorator / test double: records `read_dir` paths on an inner [`FsPort`].
+    struct CountingFs {
+        inner: MemFs,
+        read_dirs: RefCell<Vec<PathBuf>>,
+        fail_next: Cell<bool>,
+    }
+
+    impl CountingFs {
+        fn wrap(inner: MemFs) -> Self {
+            Self {
+                inner,
+                read_dirs: RefCell::new(Vec::new()),
+                fail_next: Cell::new(false),
+            }
+        }
+
+        fn read_dir_paths(&self) -> Vec<PathBuf> {
+            self.read_dirs.borrow().clone()
+        }
+
+        fn read_dir_called(&self, path: &Path) -> bool {
+            self.read_dirs.borrow().iter().any(|p| p == path)
+        }
+
+        fn read_dir_count(&self) -> usize {
+            self.read_dirs.borrow().len()
+        }
+
+        fn fail_next_read_dir(&self) {
+            self.fail_next.set(true);
+        }
+    }
+
+    impl FsPort for CountingFs {
+        fn canonicalize(&self, path: &Path) -> Result<PathBuf, IdeError> {
+            self.inner.canonicalize(path)
+        }
+
+        fn is_dir(&self, path: &Path) -> bool {
+            self.inner.is_dir(path)
+        }
+
+        fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>, IdeError> {
+            self.read_dirs.borrow_mut().push(path.to_path_buf());
+            if self.fail_next.replace(false) {
+                return Err(IdeError::Io(std::io::Error::other("spy fail")));
+            }
+            self.inner.read_dir(path)
+        }
+
+        fn read(&self, path: &Path) -> Result<Vec<u8>, IdeError> {
+            self.inner.read(path)
+        }
+
+        fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), IdeError> {
+            self.inner.write(path, bytes)
+        }
+    }
 
     fn sample_fs() -> MemFs {
         let mut fs = MemFs::new();
@@ -288,7 +421,7 @@ mod tests {
 
         let fs = sample_fs();
         let root = WorkspaceRoot::from_canonical("/ws").unwrap();
-        let tree = FileTree::load(&root, &fs).unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
         assert_eq!(tree.root(), &root);
         let names: Vec<_> = tree
             .children()
@@ -300,12 +433,12 @@ mod tests {
         assert!(tree.find(Path::new("/ws/target")).is_none());
         assert!(tree.find(Path::new("/ws/node_modules")).is_none());
         assert!(tree.find(Path::new("/ws/src")).unwrap().is_dir());
+        tree.expand(Path::new("/ws/src"), &fs).unwrap();
         assert!(tree.find(Path::new("/ws/src/lib.rs")).unwrap().is_file());
-        assert!(tree
-            .find(Path::new("/ws/empty"))
-            .unwrap()
-            .children()
-            .is_empty());
+        tree.expand(Path::new("/ws/empty"), &fs).unwrap();
+        let empty = tree.find(Path::new("/ws/empty")).unwrap();
+        assert!(empty.is_loaded());
+        assert!(empty.children().is_empty());
         assert!(tree.find(Path::new("/ws/nope")).is_none());
     }
 
@@ -313,21 +446,27 @@ mod tests {
     fn file_tree_composite_files_are_leaves_dirs_have_children() {
         let fs = sample_fs();
         let root = WorkspaceRoot::from_canonical("/ws").unwrap();
-        let tree = FileTree::load(&root, &fs).unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
         let readme = tree.find(Path::new("/ws/README.md")).unwrap();
         assert_eq!(readme.name(), "README.md");
         assert_eq!(readme.path(), Path::new("/ws/README.md"));
         assert!(readme.is_file());
         assert!(!readme.is_dir());
+        assert!(readme.is_loaded());
         assert!(readme.children().is_empty());
 
+        tree.expand(Path::new("/ws/src"), &fs).unwrap();
         let src = tree.find(Path::new("/ws/src")).unwrap();
         assert!(src.is_dir());
         assert!(!src.is_file());
+        assert!(src.is_loaded());
         assert_eq!(src.children().len(), 2);
         assert_eq!(src.children()[0].name(), "lib.rs");
         assert_eq!(src.children()[1].name(), "main.rs");
 
+        tree.expand(Path::new("/ws/.github"), &fs).unwrap();
+        tree.expand(Path::new("/ws/.github/workflows"), &fs)
+            .unwrap();
         let github = tree
             .find(Path::new("/ws/.github/workflows/ci.yml"))
             .unwrap();
@@ -354,8 +493,144 @@ mod tests {
         fs.add_file("/ws/target", b"not a dir").unwrap();
         fs.add_file("/ws/src/a.rs", b"").unwrap();
         let root = WorkspaceRoot::from_canonical("/ws").unwrap();
-        let tree = FileTree::load(&root, &fs).unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
         assert!(tree.find(Path::new("/ws/target")).unwrap().is_file());
+        tree.expand(Path::new("/ws/src"), &fs).unwrap();
         assert!(tree.find(Path::new("/ws/src/a.rs")).is_some());
+    }
+
+    #[test]
+    fn file_tree_load_is_shallow_and_does_not_read_grandchildren() {
+        let spy = CountingFs::wrap(sample_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let tree = FileTree::load(&root, &spy).unwrap();
+        assert_eq!(spy.read_dir_paths(), vec![PathBuf::from("/ws")]);
+        assert!(spy.read_dir_called(Path::new("/ws")));
+        assert!(!spy.read_dir_called(Path::new("/ws/src")));
+        assert!(!spy.read_dir_called(Path::new("/ws/.github")));
+        assert!(!spy.read_dir_called(Path::new("/ws/empty")));
+        assert!(!spy.read_dir_called(Path::new("/ws/.git")));
+        assert!(tree.find(Path::new("/ws/src/lib.rs")).is_none());
+        let src = tree.find(Path::new("/ws/src")).unwrap();
+        assert!(src.is_dir());
+        assert!(!src.is_loaded());
+        assert!(src.children().is_empty());
+        let empty = tree.find(Path::new("/ws/empty")).unwrap();
+        assert!(!empty.is_loaded());
+        assert!(empty.children().is_empty());
+    }
+
+    #[test]
+    fn file_tree_expand_loads_one_level_and_distinguishes_empty() {
+        let spy = CountingFs::wrap(sample_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        assert_eq!(spy.read_dir_count(), 1);
+
+        tree.expand(Path::new("/ws/src"), &spy).unwrap();
+        assert!(spy.read_dir_called(Path::new("/ws/src")));
+        assert!(!spy.read_dir_called(Path::new("/ws/src/lib.rs")));
+        let src = tree.find(Path::new("/ws/src")).unwrap();
+        assert!(src.is_loaded());
+        assert_eq!(src.children().len(), 2);
+        assert!(tree.find(Path::new("/ws/src/lib.rs")).unwrap().is_file());
+        assert!(tree.find(Path::new("/ws/src/main.rs")).unwrap().is_file());
+
+        tree.expand(Path::new("/ws/empty"), &spy).unwrap();
+        let empty = tree.find(Path::new("/ws/empty")).unwrap();
+        assert!(empty.is_loaded());
+        assert!(empty.children().is_empty());
+        assert_ne!(
+            tree.find(Path::new("/ws/src")).unwrap().children().len(),
+            tree.find(Path::new("/ws/empty")).unwrap().children().len()
+        );
+    }
+
+    #[test]
+    fn file_tree_expand_skip_filter_applies_on_each_level() {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/src/lib.rs", b"").unwrap();
+        fs.add_file("/ws/src/target/debug/x", b"").unwrap();
+        fs.add_file("/ws/src/.git/HEAD", b"").unwrap();
+        fs.add_file("/ws/src/node_modules/pkg/index.js", b"")
+            .unwrap();
+        fs.add_file("/ws/nested/target", b"file named target")
+            .unwrap();
+        let spy = CountingFs::wrap(fs);
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        tree.expand(Path::new("/ws/src"), &spy).unwrap();
+        assert!(tree.find(Path::new("/ws/src/lib.rs")).is_some());
+        assert!(tree.find(Path::new("/ws/src/target")).is_none());
+        assert!(tree.find(Path::new("/ws/src/.git")).is_none());
+        assert!(tree.find(Path::new("/ws/src/node_modules")).is_none());
+        tree.expand(Path::new("/ws/nested"), &spy).unwrap();
+        assert!(tree.find(Path::new("/ws/nested/target")).unwrap().is_file());
+    }
+
+    #[test]
+    fn file_tree_expand_missing_and_file_path_are_domain_errors() {
+        let fs = sample_fs();
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &fs).unwrap();
+        assert!(tree
+            .expand(Path::new("/ws/nope"), &fs)
+            .unwrap_err()
+            .is_not_found());
+        assert!(tree
+            .expand(Path::new("/ws/src/lib.rs"), &fs)
+            .unwrap_err()
+            .is_not_found());
+        tree.expand(Path::new("/ws/src"), &fs).unwrap();
+        assert!(tree
+            .expand(Path::new("/ws/src/lib.rs"), &fs)
+            .unwrap_err()
+            .is_not_a_directory());
+        assert!(tree
+            .find_mut(Path::new("/ws/README.md"))
+            .unwrap()
+            .load_children(&fs)
+            .unwrap_err()
+            .is_not_a_directory());
+        assert!(tree
+            .expand(Path::new("/ws/.github/workflows"), &fs)
+            .unwrap_err()
+            .is_not_found());
+    }
+
+    #[test]
+    fn file_tree_expand_is_idempotent_and_root_is_noop() {
+        let spy = CountingFs::wrap(sample_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        tree.expand(Path::new("/ws"), &spy).unwrap();
+        assert_eq!(spy.read_dir_count(), 1);
+        assert_eq!(spy.read_dir_paths(), vec![PathBuf::from("/ws")]);
+
+        tree.expand(Path::new("/ws/src"), &spy).unwrap();
+        let after_first = spy.read_dir_count();
+        assert_eq!(after_first, 2);
+        tree.expand(Path::new("/ws/src"), &spy).unwrap();
+        tree.expand(Path::new("/ws/src"), &spy).unwrap();
+        assert_eq!(spy.read_dir_count(), after_first);
+        assert_eq!(tree.find(Path::new("/ws/src")).unwrap().children().len(), 2);
+        tree.find_mut(Path::new("/ws/src"))
+            .unwrap()
+            .load_children(&spy)
+            .unwrap();
+        assert_eq!(spy.read_dir_count(), after_first);
+    }
+
+    #[test]
+    fn file_tree_expand_read_dir_failure_leaves_dir_unloaded() {
+        let spy = CountingFs::wrap(sample_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        spy.fail_next_read_dir();
+        let err = tree.expand(Path::new("/ws/src"), &spy).unwrap_err();
+        assert!(err.is_io());
+        assert!(!tree.find(Path::new("/ws/src")).unwrap().is_loaded());
+        tree.expand(Path::new("/ws/src"), &spy).unwrap();
+        assert!(tree.find(Path::new("/ws/src")).unwrap().is_loaded());
     }
 }

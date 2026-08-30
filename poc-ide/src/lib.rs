@@ -35,7 +35,7 @@ pub use log::{
     default_run_log_dir, run_log_dir, sanitize_payload, LogCategory, LogRow, RunLog, RunLogPath,
     EVENT_CONFLICT_ENQUEUE, EVENT_CONFLICT_RESOLVE, EVENT_CONTROL_CONNECT_ERROR, EVENT_OPEN_FILE,
     EVENT_OPEN_FOLDER, EVENT_RUN_START, EVENT_SAVE, EVENT_TAB_CLOSE, EVENT_TAB_OPEN,
-    EVENT_TREE_LOAD,
+    EVENT_TREE_EXPAND, EVENT_TREE_LOAD,
 };
 pub use lsp::{
     file_uri, path_from_file_uri, position_at, LspClient, LspLocation, ProgressiveLspCap,
@@ -119,6 +119,7 @@ mod tests {
         assert_eq!(EVENT_OPEN_FOLDER, "open_folder");
         assert_eq!(EVENT_OPEN_FILE, "open_file");
         assert_eq!(EVENT_TREE_LOAD, "tree_load");
+        assert_eq!(EVENT_TREE_EXPAND, "tree_expand");
         assert_eq!(EVENT_TAB_OPEN, "tab_open");
         assert_eq!(EVENT_TAB_CLOSE, "tab_close");
         assert_eq!(EVENT_SAVE, "save");

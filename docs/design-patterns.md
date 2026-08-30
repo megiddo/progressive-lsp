@@ -149,7 +149,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |
 | `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |
 | `MemFs` | Test double | Same `FsPort`; no host disk |
-| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter |
+| `CountingFs` | Decorator / test double | Wraps `MemFs`; records `read_dir` paths; inner Port is unchanged; used to prove shallow load / idempotent expand |
+| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder) |
 | `LayoutState` | Value object | `left_width` > 0; clamp on set; no window handle in the lib |
 | `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
 | `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |

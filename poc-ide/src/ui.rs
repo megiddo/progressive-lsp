@@ -695,12 +695,40 @@ impl eframe::App for PocIdeApp {
                     (Some(label), Some(nodes)) => {
                         ui.label(label);
                         ui.separator();
+                        let mut clicked = None;
+                        let mut expand = Vec::new();
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            let clicked = show_nodes(ui, &nodes);
-                            if let Some(path) = clicked {
-                                self.open_path(&path);
-                            }
+                            let shown = show_nodes(ui, &nodes);
+                            clicked = shown.clicked;
+                            expand = shown.expand;
                         });
+                        if !expand.is_empty() {
+                            ui.ctx().request_repaint();
+                        }
+                        if let Some(tree) = &mut self.tree {
+                            for path in expand {
+                                match tree.expand(&path, &self.fs) {
+                                    Ok(()) => {
+                                        let n = tree
+                                            .find(&path)
+                                            .map(|node| node.children().len())
+                                            .unwrap_or(0);
+                                        self.run_log.log_tree_expand(&path, n, None);
+                                    }
+                                    Err(e) => {
+                                        self.run_log.log_tree_expand(
+                                            &path,
+                                            0,
+                                            Some(&e.to_string()),
+                                        );
+                                        self.status = e.to_string();
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(path) = clicked {
+                            self.open_path(&path);
+                        }
                     }
                     _ => {
                         ui.label("Open a folder or file.");
@@ -770,22 +798,33 @@ impl eframe::App for PocIdeApp {
     }
 }
 
-fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode]) -> Option<PathBuf> {
+struct ShowTree {
+    clicked: Option<PathBuf>,
+    expand: Vec<PathBuf>,
+}
+
+fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode]) -> ShowTree {
     let mut clicked = None;
+    let mut expand = Vec::new();
     for node in nodes {
         if node.is_dir() {
             egui::CollapsingHeader::new(node.name())
                 .default_open(true)
                 .show(ui, |ui| {
-                    if let Some(path) = show_nodes(ui, node.children()) {
-                        clicked = Some(path);
+                    if !node.is_loaded() {
+                        expand.push(node.path().to_path_buf());
                     }
+                    let inner = show_nodes(ui, node.children());
+                    if clicked.is_none() {
+                        clicked = inner.clicked;
+                    }
+                    expand.extend(inner.expand);
                 });
         } else if ui.selectable_label(false, node.name()).clicked() {
             clicked = Some(node.path().to_path_buf());
         }
     }
-    clicked
+    ShowTree { clicked, expand }
 }
 
 enum DiscoverKind {

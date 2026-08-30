@@ -17,6 +17,7 @@ pub const EVENT_RUN_START: &str = "run_start";
 pub const EVENT_OPEN_FOLDER: &str = "open_folder";
 pub const EVENT_OPEN_FILE: &str = "open_file";
 pub const EVENT_TREE_LOAD: &str = "tree_load";
+pub const EVENT_TREE_EXPAND: &str = "tree_expand";
 pub const EVENT_TAB_OPEN: &str = "tab_open";
 pub const EVENT_TAB_CLOSE: &str = "tab_close";
 pub const EVENT_SAVE: &str = "save";
@@ -364,6 +365,18 @@ impl RunLog {
         );
     }
 
+    pub fn log_tree_expand(&mut self, path: &Path, child_count: usize, error: Option<&str>) {
+        self.record(
+            LogCategory::Tree,
+            EVENT_TREE_EXPAND,
+            Some(json_obj([
+                ("path", json!(path.display().to_string())),
+                ("child_count", json!(child_count)),
+                ("error", opt_str(error)),
+            ])),
+        );
+    }
+
     pub fn log_tab_open(&mut self, path: &Path) {
         self.record(LogCategory::Tab, EVENT_TAB_OPEN, json_path(path));
     }
@@ -699,6 +712,8 @@ mod tests {
         log.log_open_file(Path::new("/ws/a.rs"));
         log.log_tree_load(Path::new("/ws"), 4, None);
         log.log_tree_load(Path::new("/ws"), 0, Some("not a directory"));
+        log.log_tree_expand(Path::new("/ws/src"), 2, None);
+        log.log_tree_expand(Path::new("/ws/src"), 0, Some("not found"));
         log.log_tab_open(Path::new("/ws/a.rs"));
         log.log_tab_close(Path::new("/ws/a.rs"));
         log.log_save(Path::new("/ws/a.rs"), Some("denied"));
@@ -719,6 +734,7 @@ mod tests {
         assert!(events.contains(&EVENT_OPEN_FOLDER));
         assert!(events.contains(&EVENT_OPEN_FILE));
         assert!(events.contains(&EVENT_TREE_LOAD));
+        assert!(events.contains(&EVENT_TREE_EXPAND));
         assert!(events.contains(&EVENT_TAB_OPEN));
         assert!(events.contains(&EVENT_TAB_CLOSE));
         assert!(events.contains(&EVENT_SAVE));
@@ -746,6 +762,19 @@ mod tests {
             .find(|r| r.payload().unwrap().get("error").is_some())
             .unwrap();
         assert_eq!(tree_err.payload().unwrap()["child_count"], 0);
+        let expand_ok = rows
+            .iter()
+            .filter(|r| r.event() == EVENT_TREE_EXPAND)
+            .find(|r| r.payload().unwrap().get("error").is_none())
+            .unwrap();
+        assert_eq!(expand_ok.payload().unwrap()["path"], "/ws/src");
+        assert_eq!(expand_ok.payload().unwrap()["child_count"], 2);
+        let expand_err = rows
+            .iter()
+            .filter(|r| r.event() == EVENT_TREE_EXPAND)
+            .find(|r| r.payload().unwrap().get("error").is_some())
+            .unwrap();
+        assert_eq!(expand_err.payload().unwrap()["error"], "not found");
         let keep = rows
             .iter()
             .filter(|r| r.event() == EVENT_CONFLICT_RESOLVE)

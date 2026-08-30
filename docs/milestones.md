@@ -471,6 +471,10 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 Post-IDE-5 slice on current `main` (branch `poc-log`). **Not IDE-6.** Adds `RunLog` so each `cargo run -p poc-ide` writes a sqlite file under `$HOME/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`). Tests inject `:memory:` / tempfile. No new milestone number.
 
+## poc-tree-lazy — shallow FileTree load
+
+Stacked on `poc-log` (not IDE-6). `FileTree::load` / `FsPort.read_tree` list one directory level; child dirs start unloaded. `FileTree::expand` fills the next level. Opening a folder paints immediately.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

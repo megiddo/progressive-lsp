@@ -32,6 +32,7 @@ main   # after PD4 merge
 
 main   # after IDE-5 merge
   └── poc-log   # per-run sqlite debug log (not IDE-6)
+        └── poc-tree-lazy   # shallow FileTree load (not IDE-6)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
