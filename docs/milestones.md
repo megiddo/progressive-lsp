@@ -535,12 +535,25 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-1 — Port + records (no sqlite in server)
 
-Do not start LOG-1 until LOG-0 stays signed off. No `progressive-lsp-log` crate. No rusqlite in server. No `eprintln!` changes.
+**Status: SIGNED OFF** on branch `log1`. Do not start LOG-2 until this section is signed off (it is). Parent is `log0`. No `progressive-lsp-log` crate. No rusqlite in server. No `eprintln!` changes.
 
 - `LogPort`, `LogRecord`, `LogLevel`, `LogOrigin`, `LogComponent`, `LogScope`, `FakeLog`, `MemoryLog`, `NullLog`, `NeverFailLog` in `progressive-lsp-core`.
 - `[log]` overlay: `level`, `path`; invalid level → warning + default `info`.
 
-**Exit:** FakeLog records; scope nest/restore; never-fail NullLog; config `[log]` unknown key still warns. Core stays sqlite-free.
+**Exit**
+
+- [x] FakeLog records; scope nest/restore; never-fail NullLog; config `[log]` unknown key still warns.
+- [x] Core stays sqlite-free.
+
+**Sign-off checklist (LOG-1)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p progressive-lsp-core -- --test-threads=1` (69 passed)
+- [x] 95% llvm-cov on crates that exist — **96.29%** lines (ignore `xtask/`, `/src/main.rs$`, `tree-sitter`, `poc-ide/src/ui.rs`)
+- [x] 80% mutants on listed crates that changed — core **201 caught / 217 scored (92.6%)**, 33 unviable, 16 missed
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (no rusqlite yet; Darwin: do not fake musl greens)
+- [x] Docs in this tree updated
 
 ## LOG-2 — WAL repository crate
 

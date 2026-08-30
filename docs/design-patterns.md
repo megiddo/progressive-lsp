@@ -17,7 +17,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
-| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language |
+| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info` |
 | `apply_worktree_excludes` / `GitExcludeReport` | Command | Writes `.git/info/exclude` + overlay belt `.gitignore`; never edits the project’s committed `.gitignore` |
 | `ProgressiveLspCap` | Value object / DTO | `version` is `v1`; `socket` may be null; stock clients ignore it |
 | `InstallPlan` | Command | `apply` hashes tmp before rename; mismatch deletes tmp |
@@ -126,7 +126,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 
 ## Global logging (LOG-1+)
 
-Types from [logging.md](logging.md). They do not exist in Rust yet — this table is the locked map. poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
+Types from [logging.md](logging.md). LOG-1 lands Port / DTO / scope / doubles in `progressive-lsp-core`. Sqlite Actor types stay unimplemented until LOG-2. poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
@@ -136,7 +136,7 @@ Types from [logging.md](logging.md). They do not exist in Rust yet — this tabl
 | `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail) |
 | `LogOrigin` | Value object | `FirstParty` (`progressive-lsp`) vs `ThirdParty`; `source_repo` is one of those two strings |
 | `LogComponent` | Value object | Stable strings only: `core`, `protocol`, `control`, `engine`, `index`, `watch`, `install`, `script`, `lang-<id>`, pack name, `xtask` (only if a lib path logs) |
-| `LogScope` | Context Object | Task-local / thread-local: `content_path`, `content_line`, `operation`, `component`; `emit` copies scope fields when the caller left them unset; Drop of the guard restores the previous scope (stack) |
+| `LogScope` / `LogScopeGuard` | Context Object | Task-local / thread-local: `content_path`, `content_line`, `operation`, `component`; `emit` copies scope fields when the caller left them unset; Drop of `LogScopeGuard` restores the previous scope (stack) |
 | `LogSink` | Port | Durable append; prod `SqliteLogRepository`; tests `FakeLog` (mutex `Vec` for assertions) |
 | `NeverFailLog` | Decorator | Wraps a `LogSink` that may return `Result`; swallows errors so a full disk cannot panic `serve`; `emit` still returns `()` |
 | `FakeLog` | Test double | Same `LogPort` / `LogSink`; records into a mutex `Vec`; tests never open `$HOME` |

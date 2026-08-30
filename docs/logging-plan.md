@@ -34,6 +34,8 @@ Docs only. Wire [logging.md](logging.md) and this plan into the docs tree. Draft
 
 ### LOG-1 — Port + records (no sqlite in server)
 
+**SIGNED OFF** on `log1`. Core stays sqlite-free. Do not add `progressive-lsp-log` here.
+
 | File | Change |
 |---|---|
 | `progressive-lsp-core/src/log.rs` (new) | `LogPort`, `LogRecord`, `LogLevel`, `LogOrigin`, `LogComponent`, `LogScope`, `FakeLog`, `MemoryLog`, `NullLog`, `NeverFailLog` |

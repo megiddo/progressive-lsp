@@ -304,12 +304,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-1 (`log1` branch)
 
-Do not open `log1` until LOG-0 stays signed off. No rusqlite in server. No `eprintln!` changes.
+**Status: SIGNED OFF** on `log1`. LOG-2 may start after this WP; do not open `log2` from this branch. No rusqlite in server. No `eprintln!` changes.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-1.1 | `LogPort` + `LogRecord` + scope / Fake / Memory / Null / NeverFail in `progressive-lsp-core` | LOG-0 | core stays sqlite-free |
-| LOG-1.2 | `[log]` config overlay (`level`, `path`); invalid level → warn + default | LOG-1.1 | merge chain; unknown keys still warn |
+| LOG-1.1 | `LogPort` + `LogRecord` + scope / Fake / Memory / Null / NeverFail in `progressive-lsp-core` | LOG-0 | **SIGNED OFF.** core stays sqlite-free. llvm-cov **96.29%** lines. Mutants core **201/217 (92.6%)**, 33 unviable |
+| LOG-1.2 | `[log]` config overlay (`level`, `path`); invalid level → warn + default | LOG-1.1 | **SIGNED OFF.** merge chain; unknown keys still warn |
+
+**Sign-off checklist (LOG-1)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test -p progressive-lsp-core -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **96.29%** lines
+- [x] 80% mutants on listed crates that exist — core **201 caught / 217 scored (92.6%)**, 33 unviable, 16 missed
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — **N/A** (no rusqlite; Darwin: do not fake musl greens)
+- [x] [design-patterns.md](design-patterns.md) names every new type (`LogScopeGuard` on the `LogScope` row)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-2 (`log2` branch)
 
