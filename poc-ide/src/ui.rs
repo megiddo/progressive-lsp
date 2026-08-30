@@ -9,8 +9,9 @@ use poc_ide::{
     advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
     ControlClient, CursorOffsets, DialogPort, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
     FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, NotifyWatch,
-    OpenBuffer, PendingDiscover, RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId,
-    TabStrip, TreeExpansion, TreeNode, UnixControl, WatchPort, WorkspaceRoot,
+    DialogOutcome, OpenBuffer, PendingDialog, PendingDiscover, RunLog, Selection, ServeMode,
+    SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl, WatchPort,
+    WorkspaceRoot,
 };
 use std::sync::mpsc;
 
@@ -123,6 +124,7 @@ pub struct PocIdeApp {
     status: String,
     run_log: RunLog,
     pending_discover: Option<PendingDiscover>,
+    pending_dialog: Option<PendingDialog>,
 }
 
 impl PocIdeApp {
@@ -159,6 +161,7 @@ impl PocIdeApp {
             status: String::new(),
             run_log,
             pending_discover: None,
+            pending_dialog: None,
         };
         if let Some(dir) = folder {
             app.apply_folder_path(&dir);
@@ -222,17 +225,25 @@ impl PocIdeApp {
         }
     }
 
-    fn pick_folder(&mut self) {
-        if let Ok(Some(root)) = WorkspaceRoot::open_folder(&mut self.dialog, &self.fs) {
-            self.run_log.log_open_folder(root.as_path());
-            self.set_root(root, None);
-        }
+    fn queue_dialog(&mut self, pending: PendingDialog) {
+        self.pending_dialog = Some(pending);
     }
 
-    fn pick_file(&mut self) {
-        if let Ok(Some((root, file))) = WorkspaceRoot::open_file(&mut self.dialog, &self.fs) {
-            self.run_log.log_open_file(&file);
-            self.set_root(root, Some(file));
+    fn apply_pending_dialog(&mut self) {
+        let Some(pending) = self.pending_dialog.take() else {
+            return;
+        };
+        match pending.apply(&mut self.dialog, &self.fs) {
+            Ok(DialogOutcome::Cancelled) => {}
+            Ok(DialogOutcome::Folder(root)) => {
+                self.run_log.log_open_folder(root.as_path());
+                self.set_root(root, None);
+            }
+            Ok(DialogOutcome::File { root, path }) => {
+                self.run_log.log_open_file(&path);
+                self.set_root(root, Some(path));
+            }
+            Err(e) => self.status = e.to_string(),
         }
     }
 
@@ -443,6 +454,7 @@ impl PocIdeApp {
 
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.apply_pending_dialog();
         let already: Vec<PathBuf> = self
             .disk
             .pending()
@@ -478,11 +490,13 @@ impl eframe::App for PocIdeApp {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open Folder…").clicked() {
                         ui.close_kind(egui::UiKind::Menu);
-                        self.pick_folder();
+                        self.queue_dialog(PendingDialog::open_folder());
+                        ui.ctx().request_repaint();
                     }
                     if ui.button("Open File…").clicked() {
                         ui.close_kind(egui::UiKind::Menu);
-                        self.pick_file();
+                        self.queue_dialog(PendingDialog::open_file());
+                        ui.ctx().request_repaint();
                     }
                     if ui.button("Save").clicked() {
                         ui.close_kind(egui::UiKind::Menu);

@@ -38,6 +38,7 @@ main   # after IDE-5 merge
                           └── poc-context-menu   # editor context menu for resolver actions (not IDE-6)
                                 └── poc-navigate   # deferred Navigate + editor caret sync (not IDE-6)
                                       └── poc-no-console   # drop the hand-typed protocol console; debug is RunLog (not IDE-6)
+                                            └── poc-dialog-defer   # File Open Folder/File after the menu closes (not IDE-6)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.

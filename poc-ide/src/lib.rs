@@ -49,7 +49,10 @@ pub use ports::{
     LspTransport, MemFs, StdFs, SystemClock, WatchPort,
 };
 pub use tabs::{TabId, TabStrip};
-pub use tree::{CompactChain, FileTree, TreeExpansion, TreeNode, WorkspaceRoot};
+pub use tree::{
+    CompactChain, DialogAction, DialogOutcome, FileTree, PendingDialog, TreeExpansion, TreeNode,
+    WorkspaceRoot,
+};
 pub use watch::{DiskWatch, NotifyWatch};
 
 #[cfg(test)]
@@ -72,6 +75,9 @@ mod tests {
         let _ = DiscoverCommand::definition();
         let _ = DiscoverKind::Implementation;
         let _ = PendingDiscover::record(DiscoverKind::Definition);
+        let _ = PendingDialog::open_folder();
+        let _ = DialogAction::OpenFile;
+        let _ = DialogOutcome::Cancelled;
         let _ = Highlighter::new();
         let _ = HighlightSpan::new(0, 1, 0, 0, 0);
         let _ = FakeWatch::new();

@@ -145,6 +145,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test. `NoFileOpen` is the discover / context-menu empty-tab error |
 | `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
+| `PendingDialog` / `DialogAction` / `DialogOutcome` | Command / value | File-menu click records Open Folder / Open File; apply runs the Port after the menu closes; cancel is `Cancelled`, not an error |
 | `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
 | `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |
 | `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |

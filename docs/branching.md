@@ -44,6 +44,7 @@ main   # after IDE-5 merge
                           └── poc-context-menu  # editor context menu for definition / implementation / references (not IDE-6)
                                 └── poc-navigate  # deferred Navigate + editor caret sync (not IDE-6)
                                       └── poc-no-console  # drop the hand-typed protocol console; debug is RunLog (not IDE-6)
+                                            └── poc-dialog-defer  # File Open Folder/File after the menu closes (not IDE-6)
 ```
 
 ## Rules

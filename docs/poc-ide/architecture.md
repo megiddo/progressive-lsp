@@ -21,7 +21,7 @@ poc-ide/                     workspace member; not a musl artifact
   src/main.rs               composition root: eframe, rfd (`RfdDialog`), wire ports
   src/ports.rs              DialogPort, ClipboardPort, FsPort, StdFs, WatchPort, ClockPort, LspTransport, ControlTransport
   src/layout.rs             LayoutState (left panel width)
-  src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite, CompactChain, TreeExpansion
+  src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite, CompactChain, TreeExpansion, PendingDialog
   src/tabs.rs               TabStrip, TabId
   src/buffer.rs             OpenBuffer, BufferMap, Selection, DirtyFlag
   src/edit.rs               EditCommand
@@ -42,7 +42,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 
 ## Data flow
 
-1. `DialogPort.open_folder` / `open_file` → `WorkspaceRoot` (canonical absolute path). File → parent directory is the root; that file is also opened as a tab.
+1. File → Open Folder / Open File records `PendingDialog`; apply after the menu closes so `rfd` is not invoked mid-layout. `DialogPort.open_folder` / `open_file` → `WorkspaceRoot` (canonical absolute path). File → parent directory is the root; that file is also opened as a tab.
 2. `FsPort.read_tree` → `FileTree` shallow load of the workspace root's immediate children (skip `.git/`, `target/`, `node_modules/` — display filter, not server ignore). Child directories start unloaded. `TreeExpansion` starts empty (collapsed at every level). `FileTree::expand` lists one more directory via `FsPort.read_dir` when the user expands a path. `CompactChain` is a view of already-loaded single-child directory chains (`a/b/c`); an unloaded dir cannot claim "exactly one child," so root children are not compact-chained until the user expands enough. Expanding `a` may `load_compact_chain` so the row becomes `a/b/c` without marking nested names expanded. The compact row's path is the innermost directory; expanding it loads that dir's children.
 3. Click a file → `BufferMap.open` (read bytes, `LanguageCatalog.for_path`, `didOpen` if LSP is up).
 4. Keystrokes → `EditCommand` on `OpenBuffer` → dirty → `didChange` incremental.

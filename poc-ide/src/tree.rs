@@ -65,6 +65,67 @@ impl WorkspaceRoot {
     }
 }
 
+/// File → Open Folder / Open File. Recorded on click; apply runs the native
+/// dialog after the menu has closed so `rfd` is not invoked mid-layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogAction {
+    OpenFolder,
+    OpenFile,
+}
+
+/// Command / value: a File-menu click records an action; apply runs
+/// [`WorkspaceRoot::open_folder`] / [`open_file`] once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingDialog {
+    action: DialogAction,
+}
+
+/// Result of applying [`PendingDialog`]. Cancel is not an error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DialogOutcome {
+    Cancelled,
+    Folder(WorkspaceRoot),
+    File {
+        root: WorkspaceRoot,
+        path: PathBuf,
+    },
+}
+
+impl PendingDialog {
+    pub fn open_folder() -> Self {
+        Self {
+            action: DialogAction::OpenFolder,
+        }
+    }
+
+    pub fn open_file() -> Self {
+        Self {
+            action: DialogAction::OpenFile,
+        }
+    }
+
+    pub fn action(self) -> DialogAction {
+        self.action
+    }
+
+    pub fn apply(
+        self,
+        dialog: &mut impl DialogPort,
+        fs: &(impl FsPort + ?Sized),
+    ) -> Result<DialogOutcome, IdeError> {
+        match self.action {
+            DialogAction::OpenFolder => match WorkspaceRoot::open_folder(dialog, fs)? {
+                None => Ok(DialogOutcome::Cancelled),
+                Some(root) => Ok(DialogOutcome::Folder(root)),
+            },
+            DialogAction::OpenFile => match WorkspaceRoot::open_file(dialog, fs)? {
+                None => Ok(DialogOutcome::Cancelled),
+                Some((root, path)) => Ok(DialogOutcome::File { root, path }),
+            },
+        }
+    }
+}
+
 /// Directory or file node. Directories contain children; files are leaves.
 ///
 /// A directory's `children` is `None` until [`TreeNode::load_children`] /
@@ -577,6 +638,51 @@ mod tests {
 
         dialog.queue_file("/missing.rs");
         assert!(WorkspaceRoot::open_file(&mut dialog, &fs)
+            .unwrap_err()
+            .is_not_found());
+    }
+
+    #[test]
+    fn pending_dialog_records_action_and_apply_runs_port_once() {
+        assert_eq!(
+            PendingDialog::open_folder().action(),
+            DialogAction::OpenFolder
+        );
+        assert_eq!(PendingDialog::open_file().action(), DialogAction::OpenFile);
+        assert_ne!(PendingDialog::open_folder(), PendingDialog::open_file());
+        assert_eq!(PendingDialog::open_folder(), PendingDialog::open_folder());
+
+        let fs = sample_fs();
+        let mut dialog = crate::FakeDialog::new();
+        dialog.queue_folder_cancel();
+        assert_eq!(
+            PendingDialog::open_folder().apply(&mut dialog, &fs).unwrap(),
+            DialogOutcome::Cancelled
+        );
+
+        dialog.queue_folder("/ws");
+        match PendingDialog::open_folder().apply(&mut dialog, &fs).unwrap() {
+            DialogOutcome::Folder(root) => assert_eq!(root.as_path(), Path::new("/ws")),
+            other => panic!("expected folder, got {other:?}"),
+        }
+        assert_eq!(dialog.pending_folders(), 0);
+
+        dialog.queue_file_cancel();
+        assert_eq!(
+            PendingDialog::open_file().apply(&mut dialog, &fs).unwrap(),
+            DialogOutcome::Cancelled
+        );
+        dialog.queue_file("/ws/src/lib.rs");
+        match PendingDialog::open_file().apply(&mut dialog, &fs).unwrap() {
+            DialogOutcome::File { root, path } => {
+                assert_eq!(root.as_path(), Path::new("/ws/src"));
+                assert_eq!(path, PathBuf::from("/ws/src/lib.rs"));
+            }
+            other => panic!("expected file, got {other:?}"),
+        }
+        dialog.queue_folder("/missing");
+        assert!(PendingDialog::open_folder()
+            .apply(&mut dialog, &fs)
             .unwrap_err()
             .is_not_found());
     }
