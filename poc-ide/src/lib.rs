@@ -43,7 +43,6 @@ pub use lsp::{
     file_uri, path_from_file_uri, position_at, LspClient, LspLocation, LspSessionState,
     ProgressiveLspCap, SpawnSpec, StdioLsp,
 };
-pub use watch::{DiskWatch, NotifyWatch, WatchDepth};
 pub use ports::{
     ClipboardPort, ClockPort, ControlTransport, DialogPort, DiskEvent, DiskEventKind,
     FakeClipboard, FakeClock, FakeControl, FakeDialog, FakeLsp, FakeWatch, FsPort, LspCall,
@@ -54,6 +53,7 @@ pub use tree::{
     CompactChain, DialogAction, DialogOutcome, FileTree, PendingDialog, TreeExpansion, TreeNode,
     WorkspaceRoot,
 };
+pub use watch::{DiskWatch, NotifyWatch, WatchDepth};
 
 #[cfg(test)]
 mod tests {

@@ -7,11 +7,11 @@ use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
     advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
-    ControlClient, CursorOffsets, DialogPort, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
-    FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, LspSessionState,
-    NotifyWatch, DialogOutcome, OpenBuffer, PendingDialog, PendingDiscover, RunLog, Selection, ServeMode,
-    SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl, WatchPort,
-    WorkspaceRoot,
+    ControlClient, CursorOffsets, DialogOutcome, DialogPort, DiscoverKind, DiskEvent, DiskWatch,
+    EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient,
+    LspSessionState, NotifyWatch, OpenBuffer, PendingDialog, PendingDiscover, RunLog, Selection,
+    ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl,
+    WatchPort, WorkspaceRoot,
 };
 use std::sync::mpsc;
 
@@ -625,11 +625,7 @@ impl eframe::App for PocIdeApp {
                                     let _ = self.watch.watch(&path);
                                 }
                                 Err(e) => {
-                                    self.run_log.log_tree_expand(
-                                        &path,
-                                        0,
-                                        Some(&e.to_string()),
-                                    );
+                                    self.run_log.log_tree_expand(&path, 0, Some(&e.to_string()));
                                     self.status = e.to_string();
                                 }
                             }

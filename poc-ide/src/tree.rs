@@ -85,10 +85,7 @@ pub struct PendingDialog {
 pub enum DialogOutcome {
     Cancelled,
     Folder(WorkspaceRoot),
-    File {
-        root: WorkspaceRoot,
-        path: PathBuf,
-    },
+    File { root: WorkspaceRoot, path: PathBuf },
 }
 
 impl PendingDialog {
@@ -254,11 +251,7 @@ impl FileTree {
     /// Sort key: non-dot directories, non-dot files, dot directories, dot
     /// files; lexicographic within each group.
     pub fn display_key(name: &str, is_dir: bool) -> (u8, u8, &str) {
-        (
-            u8::from(name.starts_with('.')),
-            u8::from(!is_dir),
-            name,
-        )
+        (u8::from(name.starts_with('.')), u8::from(!is_dir), name)
     }
 
     pub fn load(root: &WorkspaceRoot, fs: &(impl FsPort + ?Sized)) -> Result<Self, IdeError> {
@@ -668,12 +661,17 @@ mod tests {
         let mut dialog = crate::FakeDialog::new();
         dialog.queue_folder_cancel();
         assert_eq!(
-            PendingDialog::open_folder().apply(&mut dialog, &fs).unwrap(),
+            PendingDialog::open_folder()
+                .apply(&mut dialog, &fs)
+                .unwrap(),
             DialogOutcome::Cancelled
         );
 
         dialog.queue_folder("/ws");
-        match PendingDialog::open_folder().apply(&mut dialog, &fs).unwrap() {
+        match PendingDialog::open_folder()
+            .apply(&mut dialog, &fs)
+            .unwrap()
+        {
             DialogOutcome::Folder(root) => assert_eq!(root.as_path(), Path::new("/ws")),
             other => panic!("expected folder, got {other:?}"),
         }
@@ -744,18 +742,12 @@ mod tests {
 
     #[test]
     fn file_tree_display_order_dirs_then_files_dots_last() {
-        assert_eq!(
-            FileTree::display_key("src", true),
-            (0, 0, "src")
-        );
+        assert_eq!(FileTree::display_key("src", true), (0, 0, "src"));
         assert_eq!(
             FileTree::display_key("README.md", false),
             (0, 1, "README.md")
         );
-        assert_eq!(
-            FileTree::display_key(".github", true),
-            (1, 0, ".github")
-        );
+        assert_eq!(FileTree::display_key(".github", true), (1, 0, ".github"));
         assert_eq!(
             FileTree::display_key(".gitignore", false),
             (1, 1, ".gitignore")
