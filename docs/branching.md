@@ -41,6 +41,7 @@ main   # after IDE-5 merge
         └── poc-tree-lazy  # shallow FileTree load (not IDE-6)
               └── poc-tree-collapsed  # TreeExpansion default collapsed (not IDE-6)
                     └── poc-compact-folders  # compact a/b/c single-child dirs (not IDE-6)
+                          └── poc-context-menu  # editor context menu for definition / implementation / references (not IDE-6)
 ```
 
 ## Rules

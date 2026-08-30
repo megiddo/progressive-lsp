@@ -28,6 +28,8 @@ pub enum IdeError {
     LspMethodMissing(String),
     #[error("progressive-lsp binary not found")]
     MissingBinary,
+    #[error("No file open")]
+    NoFileOpen,
     #[error("control: {0}")]
     Control(String),
     #[error("log: {0}")]
@@ -79,6 +81,10 @@ impl IdeError {
 
     pub fn is_missing_binary(&self) -> bool {
         matches!(self, Self::MissingBinary)
+    }
+
+    pub fn is_no_file_open(&self) -> bool {
+        matches!(self, Self::NoFileOpen)
     }
 
     pub fn is_control(&self) -> bool {
@@ -179,6 +185,7 @@ mod tests {
             IdeError::MissingBinary.to_string(),
             "progressive-lsp binary not found"
         );
+        assert_eq!(IdeError::NoFileOpen.to_string(), "No file open");
         assert_eq!(IdeError::control("refused").to_string(), "control: refused");
         assert_eq!(
             IdeError::control_socket_missing().to_string(),
@@ -216,7 +223,9 @@ mod tests {
         assert!(IdeError::lsp_method_missing("m").is_lsp_method_missing());
         assert!(!IdeError::lsp_method_missing("m").is_missing_binary());
         assert!(IdeError::MissingBinary.is_missing_binary());
-        assert!(!IdeError::MissingBinary.is_control());
+        assert!(!IdeError::MissingBinary.is_no_file_open());
+        assert!(IdeError::NoFileOpen.is_no_file_open());
+        assert!(!IdeError::NoFileOpen.is_control());
         assert!(IdeError::control("x").is_control());
         assert!(!IdeError::control("x").is_control_socket_missing());
         assert!(!IdeError::control("x").is_pending_mux());

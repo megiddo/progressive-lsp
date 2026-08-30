@@ -1,13 +1,14 @@
 //! POC IDE domain: Ports, file-tree Composite, tabs, layout, buffers, syntect,
-//! disk-conflict Observer, language catalog, stock LSP client, control Adapter,
-//! protocol console, and per-run sqlite [`RunLog`] Repository. The lib does not
-//! import `egui`, `eframe`, `egui_dock`, or `rfd`. Those stay in the
-//! composition-root bin (`main.rs` / `ui.rs`).
+//! disk-conflict Observer, language catalog, stock LSP client, `DiscoverCommand`,
+//! control Adapter, protocol console, and per-run sqlite [`RunLog`] Repository.
+//! The lib does not import `egui`, `eframe`, `egui_dock`, or `rfd`. Those stay
+//! in the composition-root bin (`main.rs` / `ui.rs`).
 
 pub mod buffer;
 pub mod conflict;
 pub mod console;
 pub mod control;
+pub mod discover;
 pub mod edit;
 pub mod error;
 pub mod highlight;
@@ -26,6 +27,7 @@ pub use console::{ProtocolConsole, TranscriptEntry, TranscriptKind, STOCK_LSP_ME
 pub use control::{
     advertised_control_socket, ControlClient, ControlPush, UnixControl, CONTROL_UNARY_METHODS,
 };
+pub use discover::{DiscoverCommand, DiscoverKind};
 pub use edit::EditCommand;
 pub use error::IdeError;
 pub use highlight::{HighlightSpan, Highlighter};
@@ -66,6 +68,8 @@ mod tests {
         let _ = DirtyFlag::clean();
         let _ = Selection::collapsed(0);
         let _ = EditCommand::delete();
+        let _ = DiscoverCommand::definition();
+        let _ = DiscoverKind::Implementation;
         let _ = Highlighter::new();
         let _ = HighlightSpan::new(0, 1, 0, 0, 0);
         let _ = FakeWatch::new();
@@ -107,6 +111,11 @@ mod tests {
             .contains("absolute"));
         assert!(IdeError::watch("x").is_watch());
         assert!(IdeError::MissingBinary.is_missing_binary());
+        assert!(IdeError::NoFileOpen.is_no_file_open());
+        assert_eq!(
+            DiscoverKind::References.lsp_method(),
+            "textDocument/references"
+        );
         assert!(IdeError::control("x").is_control());
         assert!(IdeError::control_socket_missing().is_control_socket_missing());
         assert!(IdeError::pending_mux().is_pending_mux());

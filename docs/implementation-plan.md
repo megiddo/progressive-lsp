@@ -35,6 +35,7 @@ main   # after IDE-5 merge
         └── poc-tree-lazy   # shallow FileTree load (not IDE-6)
               └── poc-tree-collapsed   # TreeExpansion default collapsed (not IDE-6)
                     └── poc-compact-folders   # compact a/b/c single-child dirs (not IDE-6)
+                          └── poc-context-menu   # editor context menu for resolver actions (not IDE-6)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.

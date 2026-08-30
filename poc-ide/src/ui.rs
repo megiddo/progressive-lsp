@@ -6,12 +6,12 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, position_at, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
-    ControlClient, DialogPort, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
-    Highlighter, IdeError, LayoutState, LspClient, NotifyWatch, OpenBuffer, ProtocolConsole,
-    RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TranscriptKind,
-    TreeExpansion, TreeNode, UnixControl, WatchPort, WorkspaceRoot, CONTROL_UNARY_METHODS,
-    STOCK_LSP_METHODS,
+    advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
+    ControlClient, DialogPort, DiscoverCommand, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
+    FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, NotifyWatch,
+    OpenBuffer, ProtocolConsole, RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId,
+    TabStrip, TranscriptKind, TreeExpansion, TreeNode, UnixControl, WatchPort, WorkspaceRoot,
+    CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
 };
 use serde_json::json;
 use std::sync::mpsc;
@@ -402,48 +402,17 @@ impl PocIdeApp {
     }
 
     fn discover(&mut self, kind: DiscoverKind) {
-        let Some(id) = self.tabs.focused().cloned() else {
-            self.status = "No file open".into();
-            return;
-        };
-        let Some(buf) = self.buffers.get(id.as_path()) else {
-            self.status = "No file open".into();
-            return;
-        };
-        let (line, character) = position_at(&buf.text(), buf.selection().start());
-        let path = buf.path().to_path_buf();
-        let Some(lsp) = self.lsp.as_mut() else {
-            self.status = self.missing_server_status();
-            return;
-        };
-        let method = match kind {
-            DiscoverKind::Definition => "textDocument/definition",
-            DiscoverKind::Implementation => "textDocument/implementation",
-            DiscoverKind::References => "textDocument/references",
-        };
-        let result = match kind {
-            DiscoverKind::Definition => lsp.definition(&path, line, character),
-            DiscoverKind::Implementation => lsp.implementation(&path, line, character),
-            DiscoverKind::References => lsp.references(&path, line, character),
-        };
-        match result {
-            Ok(locations) => {
-                self.run_log.log_lsp(method, None);
-                match LspClient::<StdioLsp>::jump(
-                    &locations,
-                    &mut self.tabs,
-                    &mut self.buffers,
-                    &self.fs,
-                ) {
-                    Ok(0) => self.status = "No locations".into(),
-                    Ok(_) => self.status.clear(),
-                    Err(e) => self.status = e.to_string(),
-                }
-            }
-            Err(e) => {
-                self.run_log.log_lsp(method, Some(&e.to_string()));
-                self.status = e.to_string();
-            }
+        match DiscoverCommand::new(kind).apply(
+            self.lsp.as_mut(),
+            &mut self.tabs,
+            &mut self.buffers,
+            &self.fs,
+            Some(&mut self.run_log),
+        ) {
+            Ok(0) => self.status = "No locations".into(),
+            Ok(_) => self.status.clear(),
+            Err(e) if e.is_missing_binary() => self.status = self.missing_server_status(),
+            Err(e) => self.status = e.to_string(),
         }
     }
 
@@ -700,11 +669,13 @@ impl eframe::App for PocIdeApp {
                         ui.label(label);
                         ui.separator();
                         let mut clicked = None;
+                        let mut discover = None;
                         let mut became_expanded = Vec::new();
                         let mut became_collapsed = Vec::new();
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             let shown = show_nodes(ui, &nodes, &self.expansion);
                             clicked = shown.clicked;
+                            discover = shown.discover;
                             became_expanded = shown.became_expanded;
                             became_collapsed = shown.became_collapsed;
                         });
@@ -747,6 +718,9 @@ impl eframe::App for PocIdeApp {
                         }
                         if let Some(path) = clicked {
                             self.open_path(&path);
+                        }
+                        if let Some(kind) = discover {
+                            self.discover(kind);
                         }
                     }
                     _ => {
@@ -792,8 +766,8 @@ impl eframe::App for PocIdeApp {
                     }
                     ui.label(id.as_path().display().to_string());
                     if let Some(buf) = self.buffers.get_mut(id.as_path()) {
-                        let change = show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
-                        if let Some((path, old, new)) = change {
+                        let outcome = show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
+                        if let Some((path, old, new)) = outcome.change {
                             if let Some(lsp) = &mut self.lsp {
                                 match lsp.did_change(&path, &old, &new) {
                                     Ok(()) => self.run_log.log_lsp("textDocument/didChange", None),
@@ -807,6 +781,9 @@ impl eframe::App for PocIdeApp {
                                 }
                             }
                         }
+                        if let Some(kind) = outcome.discover {
+                            self.discover(kind);
+                        }
                     }
                 }
                 None => {
@@ -819,12 +796,29 @@ impl eframe::App for PocIdeApp {
 
 struct ShowTree {
     clicked: Option<PathBuf>,
+    discover: Option<DiscoverKind>,
     became_expanded: Vec<PathBuf>,
     became_collapsed: Vec<PathBuf>,
 }
 
+fn discover_context_menu(ui: &mut egui::Ui, chosen: &mut Option<DiscoverKind>) {
+    if ui.button("Find Definition").clicked() {
+        ui.close();
+        *chosen = Some(DiscoverKind::Definition);
+    }
+    if ui.button("Find Implementation").clicked() {
+        ui.close();
+        *chosen = Some(DiscoverKind::Implementation);
+    }
+    if ui.button("Find References").clicked() {
+        ui.close();
+        *chosen = Some(DiscoverKind::References);
+    }
+}
+
 fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) -> ShowTree {
     let mut clicked = None;
+    let mut discover = None;
     let mut became_expanded = Vec::new();
     let mut became_collapsed = Vec::new();
     for node in nodes {
@@ -844,6 +838,9 @@ fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) 
                 if clicked.is_none() {
                     clicked = inner.clicked;
                 }
+                if discover.is_none() {
+                    discover = inner.discover;
+                }
                 became_expanded.extend(inner.became_expanded);
                 became_collapsed.extend(inner.became_collapsed);
             }
@@ -854,21 +851,25 @@ fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) 
                     became_expanded.push(path.to_path_buf());
                 }
             }
-        } else if ui.selectable_label(false, node.name()).clicked() {
-            clicked = Some(node.path().to_path_buf());
+        } else {
+            let response = ui.selectable_label(false, node.name());
+            if response.clicked() {
+                clicked = Some(node.path().to_path_buf());
+            }
+            response.context_menu(|ui| discover_context_menu(ui, &mut discover));
         }
     }
     ShowTree {
         clicked,
+        discover,
         became_expanded,
         became_collapsed,
     }
 }
 
-enum DiscoverKind {
-    Definition,
-    Implementation,
-    References,
+struct EditorOutcome {
+    change: Option<(PathBuf, String, String)>,
+    discover: Option<DiscoverKind>,
 }
 
 fn show_editor(
@@ -876,7 +877,7 @@ fn show_editor(
     buffer: &mut OpenBuffer,
     highlighter: &Highlighter,
     clipboard: &mut impl ClipboardPort,
-) -> Option<(PathBuf, String, String)> {
+) -> EditorOutcome {
     let path = buffer.path().to_path_buf();
     let mut text = buffer.text();
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -891,14 +892,19 @@ fn show_editor(
         .desired_rows(24)
         .layouter(&mut layouter)
         .show(ui);
-    if output.response.changed() && text != buffer.text() {
+    let mut discover = None;
+    output
+        .response
+        .context_menu(|ui| discover_context_menu(ui, &mut discover));
+    let change = if output.response.changed() && text != buffer.text() {
         let old = buffer.text();
         let path = buffer.path().to_path_buf();
         sync_buffer_from_view(buffer, &text, clipboard);
         Some((path, old, text))
     } else {
         None
-    }
+    };
+    EditorOutcome { change, discover }
 }
 
 fn sync_buffer_from_view(

@@ -142,7 +142,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 |---|---|---|
 | `poc-ide` bin (`main.rs`) | Composition root | Only the bin wires eframe/`rfd` / `ArboardClipboard`; lib takes Ports |
 | `ArboardClipboard` | Adapter | Bin-only `ClipboardPort`; lib tests use `FakeClipboard` |
-| `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test |
+| `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test. `NoFileOpen` is the discover / context-menu empty-tab error |
 | `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
 | `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
@@ -159,6 +159,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `Selection` | Value object | Range is ordered `start <= end` in char offsets |
 | `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
 | `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
+| `DiscoverKind` | Value object | Definition / Implementation / References; `lsp_method` is the stock JSON-RPC name |
+| `DiscoverCommand` | Command | Focused tab + cursor → `LspClient` method + `jump`; no file open / missing client are domain errors, not panics; empty location list is valid |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
 | `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
