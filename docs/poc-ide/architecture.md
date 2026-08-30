@@ -48,7 +48,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 4. Keystrokes → `EditCommand` on `OpenBuffer` → dirty → `didChange` incremental.
 5. Save → `FsPort.write` → clear dirty → `didSave`.
 6. `WatchPort` events for an open path → if the buffer is open, enqueue `ConflictModal` (always; even if clean). Choice `LoadDisk` replaces rope and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime`.
-7. Go to definition / implementation / references → `DiscoverCommand` → `LspClient` → jump opens or focuses a tab at `LspLocation`. Navigate, F12, and the editor / file-tree context menu share this Command. Right-click uses the focused tab + cursor (same as F12), not the tree path.
+7. Go to definition / implementation / references → `DiscoverCommand` → `LspClient` → jump opens or focuses a tab at `LspLocation`. Navigate records `PendingDiscover` and applies after the menu closes (same path as F12 and the editor / file-tree context menu). The editor view copies caret char offsets onto `OpenBuffer.selection` via `CursorOffsets` so discover uses the visible caret, not a stale 0,0. Right-click uses the focused tab + cursor (same as F12), not the tree path.
 8. Protocol console sends raw LSP methods or Envelope methods; transcripts are append-only `TranscriptEntry` DTOs.
 
 ## Ports (inject always)
@@ -115,7 +115,7 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 
 - Left: `egui::Panel::left("tree").resizable(true)` bound to `LayoutState.left_width` (egui 0.36 renamed `SidePanel` to `Panel`).
 - Center: `TabStrip` rendered with a thin custom tab bar in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on this workspace’s rustc). Same `TabStrip` tests.
-- Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References; they run `DiscoverCommand` (same path as Navigate / F12).
+- Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References; they run `DiscoverCommand` (same path as Navigate / F12). Navigate records `PendingDiscover` and applies after the menu UI.
 - Modal: `egui::Modal` / `Window` for `ConflictModal`.
 - Bottom or right: `ProtocolConsole` (collapsible); transcript rows are append-only `TranscriptEntry` DTOs.
 

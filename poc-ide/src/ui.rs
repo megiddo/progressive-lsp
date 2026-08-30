@@ -7,11 +7,11 @@ use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
     advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
-    ControlClient, DialogPort, DiscoverCommand, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
+    ControlClient, CursorOffsets, DialogPort, DiscoverKind, DiskEvent, DiskWatch, EditCommand,
     FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient, NotifyWatch,
-    OpenBuffer, ProtocolConsole, RunLog, Selection, ServeMode, SpawnSpec, StdFs, StdioLsp, TabId,
-    TabStrip, TranscriptKind, TreeExpansion, TreeNode, UnixControl, WatchPort, WorkspaceRoot,
-    CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
+    OpenBuffer, PendingDiscover, ProtocolConsole, RunLog, Selection, ServeMode, SpawnSpec, StdFs,
+    StdioLsp, TabId, TabStrip, TranscriptKind, TreeExpansion, TreeNode, UnixControl, WatchPort,
+    WorkspaceRoot, CONTROL_UNARY_METHODS, STOCK_LSP_METHODS,
 };
 use serde_json::json;
 use std::sync::mpsc;
@@ -126,6 +126,7 @@ pub struct PocIdeApp {
     console_body: String,
     status: String,
     run_log: RunLog,
+    pending_discover: Option<PendingDiscover>,
 }
 
 impl PocIdeApp {
@@ -171,6 +172,7 @@ impl PocIdeApp {
             console_body: String::new(),
             status: String::new(),
             run_log,
+            pending_discover: None,
         };
         if let Some(dir) = folder {
             app.apply_folder_path(&dir);
@@ -401,8 +403,15 @@ impl PocIdeApp {
             .unwrap_or_else(|| IdeError::MissingBinary.to_string())
     }
 
-    fn discover(&mut self, kind: DiscoverKind) {
-        match DiscoverCommand::new(kind).apply(
+    fn queue_discover(&mut self, kind: DiscoverKind) {
+        self.pending_discover = Some(PendingDiscover::record(kind));
+    }
+
+    fn apply_pending_discover(&mut self) {
+        let Some(pending) = self.pending_discover.take() else {
+            return;
+        };
+        match pending.apply(
             self.lsp.as_mut(),
             &mut self.tabs,
             &mut self.buffers,
@@ -609,41 +618,41 @@ impl eframe::App for PocIdeApp {
             self.save_focused();
         }
         if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.shift) {
-            self.discover(DiscoverKind::References);
+            self.queue_discover(DiscoverKind::References);
         } else if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.command) {
-            self.discover(DiscoverKind::Implementation);
+            self.queue_discover(DiscoverKind::Implementation);
         } else if ui.input(|i| i.key_pressed(egui::Key::F12)) {
-            self.discover(DiscoverKind::Definition);
+            self.queue_discover(DiscoverKind::Definition);
         }
 
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open Folder…").clicked() {
-                        ui.close();
+                        ui.close_kind(egui::UiKind::Menu);
                         self.pick_folder();
                     }
                     if ui.button("Open File…").clicked() {
-                        ui.close();
+                        ui.close_kind(egui::UiKind::Menu);
                         self.pick_file();
                     }
                     if ui.button("Save").clicked() {
-                        ui.close();
+                        ui.close_kind(egui::UiKind::Menu);
                         self.save_focused();
                     }
                 });
                 ui.menu_button("Navigate", |ui| {
                     if ui.button("Go to Definition").clicked() {
-                        ui.close();
-                        self.discover(DiscoverKind::Definition);
+                        ui.close_kind(egui::UiKind::Menu);
+                        self.queue_discover(DiscoverKind::Definition);
                     }
                     if ui.button("Go to Implementation").clicked() {
-                        ui.close();
-                        self.discover(DiscoverKind::Implementation);
+                        ui.close_kind(egui::UiKind::Menu);
+                        self.queue_discover(DiscoverKind::Implementation);
                     }
                     if ui.button("Find References").clicked() {
-                        ui.close();
-                        self.discover(DiscoverKind::References);
+                        ui.close_kind(egui::UiKind::Menu);
+                        self.queue_discover(DiscoverKind::References);
                     }
                 });
                 if !self.status.is_empty() {
@@ -720,7 +729,7 @@ impl eframe::App for PocIdeApp {
                             self.open_path(&path);
                         }
                         if let Some(kind) = discover {
-                            self.discover(kind);
+                            self.queue_discover(kind);
                         }
                     }
                     _ => {
@@ -782,7 +791,7 @@ impl eframe::App for PocIdeApp {
                             }
                         }
                         if let Some(kind) = outcome.discover {
-                            self.discover(kind);
+                            self.queue_discover(kind);
                         }
                     }
                 }
@@ -791,6 +800,7 @@ impl eframe::App for PocIdeApp {
                 }
             }
         });
+        self.apply_pending_discover();
     }
 }
 
@@ -803,15 +813,15 @@ struct ShowTree {
 
 fn discover_context_menu(ui: &mut egui::Ui, chosen: &mut Option<DiscoverKind>) {
     if ui.button("Find Definition").clicked() {
-        ui.close();
+        ui.close_kind(egui::UiKind::Menu);
         *chosen = Some(DiscoverKind::Definition);
     }
     if ui.button("Find Implementation").clicked() {
-        ui.close();
+        ui.close_kind(egui::UiKind::Menu);
         *chosen = Some(DiscoverKind::Implementation);
     }
     if ui.button("Find References").clicked() {
-        ui.close();
+        ui.close_kind(egui::UiKind::Menu);
         *chosen = Some(DiscoverKind::References);
     }
 }
@@ -904,6 +914,13 @@ fn show_editor(
     } else {
         None
     };
+    if let Some(range) = output
+        .cursor_range
+        .or_else(|| output.state.cursor.char_range())
+    {
+        let sorted = range.as_sorted_char_range();
+        CursorOffsets::new(usize::from(sorted.start), usize::from(sorted.end)).apply(buffer);
+    }
     EditorOutcome { change, discover }
 }
 

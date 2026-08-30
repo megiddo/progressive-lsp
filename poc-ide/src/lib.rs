@@ -21,13 +21,13 @@ pub mod tabs;
 pub mod tree;
 pub mod watch;
 
-pub use buffer::{BufferMap, DirtyFlag, OpenBuffer, Selection};
+pub use buffer::{BufferMap, CursorOffsets, DirtyFlag, OpenBuffer, Selection};
 pub use conflict::{ConflictChoice, ConflictModal};
 pub use console::{ProtocolConsole, TranscriptEntry, TranscriptKind, STOCK_LSP_METHODS};
 pub use control::{
     advertised_control_socket, ControlClient, ControlPush, UnixControl, CONTROL_UNARY_METHODS,
 };
-pub use discover::{DiscoverCommand, DiscoverKind};
+pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
 pub use error::IdeError;
 pub use highlight::{HighlightSpan, Highlighter};
@@ -67,9 +67,11 @@ mod tests {
         let _ = BufferMap::new();
         let _ = DirtyFlag::clean();
         let _ = Selection::collapsed(0);
+        let _ = CursorOffsets::collapsed(0);
         let _ = EditCommand::delete();
         let _ = DiscoverCommand::definition();
         let _ = DiscoverKind::Implementation;
+        let _ = PendingDiscover::record(DiscoverKind::Definition);
         let _ = Highlighter::new();
         let _ = HighlightSpan::new(0, 1, 0, 0, 0);
         let _ = FakeWatch::new();
@@ -115,6 +117,14 @@ mod tests {
         assert_eq!(
             DiscoverKind::References.lsp_method(),
             "textDocument/references"
+        );
+        assert_eq!(
+            PendingDiscover::record(DiscoverKind::Definition).kind(),
+            DiscoverKind::Definition
+        );
+        assert_eq!(
+            CursorOffsets::new(3, 1).to_selection(),
+            Selection::new(1, 3)
         );
         assert!(IdeError::control("x").is_control());
         assert!(IdeError::control_socket_missing().is_control_socket_missing());

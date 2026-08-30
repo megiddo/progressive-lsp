@@ -42,4 +42,4 @@ Spawn of `progressive-lsp serve` uses (first hit wins): `PROGRESSIVE_LSP` env, `
 
 ## Milestones
 
-Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log`, `poc-tree-lazy`, `poc-tree-collapsed`, `poc-compact-folders`, and `poc-context-menu` (not IDE-6). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).
+Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log`, `poc-tree-lazy`, `poc-tree-collapsed`, `poc-compact-folders`, `poc-context-menu`, and `poc-navigate` (not IDE-6). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).

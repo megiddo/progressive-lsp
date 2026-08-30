@@ -157,10 +157,12 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
 | `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |
 | `Selection` | Value object | Range is ordered `start <= end` in char offsets |
+| `CursorOffsets` | Value object | Editor char offsets → `Selection`; apply writes the caret onto `OpenBuffer` without dirtying; offsets → `position_at` is not always line 0 character 0 |
 | `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
 | `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
 | `DiscoverKind` | Value object | Definition / Implementation / References; `lsp_method` is the stock JSON-RPC name |
 | `DiscoverCommand` | Command | Focused tab + cursor → `LspClient` method + `jump`; no file open / missing client are domain errors, not panics; empty location list is valid |
+| `PendingDiscover` | Command / value | Click records a `DiscoverKind`; apply runs `DiscoverCommand` once after the menu closes; close does not panic |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
 | `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |

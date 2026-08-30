@@ -487,6 +487,10 @@ Stacked on `poc-tree-collapsed` (not IDE-6). Directories that each have exactly 
 
 Stacked on `poc-compact-folders` (not IDE-6). Right-click on the editor (and file tree rows) offers Find Definition / Implementation / References. Those items run the same `DiscoverCommand` as Navigate / F12 (focused tab + cursor). No new milestone number.
 
+## poc-navigate — deferred Navigate + editor caret sync
+
+Stacked on `poc-context-menu` (not IDE-6). Navigate records `PendingDiscover` and applies after the menu closes (`close_kind(Menu)` so the shell does not collapse). After `TextEdit::show`, `CursorOffsets` copies the caret onto `OpenBuffer.selection` so Go to Definition / F12 / context menu use the visible caret, not a stale 0,0. Protocol console stays. No new milestone number.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

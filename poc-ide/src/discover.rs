@@ -103,6 +103,36 @@ impl DiscoverCommand {
     }
 }
 
+/// Command / value: a Navigate (or F12) click records a kind; apply runs
+/// [`DiscoverCommand`] once after the menu has closed. Close is not this type —
+/// recording survives menu teardown with no panic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingDiscover {
+    kind: DiscoverKind,
+}
+
+impl PendingDiscover {
+    pub fn record(kind: DiscoverKind) -> Self {
+        Self { kind }
+    }
+
+    pub fn kind(self) -> DiscoverKind {
+        self.kind
+    }
+
+    /// Apply after the menu UI (same frame after close, or next frame).
+    pub fn apply<T: LspTransport>(
+        &self,
+        lsp: Option<&mut LspClient<T>>,
+        tabs: &mut TabStrip,
+        buffers: &mut BufferMap,
+        fs: &impl FsPort,
+        run_log: Option<&mut RunLog>,
+    ) -> Result<usize, IdeError> {
+        DiscoverCommand::new(self.kind).apply(lsp, tabs, buffers, fs, run_log)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +417,72 @@ mod tests {
             .unwrap()
             .iter()
             .all(|r| r.category() != LogCategory::Lsp));
+    }
+
+    #[test]
+    fn pending_discover_records_kind_apply_runs_once_and_menu_close_does_not_panic() {
+        let click = PendingDiscover::record(DiscoverKind::Definition);
+        assert_eq!(click.kind(), DiscoverKind::Definition);
+        assert_eq!(
+            PendingDiscover::record(DiscoverKind::Implementation).kind(),
+            DiscoverKind::Implementation
+        );
+        assert_eq!(
+            PendingDiscover::record(DiscoverKind::References).kind(),
+            DiscoverKind::References
+        );
+        assert_eq!(
+            PendingDiscover::record(DiscoverKind::Definition),
+            PendingDiscover::record(DiscoverKind::Definition)
+        );
+        assert_ne!(
+            PendingDiscover::record(DiscoverKind::Definition),
+            PendingDiscover::record(DiscoverKind::References)
+        );
+
+        // Menu close is not this Command: the recorded value is Copy and has no
+        // Ui to unwind, so close cannot panic apply.
+        let pending = click;
+
+        let mut fake = scripted_init();
+        fake.script(
+            "textDocument/definition",
+            location_json("file:///ws/other.rs", 0, 3, 0, 4),
+        );
+        let mut client = ready(fake);
+        let (fs, mut tabs, mut buffers) = open_lib();
+        buffers
+            .get_mut("/ws/lib.rs")
+            .unwrap()
+            .set_selection(Selection::collapsed(3));
+
+        let jumped = pending
+            .apply(Some(&mut client), &mut tabs, &mut buffers, &fs, None)
+            .unwrap();
+        assert_eq!(jumped, 1);
+        assert_eq!(
+            tabs.focused().unwrap().as_path(),
+            std::path::Path::new("/ws/other.rs")
+        );
+        assert_eq!(
+            buffers.get("/ws/other.rs").unwrap().selection(),
+            Selection::new(3, 4)
+        );
+        let defs = client
+            .transport()
+            .sent()
+            .iter()
+            .filter(|c| c.method == "textDocument/definition")
+            .count();
+        assert_eq!(defs, 1);
+        let def = client
+            .transport()
+            .sent()
+            .iter()
+            .find(|c| c.method == "textDocument/definition")
+            .unwrap();
+        assert_eq!(def.params["position"]["line"], 0);
+        assert_eq!(def.params["position"]["character"], 3);
+        assert_ne!(def.params["position"]["character"], 0);
     }
 }
