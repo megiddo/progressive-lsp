@@ -142,24 +142,34 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 |---|---|---|
 | `poc-ide` bin (`main.rs`) | Composition root | Only the bin wires eframe/`rfd` / `ArboardClipboard`; lib takes Ports |
 | `ArboardClipboard` | Adapter | Bin-only `ClipboardPort`; lib tests use `FakeClipboard` |
-| `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test |
+| `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test. `NoFileOpen` is the discover / context-menu empty-tab error |
 | `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
+| `PendingDialog` / `DialogAction` / `DialogOutcome` | Command / value | File-menu click records Open Folder / Open File; apply runs the Port after the menu closes; cancel is `Cancelled`, not an error |
 | `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
 | `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |
 | `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |
 | `MemFs` | Test double | Same `FsPort`; no host disk |
-| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter |
+| `CountingFs` | Decorator / test double | Wraps `MemFs`; records `read_dir` paths; inner Port is unchanged; used to prove shallow load / idempotent expand |
+| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder). `load_compact_chain` loads a single-child-dir chain for a compact row without changing `TreeExpansion`. Listing order is non-dot dirs, non-dot files, dot dirs, dot files (lexicographic within each group). |
+| `CompactChain` | Value object / view of Composite | `/`-joined names of already-loaded single-child directories; `path` is the innermost directory. Unloaded / empty / one file child / 2+ children stop the chain. Length 1 is a non-compact directory. Skip-filtered names cannot be the "one child." |
+| `TreeExpansion` | Value object / collection | A path is expanded iff explicitly expanded; default is collapsed at every level. `for_root` / a new `FileTree` starts empty. `expand` / `collapse` are Commands. Collapse of a missing path is a no-op. Expanding a file is a no-op. Expanding a parent does not expand children. Expanding a compact row expands the innermost path only — nested names in the chain are not auto-expanded. |
 | `LayoutState` | Value object | `left_width` > 0; clamp on set; no window handle in the lib |
 | `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
 | `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |
 | `Selection` | Value object | Range is ordered `start <= end` in char offsets |
+| `CursorOffsets` | Value object | Editor char offsets → `Selection`; apply writes the caret onto `OpenBuffer` without dirtying; offsets → `position_at` is not always line 0 character 0 |
 | `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
 | `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
+| `DiscoverKind` | Value object | Definition / Implementation / References; `lsp_method` is the stock JSON-RPC name |
+| `DiscoverCommand` | Command | Focused tab + cursor → `LspClient` method + `jump`; no file open / missing client are domain errors, not panics; empty location list is valid |
+| `PendingDiscover` | Command / value | Click records a `DiscoverKind`; apply runs `DiscoverCommand` once after the menu closes; close does not panic |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
 | `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
+| `WatchDepth` | Value object | `immediate` vs `recursive`; folder open uses immediate so a large tree does not block on a recursive OS watch |
+| `LspSessionState` | Value object | `idle` / `connecting` / `ready` / `failed`; connecting is not ready; tree paint must not wait for `ready` |
 | `FakeWatch` | Test double | Same `WatchPort`; tests inject events; no `thread::sleep` |
 | `DiskEvent` / `DiskEventKind` | Event / DTO | path + kind + mtime; `KeepMemory` ignores a later event with the same mtime |
 | `ClockPort` / `FakeClock` (poc-ide) | Port / test double | Tests never `thread::sleep`; advance with FakeClock |
@@ -181,7 +191,13 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
 | `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
+| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX` |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
+| `RunLog` | Repository | One sqlite file (or `:memory:`) per run; append + query; write failure is `IdeError::Log`, never a panic. Discover rows include `path`, `uri`, `line`, `character`, `location_count` |
+| `RunLogPath` | Value object | `{dir}/poc-ide-{unix_ms}-{pid}.sqlite`; tests inject dir / path |
+| `LogRow` | DTO | `timestamp_ms` + `category` + `event` + optional JSON; payload is structured, never file bodies |
+| `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict`; unknown parse → `None` |
+| `IdeError::Log` | Domain Result | Classifier `is_log`; composition root ignores write failures |
 
 ## Adding a type
 

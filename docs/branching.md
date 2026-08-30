@@ -35,6 +35,19 @@ main
                     └── ide3  # DiskWatch + ConflictModal
                           └── ide4  # LanguageCatalog + stock LSP discovery
                                 └── ide5  # ProtocolConsole + progressive.v1
+
+main   # after IDE-5 merge
+  └── poc-log         # per-run sqlite debug log (not IDE-6)
+        └── poc-tree-lazy  # shallow FileTree load (not IDE-6)
+              └── poc-tree-collapsed  # TreeExpansion default collapsed (not IDE-6)
+                    └── poc-compact-folders  # compact a/b/c single-child dirs (not IDE-6)
+                          └── poc-context-menu  # editor context menu for definition / implementation / references (not IDE-6)
+                                └── poc-navigate  # deferred Navigate + editor caret sync (not IDE-6)
+                                      └── poc-no-console  # drop the hand-typed protocol console; debug is RunLog (not IDE-6)
+                                            └── poc-dialog-defer  # File Open Folder/File after the menu closes (not IDE-6)
+                                                  └── poc-open-unblock  # non-recursive watch + deferred LSP initialize (not IDE-6)
+                                                        └── poc-tree-sort  # dirs then files; dot names last (not IDE-6)
+                                                              └── poc-discover-log  # discover uri/position/count in RunLog (not IDE-6)
 ```
 
 ## Rules

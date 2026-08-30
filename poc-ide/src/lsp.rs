@@ -411,7 +411,59 @@ impl<T: LspTransport> LspClient<T> {
     pub fn into_inner(self) -> T {
         self.transport
     }
+}
 
+/// LSP bind after a folder is on screen. Connecting does not block tree paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LspSessionState {
+    Idle,
+    Connecting,
+    Ready,
+    Failed,
+}
+
+impl LspSessionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Connecting => "connecting",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "idle" => Some(Self::Idle),
+            "connecting" => Some(Self::Connecting),
+            "ready" => Some(Self::Ready),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn is_connecting(self) -> bool {
+        matches!(self, Self::Connecting)
+    }
+
+    pub fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    pub fn begin_connect(self) -> Self {
+        Self::Connecting
+    }
+
+    pub fn finish_ok(self) -> Self {
+        Self::Ready
+    }
+
+    pub fn finish_err(self) -> Self {
+        Self::Failed
+    }
+}
+
+impl<T: LspTransport> LspClient<T> {
     pub fn initialize(&mut self, root: impl AsRef<Path>) -> Result<(), IdeError> {
         if self.ready {
             return Err(IdeError::lsp("already initialized"));
@@ -615,7 +667,17 @@ pub fn file_uri(path: &Path) -> Result<String, IdeError> {
     if !path.is_absolute() {
         return Err(IdeError::NotAbsolute(path.to_path_buf()));
     }
-    Ok(format!("file://{}", path.to_string_lossy()))
+    let raw = path.to_string_lossy();
+    let mut out = String::from("file://");
+    for b in raw.as_bytes() {
+        match *b {
+            b'/' | b'-' | b'_' | b'.' | b'~' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => {
+                out.push(*b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    Ok(out)
 }
 
 pub fn path_from_file_uri(uri: &str) -> Result<PathBuf, IdeError> {
@@ -1288,6 +1350,27 @@ mod tests {
     }
 
     #[test]
+    fn lsp_session_state_value_object_connecting_does_not_count_as_ready() {
+        assert_eq!(LspSessionState::Idle.as_str(), "idle");
+        assert_eq!(LspSessionState::Connecting.as_str(), "connecting");
+        assert_eq!(LspSessionState::Ready.as_str(), "ready");
+        assert_eq!(LspSessionState::Failed.as_str(), "failed");
+        assert_eq!(
+            LspSessionState::parse("connecting"),
+            Some(LspSessionState::Connecting)
+        );
+        assert_eq!(LspSessionState::parse("nope"), None);
+        assert!(LspSessionState::Idle.begin_connect().is_connecting());
+        assert!(!LspSessionState::Connecting.is_ready());
+        assert!(LspSessionState::Connecting.finish_ok().is_ready());
+        assert_eq!(
+            LspSessionState::Connecting.finish_err(),
+            LspSessionState::Failed
+        );
+        assert_ne!(LspSessionState::Idle, LspSessionState::Ready);
+    }
+
+    #[test]
     fn lsp_client_facade_not_initialized_and_missing_binary() {
         let mut client = LspClient::new(FakeLsp::new());
         assert!(client.did_open("/ws/a.rs", "x").unwrap_err().is_lsp());
@@ -1400,6 +1483,14 @@ mod tests {
             PathBuf::from("/ws/a.rs")
         );
         assert_eq!(file_uri(Path::new("/ws/a.rs")).unwrap(), "file:///ws/a.rs");
+        assert_eq!(
+            file_uri(Path::new("/Users/me/My Drive/a.rs")).unwrap(),
+            "file:///Users/me/My%20Drive/a.rs"
+        );
+        assert_eq!(
+            path_from_file_uri("file:///Users/me/My%20Drive/a.rs").unwrap(),
+            PathBuf::from("/Users/me/My Drive/a.rs")
+        );
         assert_eq!(percent_decode("%2F"), "/");
         assert_eq!(percent_decode("%zz"), "%zz");
         assert_eq!(percent_decode("%2"), "%2");

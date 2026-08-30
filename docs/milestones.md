@@ -467,6 +467,50 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 - [x] Pattern table updated (`ControlPush`, `TranscriptKind`, `IdeError::Control`)
 - [x] Docs updated if a locked decision was refined (`progressive-lsp-control` consumer MAY; `--mux` is `pending_mux`)
 
+## poc-log — per-run sqlite debug log
+
+Post-IDE-5 slice on current `main` (branch `poc-log`). **Not IDE-6.** Adds `RunLog` so each `cargo run -p poc-ide` writes a sqlite file under `$HOME/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`). Tests inject `:memory:` / tempfile. No new milestone number.
+
+## poc-tree-lazy — shallow FileTree load
+
+Stacked on `poc-log` (not IDE-6). `FileTree::load` / `FsPort.read_tree` list one directory level; child dirs start unloaded. `FileTree::expand` fills the next level. Opening a folder paints immediately.
+
+## poc-tree-collapsed — default collapsed tree
+
+Stacked on `poc-tree-lazy` (not IDE-6). `TreeExpansion` starts empty; a path is expanded iff the user expands it. Opening a folder does not unfold every directory.
+
+## poc-compact-folders — compact single-child directory chains
+
+Stacked on `poc-tree-collapsed` (not IDE-6). Directories that each have exactly one child directory display as `a/b/c`. `CompactChain` is a view of already-loaded Composite children — an unloaded dir cannot claim "exactly one child." Expanding `a` may load `b`/`c` for one compact row without expanding nested `TreeExpansion` entries. The compact row path is the innermost directory.
+
+## poc-context-menu — editor context menu for resolver actions
+
+Stacked on `poc-compact-folders` (not IDE-6). Right-click on the editor (and file tree rows) offers Find Definition / Implementation / References. Those items run the same `DiscoverCommand` as Navigate / F12 (focused tab + cursor). No new milestone number.
+
+## poc-navigate — deferred Navigate + editor caret sync
+
+Stacked on `poc-context-menu` (not IDE-6). Navigate records `PendingDiscover` and applies after the menu closes (`close_kind(Menu)` so the shell does not collapse). After `TextEdit::show`, `CursorOffsets` copies the caret onto `OpenBuffer.selection` so Go to Definition / F12 / context menu use the visible caret, not a stale 0,0. Protocol console stays. No new milestone number.
+
+## poc-no-console — drop the hand-typed protocol console
+
+Stacked on `poc-navigate` (not IDE-6). The bin no longer draws a bottom Protocol console (method picker, JSON/TOML body, Send, transcript). Debug is `RunLog` sqlite. `ProtocolConsole` stays in the lib for Envelope/LSP transcript tests. `ControlClient` / `UnixControl` / `ServeMode::ControlSocket` remain. `PendingDiscover` still applies after the editor caret sync. No new milestone number.
+
+## poc-dialog-defer — File dialog after the menu closes
+
+Stacked on `poc-no-console` (not IDE-6). Open Folder / Open File records `PendingDialog` and applies on the next frame so `rfd` is not invoked from inside `menu_button` (that freeze looks like a hung UI with no dialog). Cancel is `DialogOutcome::Cancelled`. No new milestone number.
+
+## poc-open-unblock — progressive folder bind
+
+Stacked on `poc-dialog-defer` (not IDE-6). Opening a large tree no longer blocks the UI on a recursive `notify` watch or on `initialize`. Watch is `WatchDepth::Immediate`; nested dirs are watched on expand. LSP spawn+initialize runs on a worker thread (`LspSessionState::Connecting`) and `didOpen` is replayed when ready. No new milestone number.
+
+## poc-tree-sort — directories first, dots last
+
+Stacked on `poc-open-unblock` (not IDE-6). Tree listing order is non-dot directories, non-dot files, dot directories, dot files; lexicographic within each group. No new milestone number.
+
+## poc-discover-log — IDE-side navigation diagnostics
+
+Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `uri`, `line`, `character`, and `location_count` so an empty server result is distinguishable from a jump. `file_uri` percent-encodes spaces. No new milestone number.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.

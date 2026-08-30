@@ -28,8 +28,12 @@ pub enum IdeError {
     LspMethodMissing(String),
     #[error("progressive-lsp binary not found")]
     MissingBinary,
+    #[error("No file open")]
+    NoFileOpen,
     #[error("control: {0}")]
     Control(String),
+    #[error("log: {0}")]
+    Log(String),
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -79,8 +83,16 @@ impl IdeError {
         matches!(self, Self::MissingBinary)
     }
 
+    pub fn is_no_file_open(&self) -> bool {
+        matches!(self, Self::NoFileOpen)
+    }
+
     pub fn is_control(&self) -> bool {
         matches!(self, Self::Control(_))
+    }
+
+    pub fn is_log(&self) -> bool {
+        matches!(self, Self::Log(_))
     }
 
     pub fn is_control_socket_missing(&self) -> bool {
@@ -121,6 +133,10 @@ impl IdeError {
 
     pub fn pending_mux() -> Self {
         Self::Control("pending_mux".into())
+    }
+
+    pub fn log(msg: impl Into<String>) -> Self {
+        Self::Log(msg.into())
     }
 }
 
@@ -169,12 +185,17 @@ mod tests {
             IdeError::MissingBinary.to_string(),
             "progressive-lsp binary not found"
         );
+        assert_eq!(IdeError::NoFileOpen.to_string(), "No file open");
         assert_eq!(IdeError::control("refused").to_string(), "control: refused");
         assert_eq!(
             IdeError::control_socket_missing().to_string(),
             "control: control socket missing"
         );
         assert_eq!(IdeError::pending_mux().to_string(), "control: pending_mux");
+        assert_eq!(
+            IdeError::log("sink unavailable").to_string(),
+            "log: sink unavailable"
+        );
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -202,7 +223,9 @@ mod tests {
         assert!(IdeError::lsp_method_missing("m").is_lsp_method_missing());
         assert!(!IdeError::lsp_method_missing("m").is_missing_binary());
         assert!(IdeError::MissingBinary.is_missing_binary());
-        assert!(!IdeError::MissingBinary.is_control());
+        assert!(!IdeError::MissingBinary.is_no_file_open());
+        assert!(IdeError::NoFileOpen.is_no_file_open());
+        assert!(!IdeError::NoFileOpen.is_control());
         assert!(IdeError::control("x").is_control());
         assert!(!IdeError::control("x").is_control_socket_missing());
         assert!(!IdeError::control("x").is_pending_mux());
@@ -212,10 +235,15 @@ mod tests {
         assert!(IdeError::pending_mux().is_pending_mux());
         assert!(IdeError::pending_mux().is_control());
         assert!(!IdeError::pending_mux().is_control_socket_missing());
+        assert!(!IdeError::control("x").is_log());
         assert!(!IdeError::control("x").is_io());
+        assert!(IdeError::log("x").is_log());
+        assert!(!IdeError::log("x").is_io());
+        assert!(!IdeError::log("x").is_control());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());
         assert!(!io.is_control());
+        assert!(!io.is_log());
     }
 }

@@ -12,13 +12,14 @@ Lean on OSS. Do not write an editor, highlighter, or dialog toolkit. If a crate 
 | Native open file/folder | `rfd` **0.15.4** | `DialogPort` prod | `FakeDialog` in tests; CLI flags `--folder` / `--file` also acceptable as a second Adapter |
 | Rope buffer | `ropey` | `OpenBuffer` storage | none |
 | Syntax tokens | `syntect` | `Highlighter` Adapter | none (do not use Tree-sitter in the IDE; tokens from syntect, intelligence from LSP) |
-| Walk tree | `walkdir` | `FsPort.read_tree` | **IDE-1 uses the fallback:** `std::fs` recursion behind `FsPort` / `FileTree::load` |
+| Walk tree | `walkdir` | `FsPort.read_tree` | **IDE-1 used the fallback:** `std::fs` one-level listing behind `FsPort` / `FileTree::load`. `poc-tree-lazy` keeps that Adapter; load is shallow, expand lists one more level. |
 | Disk events | `notify` | `WatchPort` prod Adapter | `FakeWatch` |
 | Clipboard | `arboard` **or** egui ctx clipboard | `ClipboardPort` prod in **main** | `FakeClipboard` |
-| LSP DTOs | `lsp-types` | params/results | `serde_json::Value` for the console inspector |
+| LSP DTOs | `lsp-types` | params/results | `serde_json::Value` for `ProtocolConsole` lib tests |
 | Control codec | `progressive-lsp-control` (in-repo) | Envelope + proto | none |
 | Errors | `thiserror` | Domain Result | — |
 | JSON-RPC | `serde` / `serde_json` | LSP frames | none |
+| Per-run debug log | `rusqlite` **0.40.2** (`bundled`) | `RunLog` Repository on **poc-ide only** | `:memory:` / tempfile in tests |
 
 **Do not add:** `tokio` unless stdio/socket truly cannot stay on threads + channels; prefer `std::thread` + channels so tests stay FakeClock and sleep-free. If async is required, isolate it in the transport Adapter and do not `sleep` in tests.
 
@@ -47,3 +48,5 @@ Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file sta
 **IDE-4 pins:** `lsp-types` **0.97.0**, `serde` / `serde_json` workspace **1.0**. Content-Length framing is copied into `StdioLsp` — no `integration/harness` or `progressive-lsp-plugin` / `-resolve` / `-index` dep. Still no `egui_dock` or `walkdir`. `ControlSocket` is an unused `ServeMode` variant until IDE-5.
 
 **IDE-5 pins:** `progressive-lsp-control` (workspace). Consumer MAY depend. Lib still no egui. `--mux` is `pending_mux` — do not silently retest the socket as mux. Still no `egui_dock` or `walkdir`.
+
+**poc-log pin** (post-IDE-5 slice on `main`, not IDE-6): `rusqlite` **=0.40.2** with `bundled`. poc-ide only — do not add rusqlite to musl server crates.

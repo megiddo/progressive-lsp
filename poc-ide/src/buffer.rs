@@ -58,6 +58,50 @@ impl Default for Selection {
     }
 }
 
+/// Char offsets from the editor view. Maps to [`Selection`] without egui types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CursorOffsets {
+    start: usize,
+    end: usize,
+}
+
+impl CursorOffsets {
+    pub fn new(start: usize, end: usize) -> Self {
+        if start <= end {
+            Self { start, end }
+        } else {
+            Self {
+                start: end,
+                end: start,
+            }
+        }
+    }
+
+    pub fn collapsed(offset: usize) -> Self {
+        Self {
+            start: offset,
+            end: offset,
+        }
+    }
+
+    pub fn start(self) -> usize {
+        self.start
+    }
+
+    pub fn end(self) -> usize {
+        self.end
+    }
+
+    pub fn to_selection(self) -> Selection {
+        Selection::new(self.start, self.end)
+    }
+
+    /// Write the visible caret/range onto the buffer. Does not dirty the rope.
+    pub fn apply(self, buffer: &mut OpenBuffer) {
+        buffer.set_selection(self.to_selection());
+    }
+}
+
 /// Edit sets dirty; successful save clears it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirtyFlag {
@@ -288,6 +332,46 @@ mod tests {
         assert_eq!(Selection::default(), Selection::collapsed(0));
         assert!(Selection::new(0, 0).is_empty());
         assert_eq!(Selection::new(7, 7).len(), 0);
+    }
+
+    #[test]
+    fn cursor_offsets_map_to_selection_and_lsp_position_not_origin() {
+        use crate::lsp::position_at;
+
+        let text = "fn alpha() {\n    beta();\n}\n";
+        let y = "fn alpha() {\n    ".chars().count();
+        assert_eq!(text.chars().nth(y), Some('b'));
+        let offsets = CursorOffsets::new(y, y + 4);
+        assert_eq!(offsets.start(), y);
+        assert_eq!(offsets.end(), y + 4);
+        assert_eq!(offsets, CursorOffsets::new(y + 4, y));
+        assert_eq!(
+            CursorOffsets::collapsed(y).to_selection(),
+            Selection::collapsed(y)
+        );
+        let sel = offsets.to_selection();
+        assert_eq!(sel, Selection::new(y, y + 4));
+        assert_ne!(sel, Selection::collapsed(0));
+        let (line, character) = position_at(text, sel.start());
+        assert_eq!((line, character), (1, 4));
+        assert_ne!((line, character), (0, 0));
+
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/src/lib.rs", text).unwrap();
+        let mut buf = OpenBuffer::load("/ws/src/lib.rs", &fs).unwrap();
+        assert_eq!(buf.selection(), Selection::collapsed(0));
+        offsets.apply(&mut buf);
+        assert_eq!(buf.selection(), sel);
+        assert!(!buf.is_dirty());
+        let (line, character) = position_at(&buf.text(), buf.selection().start());
+        assert_eq!((line, character), (1, 4));
+
+        let cafe = "let café = 1;\n";
+        let e_acute = "let caf".chars().count();
+        let cafe_sel = CursorOffsets::collapsed(e_acute).to_selection();
+        assert_eq!(cafe_sel, Selection::collapsed(e_acute));
+        assert_ne!(position_at(cafe, cafe_sel.start()), (0, 0));
+        assert_eq!(position_at(cafe, cafe_sel.start()), (0, 7));
     }
 
     #[test]

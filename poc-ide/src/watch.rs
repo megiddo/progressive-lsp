@@ -11,6 +11,40 @@ use crate::conflict::{ConflictChoice, ConflictModal};
 use crate::error::IdeError;
 use crate::ports::{require_absolute, DiskEvent, DiskEventKind, FsPort, WatchPort};
 
+/// How far a `WatchPort` subscription walks. Production folder open uses
+/// [`WatchDepth::Immediate`] so binding a large tree does not block on a
+/// recursive OS watch. Nested dirs are subscribed when the user expands them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WatchDepth {
+    Immediate,
+    Recursive,
+}
+
+impl WatchDepth {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::Recursive => "recursive",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "immediate" => Some(Self::Immediate),
+            "recursive" => Some(Self::Recursive),
+            _ => None,
+        }
+    }
+
+    pub fn is_immediate(self) -> bool {
+        matches!(self, Self::Immediate)
+    }
+
+    pub fn is_recursive(self) -> bool {
+        matches!(self, Self::Recursive)
+    }
+}
+
 /// Observer: watch events for an **open** path enqueue at most one pending modal.
 #[derive(Clone, Debug, Default)]
 pub struct DiskWatch {
@@ -223,6 +257,21 @@ mod tests {
     use super::*;
     use crate::edit::EditCommand;
     use crate::ports::{ClockPort, FakeClipboard, FakeClock, FakeWatch, MemFs};
+
+    #[test]
+    fn watch_depth_value_object_immediate_is_not_recursive() {
+        assert_eq!(WatchDepth::Immediate.as_str(), "immediate");
+        assert_eq!(WatchDepth::Recursive.as_str(), "recursive");
+        assert_eq!(WatchDepth::parse("immediate"), Some(WatchDepth::Immediate));
+        assert_eq!(WatchDepth::parse("recursive"), Some(WatchDepth::Recursive));
+        assert_eq!(WatchDepth::parse("all"), None);
+        assert_eq!(WatchDepth::parse(""), None);
+        assert!(WatchDepth::Immediate.is_immediate());
+        assert!(!WatchDepth::Immediate.is_recursive());
+        assert!(WatchDepth::Recursive.is_recursive());
+        assert!(!WatchDepth::Recursive.is_immediate());
+        assert_ne!(WatchDepth::Immediate, WatchDepth::Recursive);
+    }
     use notify::event::{
         AccessKind, CreateKind, DataChange, EventAttributes, ModifyKind, RemoveKind,
     };

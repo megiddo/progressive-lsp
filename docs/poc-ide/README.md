@@ -9,13 +9,13 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 | Capability | How |
 |---|---|
 | Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog` |
-| Tree, tabs, editor, resizable left panel | Domain `FileTree` + `TabStrip` + `LayoutState`; eframe `SidePanel` in the bin |
+| Tree, tabs, editor, resizable left panel | Domain `FileTree` + `CompactChain` + `TabStrip` + `LayoutState`; eframe `SidePanel` in the bin. Single-child dir chains render as `a/b/c`. |
 | Syntax highlighting | `Highlighter` Adapter over **syntect** (egui layouter in the bin) |
 | Background disk edits | `DiskWatch` Observer; dirty buffer → `ConflictModal` (load from disk or keep in memory) |
 | Edit | `EditCommand`: insert, delete, select, cut, copy, paste, open, save |
-| Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` |
+| Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` (Navigate, F12, editor and file-tree context menu) |
 | Language by extension | `LanguageCatalog` Registry; one `progressive-lsp serve` per workspace |
-| Exercise protocols | `ProtocolConsole` Facade: JSON-RPC inspector + Envelope RPCs |
+| Per-run debug log | `RunLog` Repository → sqlite under `~/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`); one file per process. No hand-typed protocol console in the bin. `ProtocolConsole` stays a lib Facade for Envelope/LSP transcript tests. |
 
 ## What it must not do
 
@@ -41,4 +41,4 @@ Spawn of `progressive-lsp serve` uses (first hit wins): `PROGRESSIVE_LSP` env, `
 
 ## Milestones
 
-Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`. Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).
+Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log` … `poc-navigate` and `poc-no-console` (not IDE-6). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).
