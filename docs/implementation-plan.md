@@ -247,12 +247,12 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## IDE-4 (`ide4` branch)
 
-**Status: UNSIGNED.** Do not open `ide5` until this table is signed off.
+**Status: SIGNED OFF** on `ide4`. Do not open `ide5` until this table stays signed off.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| IDE-4.1 | `LanguageCatalog` | IDE-1 | extension table; plaintext skips LSP |
-| IDE-4.2 | `LspClient` + definition / implementation / references | IDE-2, IDE-4.1 | `FakeLsp`; stock stdio |
+| IDE-4.1 | `LanguageCatalog` | IDE-1 | **SIGNED OFF.** Extension table; unknown → `plaintext`; plaintext skips `didOpen`. |
+| IDE-4.2 | `LspClient` + definition / implementation / references | IDE-2, IDE-4.1 | **SIGNED OFF.** `FakeLsp`; stock stdio; `lsp-types` 0.97.0. llvm-cov **95.86%** lines. Mutants poc-ide **535/555 (96.4%)**, 88 unviable |
 
 ## IDE-5 (`ide5` branch)
 

@@ -1,14 +1,16 @@
 //! POC IDE domain: Ports, file-tree Composite, tabs, layout, buffers, syntect,
-//! and disk-conflict Observer. The lib does not import `egui`, `eframe`,
-//! `egui_dock`, or `rfd`. Those stay in the composition-root bin (`main.rs` /
-//! `ui.rs`).
+//! disk-conflict Observer, language catalog, and stock LSP client. The lib does
+//! not import `egui`, `eframe`, `egui_dock`, or `rfd`. Those stay in the
+//! composition-root bin (`main.rs` / `ui.rs`).
 
 pub mod buffer;
 pub mod conflict;
 pub mod edit;
 pub mod error;
 pub mod highlight;
+pub mod language;
 pub mod layout;
+pub mod lsp;
 pub mod ports;
 pub mod tabs;
 pub mod tree;
@@ -19,10 +21,16 @@ pub use conflict::{ConflictChoice, ConflictModal};
 pub use edit::EditCommand;
 pub use error::IdeError;
 pub use highlight::{HighlightSpan, Highlighter};
+pub use language::{LanguageCatalog, ServeMode};
 pub use layout::LayoutState;
+pub use lsp::{
+    file_uri, path_from_file_uri, position_at, LspClient, LspLocation, ProgressiveLspCap, SpawnSpec,
+    StdioLsp,
+};
 pub use ports::{
     ClipboardPort, ClockPort, DialogPort, DiskEvent, DiskEventKind, FakeClipboard, FakeClock,
-    FakeDialog, FakeWatch, FsPort, MemFs, StdFs, SystemClock, WatchPort,
+    FakeDialog, FakeLsp, FakeWatch, FsPort, LspCall, LspTransport, MemFs, StdFs, SystemClock,
+    WatchPort,
 };
 pub use tabs::{TabId, TabStrip};
 pub use tree::{FileTree, TreeNode, WorkspaceRoot};
@@ -56,10 +64,21 @@ mod tests {
         let _ = ConflictChoice::KeepMemory;
         let _ = DiskEvent::modify("/ws/a.rs", 1);
         let _ = DiskEventKind::Modify;
+        let _ = LanguageCatalog::new();
+        let _ = ServeMode::StockStdio;
+        let _ = ServeMode::ControlSocket;
+        let _ = FakeLsp::new();
+        let _ = LspCall::request("initialize", serde_json::json!({}));
+        let _ = LspLocation::new("file:///ws/a.rs", 0, 0, 0, 0);
+        let _ = SpawnSpec::from_path("/opt/progressive-lsp");
+        let _ = position_at("fn x", 0);
         assert!(FileTree::skips_display_name(".git"));
         assert!(IdeError::NotAbsolute(std::path::PathBuf::from("rel"))
             .to_string()
             .contains("absolute"));
         assert!(IdeError::watch("x").is_watch());
+        assert!(IdeError::MissingBinary.is_missing_binary());
+        assert!(LanguageCatalog::new().skips_did_open("/ws/a.txt"));
+        assert!(!ServeMode::StockStdio.is_control_socket());
     }
 }

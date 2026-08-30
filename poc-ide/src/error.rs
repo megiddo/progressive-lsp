@@ -22,6 +22,12 @@ pub enum IdeError {
     Clipboard(String),
     #[error("watch: {0}")]
     Watch(String),
+    #[error("lsp: {0}")]
+    Lsp(String),
+    #[error("lsp method missing: {0}")]
+    LspMethodMissing(String),
+    #[error("progressive-lsp binary not found")]
+    MissingBinary,
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -59,6 +65,18 @@ impl IdeError {
         matches!(self, Self::Watch(_))
     }
 
+    pub fn is_lsp(&self) -> bool {
+        matches!(self, Self::Lsp(_))
+    }
+
+    pub fn is_lsp_method_missing(&self) -> bool {
+        matches!(self, Self::LspMethodMissing(_))
+    }
+
+    pub fn is_missing_binary(&self) -> bool {
+        matches!(self, Self::MissingBinary)
+    }
+
     pub fn is_io(&self) -> bool {
         matches!(self, Self::Io(_))
     }
@@ -69,6 +87,14 @@ impl IdeError {
 
     pub fn watch(msg: impl Into<String>) -> Self {
         Self::Watch(msg.into())
+    }
+
+    pub fn lsp(msg: impl Into<String>) -> Self {
+        Self::Lsp(msg.into())
+    }
+
+    pub fn lsp_method_missing(method: impl Into<String>) -> Self {
+        Self::LspMethodMissing(method.into())
     }
 }
 
@@ -108,6 +134,15 @@ mod tests {
             "clipboard: denied"
         );
         assert_eq!(IdeError::watch("overflow").to_string(), "watch: overflow");
+        assert_eq!(IdeError::lsp("eof").to_string(), "lsp: eof");
+        assert_eq!(
+            IdeError::lsp_method_missing("textDocument/definition").to_string(),
+            "lsp method missing: textDocument/definition"
+        );
+        assert_eq!(
+            IdeError::MissingBinary.to_string(),
+            "progressive-lsp binary not found"
+        );
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -129,7 +164,13 @@ mod tests {
         assert!(IdeError::clipboard("x").is_clipboard());
         assert!(!IdeError::clipboard("x").is_watch());
         assert!(IdeError::watch("x").is_watch());
-        assert!(!IdeError::watch("x").is_io());
+        assert!(!IdeError::watch("x").is_lsp());
+        assert!(IdeError::lsp("x").is_lsp());
+        assert!(!IdeError::lsp("x").is_lsp_method_missing());
+        assert!(IdeError::lsp_method_missing("m").is_lsp_method_missing());
+        assert!(!IdeError::lsp_method_missing("m").is_missing_binary());
+        assert!(IdeError::MissingBinary.is_missing_binary());
+        assert!(!IdeError::MissingBinary.is_io());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());

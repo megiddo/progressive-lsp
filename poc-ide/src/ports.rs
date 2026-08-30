@@ -1,6 +1,6 @@
-//! `DialogPort` / `ClipboardPort` / `FsPort` / `WatchPort` / `ClockPort` plus adapters
-//! and test doubles. Tests never call `rfd`, OS clipboard, `notify` OS APIs, or host
-//! disk except through `StdFs` tests.
+//! `DialogPort` / `ClipboardPort` / `FsPort` / `WatchPort` / `ClockPort` /
+//! `LspTransport` plus adapters and test doubles. Tests never call `rfd`, OS
+//! clipboard, `notify` OS APIs, or host disk except through `StdFs` tests.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -495,6 +495,132 @@ impl FakeWatch {
     }
 }
 
+/// JSON-RPC request/notify. Production [`crate::lsp::StdioLsp`]; tests use [`FakeLsp`].
+pub trait LspTransport {
+    fn request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, IdeError>;
+    fn notify(&mut self, method: &str, params: serde_json::Value) -> Result<(), IdeError>;
+}
+
+/// One recorded request or notification on [`FakeLsp`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct LspCall {
+    pub notification: bool,
+    pub method: String,
+    pub params: serde_json::Value,
+}
+
+impl LspCall {
+    pub fn request(method: impl Into<String>, params: serde_json::Value) -> Self {
+        Self {
+            notification: false,
+            method: method.into(),
+            params,
+        }
+    }
+
+    pub fn notify(method: impl Into<String>, params: serde_json::Value) -> Self {
+        Self {
+            notification: true,
+            method: method.into(),
+            params,
+        }
+    }
+
+    pub fn is_notification(&self) -> bool {
+        self.notification
+    }
+}
+
+/// Test double: scripted JSON-RPC results. Missing binary is a Result.
+#[derive(Debug, Default)]
+pub struct FakeLsp {
+    by_method: BTreeMap<String, VecDeque<Result<serde_json::Value, IdeError>>>,
+    sent: Vec<LspCall>,
+    missing_binary: bool,
+}
+
+impl FakeLsp {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn missing_binary() -> Self {
+        Self {
+            missing_binary: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_missing_binary(&self) -> bool {
+        self.missing_binary
+    }
+
+    pub fn script(&mut self, method: impl Into<String>, result: serde_json::Value) -> &mut Self {
+        self.by_method
+            .entry(method.into())
+            .or_default()
+            .push_back(Ok(result));
+        self
+    }
+
+    pub fn script_error(&mut self, method: impl Into<String>, err: IdeError) -> &mut Self {
+        self.by_method
+            .entry(method.into())
+            .or_default()
+            .push_back(Err(err));
+        self
+    }
+
+    pub fn script_method_missing(&mut self, method: impl Into<String>) -> &mut Self {
+        let method = method.into();
+        self.script_error(method.clone(), IdeError::lsp_method_missing(method))
+    }
+
+    pub fn sent(&self) -> &[LspCall] {
+        &self.sent
+    }
+
+    pub fn sent_methods(&self) -> Vec<&str> {
+        self.sent.iter().map(|c| c.method.as_str()).collect()
+    }
+
+    pub fn queued_len(&self, method: &str) -> usize {
+        self.by_method.get(method).map(|q| q.len()).unwrap_or(0)
+    }
+
+    fn take_scripted(&mut self, method: &str) -> Result<serde_json::Value, IdeError> {
+        if self.missing_binary {
+            return Err(IdeError::MissingBinary);
+        }
+        if let Some(q) = self.by_method.get_mut(method) {
+            if let Some(r) = q.pop_front() {
+                return r;
+            }
+        }
+        Ok(serde_json::Value::Null)
+    }
+}
+
+impl LspTransport for FakeLsp {
+    fn request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, IdeError> {
+        self.sent.push(LspCall::request(method, params));
+        self.take_scripted(method)
+    }
+
+    fn notify(&mut self, method: &str, params: serde_json::Value) -> Result<(), IdeError> {
+        self.sent.push(LspCall::notify(method, params));
+        self.take_scripted(method).map(|_| ())
+    }
+}
+
 impl WatchPort for FakeWatch {
     fn watch(&mut self, path: &Path) -> Result<(), IdeError> {
         let path = require_absolute(path)?;
@@ -908,5 +1034,74 @@ mod tests {
         assert_eq!(events[2].kind(), DiskEventKind::Delete);
         assert!(watch.poll().is_empty());
         assert_eq!(watch.queued_len(), 0);
+    }
+
+    #[test]
+    fn fake_lsp_test_double_scripted_responses() {
+        let mut lsp = FakeLsp::new();
+        assert!(!lsp.is_missing_binary());
+        assert_eq!(lsp.queued_len("initialize"), 0);
+        assert_eq!(FakeLsp::default().sent().len(), 0);
+        lsp.script("initialize", serde_json::json!({"ok": true}));
+        lsp.script("initialize", serde_json::json!({"ok": false}));
+        assert_eq!(lsp.queued_len("initialize"), 2);
+        let first = lsp
+            .request("initialize", serde_json::json!({"root": "/ws"}))
+            .unwrap();
+        assert_eq!(first, serde_json::json!({"ok": true}));
+        assert_eq!(lsp.queued_len("initialize"), 1);
+        lsp.notify("initialized", serde_json::json!({})).unwrap();
+        let unscripted = lsp
+            .request("textDocument/definition", serde_json::json!(null))
+            .unwrap();
+        assert_eq!(unscripted, serde_json::Value::Null);
+        assert_eq!(
+            lsp.sent_methods(),
+            vec![
+                "initialize",
+                "initialized",
+                "textDocument/definition"
+            ]
+        );
+        assert!(!lsp.sent()[0].is_notification());
+        assert!(lsp.sent()[1].is_notification());
+        assert_eq!(lsp.sent()[0].params["root"], "/ws");
+        let req = LspCall::request("m", serde_json::json!(1));
+        assert!(!req.is_notification());
+        let note = LspCall::notify("n", serde_json::json!(2));
+        assert!(note.is_notification());
+        assert_eq!(req.method, "m");
+        assert_eq!(note.method, "n");
+    }
+
+    #[test]
+    fn fake_lsp_test_double_missing_binary_is_result() {
+        let mut lsp = FakeLsp::missing_binary();
+        assert!(lsp.is_missing_binary());
+        assert!(lsp
+            .request("initialize", serde_json::json!({}))
+            .unwrap_err()
+            .is_missing_binary());
+        assert!(lsp
+            .notify("initialized", serde_json::json!({}))
+            .unwrap_err()
+            .is_missing_binary());
+        assert_eq!(lsp.sent_methods(), vec!["initialize", "initialized"]);
+        let mut scripted = FakeLsp::new();
+        scripted.script_error("shutdown", IdeError::lsp("gone"));
+        scripted.script_method_missing("textDocument/implementation");
+        assert!(scripted
+            .request("shutdown", serde_json::json!({}))
+            .unwrap_err()
+            .is_lsp());
+        assert!(scripted
+            .request("textDocument/implementation", serde_json::json!({}))
+            .unwrap_err()
+            .is_lsp_method_missing());
+        scripted.notify("exit", serde_json::json!({})).unwrap();
+        assert!(scripted
+            .sent()
+            .iter()
+            .all(|c| !c.method.contains("filesSince") && !c.method.starts_with("$/")));
     }
 }

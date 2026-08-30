@@ -6,9 +6,10 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    BufferMap, ClipboardPort, ConflictChoice, DialogPort, DiskEvent, DiskWatch, EditCommand,
-    FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, NotifyWatch, OpenBuffer,
-    Selection, StdFs, TabStrip, TreeNode, WatchPort, WorkspaceRoot,
+    position_at, BufferMap, ClipboardPort, ConflictChoice, DialogPort, DiskEvent, DiskWatch,
+    EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient,
+    NotifyWatch, OpenBuffer, Selection, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeNode,
+    WatchPort, WorkspaceRoot,
 };
 use std::sync::mpsc;
 
@@ -108,6 +109,8 @@ pub struct PocIdeApp {
     layout: LayoutState,
     watch: LiveWatch,
     disk: DiskWatch,
+    lsp: Option<LspClient<StdioLsp>>,
+    lsp_error: Option<String>,
     status: String,
 }
 
@@ -125,6 +128,8 @@ impl PocIdeApp {
             layout: LayoutState::new(),
             watch: LiveWatch::new(),
             disk: DiskWatch::new(),
+            lsp: None,
+            lsp_error: None,
             status: String::new(),
         };
         if let Some(dir) = folder {
@@ -157,11 +162,16 @@ impl PocIdeApp {
                     self.tabs = TabStrip::new();
                     self.buffers = BufferMap::new();
                     self.disk = DiskWatch::new();
+                    self.shutdown_lsp();
                 }
                 let watch_err = self.watch.watch_root(root.as_path()).err();
+                self.connect_lsp(&root);
                 self.root = Some(root);
                 self.tree = Some(tree);
-                self.status = watch_err.map(|e| e.to_string()).unwrap_or_default();
+                self.status = watch_err
+                    .map(|e| e.to_string())
+                    .or_else(|| self.lsp_error.clone())
+                    .unwrap_or_default();
                 if let Some(file) = open_file {
                     self.open_path(&file);
                 }
@@ -186,11 +196,26 @@ impl PocIdeApp {
         match self.buffers.open(path, &self.fs) {
             Ok(buf) => {
                 let opened = buf.path().to_path_buf();
-                self.tabs.open(opened);
+                let text = buf.text();
+                self.tabs.open(&opened);
+                if let Some(lsp) = &mut self.lsp {
+                    if let Err(e) = lsp.did_open(&opened, &text) {
+                        self.status = e.to_string();
+                        return;
+                    }
+                }
                 self.status.clear();
             }
             Err(e) => self.status = e.to_string(),
         }
+    }
+
+    fn close_tab(&mut self, id: &TabId) {
+        if let Some(lsp) = &mut self.lsp {
+            let _ = lsp.did_close(id.as_path());
+        }
+        self.buffers.close(id.as_path());
+        self.tabs.close(id);
     }
 
     fn save_focused(&mut self) {
@@ -199,9 +224,93 @@ impl PocIdeApp {
         };
         if let Some(buf) = self.buffers.get_mut(id.as_path()) {
             match buf.save(&mut self.fs) {
-                Ok(()) => self.status.clear(),
+                Ok(()) => {
+                    if let Some(lsp) = &mut self.lsp {
+                        if let Err(e) = lsp.did_save(id.as_path()) {
+                            self.status = e.to_string();
+                            return;
+                        }
+                    }
+                    self.status.clear();
+                }
                 Err(e) => self.status = e.to_string(),
             }
+        }
+    }
+
+    fn connect_lsp(&mut self, root: &WorkspaceRoot) {
+        self.shutdown_lsp();
+        match SpawnSpec::resolve() {
+            Ok(spec) => match StdioLsp::spawn(&spec) {
+                Ok(transport) => {
+                    let mut client = LspClient::new(transport);
+                    match client.initialize(root.as_path()) {
+                        Ok(()) => {
+                            self.lsp = Some(client);
+                            self.lsp_error = None;
+                        }
+                        Err(e) => {
+                            self.lsp = None;
+                            self.lsp_error = Some(e.to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.lsp = None;
+                    self.lsp_error = Some(e.to_string());
+                }
+            },
+            Err(e) => {
+                self.lsp = None;
+                self.lsp_error = Some(e.to_string());
+            }
+        }
+    }
+
+    fn shutdown_lsp(&mut self) {
+        if let Some(mut client) = self.lsp.take() {
+            let _ = client.shutdown();
+        }
+    }
+
+    fn missing_server_status(&self) -> String {
+        self.lsp_error
+            .clone()
+            .unwrap_or_else(|| IdeError::MissingBinary.to_string())
+    }
+
+    fn discover(&mut self, kind: DiscoverKind) {
+        let Some(id) = self.tabs.focused().cloned() else {
+            self.status = "No file open".into();
+            return;
+        };
+        let Some(buf) = self.buffers.get(id.as_path()) else {
+            self.status = "No file open".into();
+            return;
+        };
+        let (line, character) = position_at(&buf.text(), buf.selection().start());
+        let path = buf.path().to_path_buf();
+        let Some(lsp) = self.lsp.as_mut() else {
+            self.status = self.missing_server_status();
+            return;
+        };
+        let result = match kind {
+            DiscoverKind::Definition => lsp.definition(&path, line, character),
+            DiscoverKind::Implementation => lsp.implementation(&path, line, character),
+            DiscoverKind::References => lsp.references(&path, line, character),
+        };
+        match result {
+            Ok(locations) => match LspClient::<StdioLsp>::jump(
+                &locations,
+                &mut self.tabs,
+                &mut self.buffers,
+                &self.fs,
+            ) {
+                Ok(0) => self.status = "No locations".into(),
+                Ok(_) => self.status.clear(),
+                Err(e) => self.status = e.to_string(),
+            },
+            Err(e) => self.status = e.to_string(),
         }
     }
 
@@ -244,6 +353,13 @@ impl eframe::App for PocIdeApp {
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
         }
+        if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.shift) {
+            self.discover(DiscoverKind::References);
+        } else if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.command) {
+            self.discover(DiscoverKind::Implementation);
+        } else if ui.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.discover(DiscoverKind::Definition);
+        }
 
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -259,6 +375,20 @@ impl eframe::App for PocIdeApp {
                     if ui.button("Save").clicked() {
                         ui.close();
                         self.save_focused();
+                    }
+                });
+                ui.menu_button("Navigate", |ui| {
+                    if ui.button("Go to Definition").clicked() {
+                        ui.close();
+                        self.discover(DiscoverKind::Definition);
+                    }
+                    if ui.button("Go to Implementation").clicked() {
+                        ui.close();
+                        self.discover(DiscoverKind::Implementation);
+                    }
+                    if ui.button("Find References").clicked() {
+                        ui.close();
+                        self.discover(DiscoverKind::References);
                     }
                 });
                 if !self.status.is_empty() {
@@ -320,7 +450,7 @@ impl eframe::App for PocIdeApp {
                             self.tabs.focus(tab);
                         }
                         if ui.small_button("×").clicked() {
-                            self.tabs.close(tab);
+                            self.close_tab(tab);
                         }
                     }
                 }
@@ -333,7 +463,14 @@ impl eframe::App for PocIdeApp {
                     }
                     ui.label(id.as_path().display().to_string());
                     if let Some(buf) = self.buffers.get_mut(id.as_path()) {
-                        show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
+                        let change = show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
+                        if let Some((path, old, new)) = change {
+                            if let Some(lsp) = &mut self.lsp {
+                                if let Err(e) = lsp.did_change(&path, &old, &new) {
+                                    self.status = e.to_string();
+                                }
+                            }
+                        }
                     }
                 }
                 None => {
@@ -362,12 +499,18 @@ fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode]) -> Option<PathBuf> {
     clicked
 }
 
+enum DiscoverKind {
+    Definition,
+    Implementation,
+    References,
+}
+
 fn show_editor(
     ui: &mut egui::Ui,
     buffer: &mut OpenBuffer,
     highlighter: &Highlighter,
     clipboard: &mut impl ClipboardPort,
-) {
+) -> Option<(PathBuf, String, String)> {
     let path = buffer.path().to_path_buf();
     let mut text = buffer.text();
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -383,7 +526,12 @@ fn show_editor(
         .layouter(&mut layouter)
         .show(ui);
     if output.response.changed() && text != buffer.text() {
+        let old = buffer.text();
+        let path = buffer.path().to_path_buf();
         sync_buffer_from_view(buffer, &text, clipboard);
+        Some((path, old, text))
+    } else {
+        None
     }
 }
 

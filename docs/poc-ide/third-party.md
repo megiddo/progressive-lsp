@@ -43,3 +43,5 @@ Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file sta
 **IDE-2 pins:** `ropey` **1.6.1**, `syntect` **5.3.0**, `arboard` **3.6.1** (bin `ArboardClipboard` only). Still no `egui_dock`, `walkdir`, or `notify`.
 
 **IDE-3 pins:** `notify` **8.2.0** (`NotifyWatch` maps `notify` events in the lib; live `RecommendedWatcher` is wired in the bin). Tests inject `FakeWatch` only. Still no `egui_dock` or `walkdir`.
+
+**IDE-4 pins:** `lsp-types` **0.97.0**, `serde` / `serde_json` workspace **1.0**. Content-Length framing is copied into `StdioLsp` — no `integration/harness` or `progressive-lsp-plugin` / `-resolve` / `-index` dep. Still no `egui_dock` or `walkdir`. `ControlSocket` is an unused `ServeMode` variant until IDE-5.

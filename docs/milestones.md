@@ -425,10 +425,10 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 ## IDE-4 — Language catalog + stock LSP discovery
 
-**Status: UNSIGNED.** Do not start IDE-5 until this section is signed off. No Envelope console (read `experimental.progressiveLsp` only).
+**Status: SIGNED OFF** on branch `ide4`. Do not start IDE-5 until this section stays signed off. No Envelope console (read `experimental.progressiveLsp` only).
 
 - `LanguageCatalog` extension → `languageId` (table in [poc-ide/architecture.md](poc-ide/architecture.md)).
-- `ServeMode::StockStdio`; `LspClient` + `FakeLsp`.
+- `ServeMode::StockStdio`; `LspClient` + `FakeLsp`. `ServeMode::ControlSocket` is present and unused.
 - `didOpen` / `didChange` / `didSave` / `didClose`.
 - `textDocument/definition`, `implementation`, `references` → jump list / open tab.
 - Missing binary → domain error, editor remains usable.
@@ -437,14 +437,14 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 **Sign-off checklist (IDE-4)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch
-- [ ] 95% llvm-cov (same excludes)
-- [ ] 80% mutants on poc-ide
-- [ ] No `sleep`
-- [ ] `check-static` — **N/A**
-- [ ] Pattern table updated
-- [ ] Docs updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov (same excludes) — **95.86% lines**
+- [x] 80% mutants on poc-ide — poc-ide **535 caught / 555 scored (96.4%)**, 88 unviable, 17 missed, 3 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`LspCall`, `ProgressiveLspCap` poc-ide)
+- [x] Docs updated if a locked decision was refined (`lsp-types` 0.97.0; `ControlSocket` unused until IDE-5)
 
 ## IDE-5 — Protocol console + progressive.v1
 

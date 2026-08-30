@@ -169,8 +169,10 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
 | `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; tests inject mode; no mux until implemented |
 | `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |
+| `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
 | `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
 | `LspClient` | Facade | JSON-RPC in; domain locations out; no watch internals |
+| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; IDE-4 never opens the socket |
 | `ControlTransport` / `UnixControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails |
 | `FakeControl` | Test double | Same `ControlTransport`; pushes use `request_id == 0` |
 | `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |

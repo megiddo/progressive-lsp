@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "POC IDE consumer sample: folder/file, tree, tabs, buffers, syntect, disk conflict"
+description = "POC IDE consumer sample: folder/file, tree, tabs, buffers, syntect, disk conflict, stock LSP"
 
 [lib]
 name = "poc_ide"
@@ -16,6 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+lsp-types = "0.97.0"
 eframe = "=0.36.1"
 egui = "=0.36.1"
 egui_extras = "=0.36.1"
