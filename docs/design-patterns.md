@@ -161,9 +161,11 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
 | `FakeWatch` | Test double | Same `WatchPort`; tests inject events; no `thread::sleep` |
+| `DiskEvent` / `DiskEventKind` | Event / DTO | path + kind + mtime; `KeepMemory` ignores a later event with the same mtime |
 | `ClockPort` / `FakeClock` (poc-ide) | Port / test double | Tests never `thread::sleep`; advance with FakeClock |
+| `SystemClock` (poc-ide) | ClockPort production | Wall `unix_ms`; tests use `FakeClock` |
 | `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
-| `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope |
+| `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
 | `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; tests inject mode; no mux until implemented |
 | `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |

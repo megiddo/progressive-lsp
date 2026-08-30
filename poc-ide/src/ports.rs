@@ -1,8 +1,11 @@
-//! `DialogPort` / `ClipboardPort` / `FsPort` plus production adapters and test doubles.
-//! Tests never call `rfd`, OS clipboard, or host disk except through `StdFs` tests.
+//! `DialogPort` / `ClipboardPort` / `FsPort` / `WatchPort` / `ClockPort` plus adapters
+//! and test doubles. Tests never call `rfd`, OS clipboard, `notify` OS APIs, or host
+//! disk except through `StdFs` tests.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::error::IdeError;
 use crate::tree::{FileTree, WorkspaceRoot};
@@ -315,6 +318,199 @@ impl FsPort for MemFs {
     }
 }
 
+/// create / modify / delete on disk. Event / DTO for [`WatchPort`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DiskEventKind {
+    Create,
+    Modify,
+    Delete,
+}
+
+impl DiskEventKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Modify => "modify",
+            Self::Delete => "delete",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "create" => Some(Self::Create),
+            "modify" => Some(Self::Modify),
+            "delete" => Some(Self::Delete),
+            _ => None,
+        }
+    }
+}
+
+/// One disk change. `mtime` is the event generation used to ignore KeepMemory repeats.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiskEvent {
+    path: PathBuf,
+    kind: DiskEventKind,
+    mtime: u64,
+}
+
+impl DiskEvent {
+    pub fn new(path: impl Into<PathBuf>, kind: DiskEventKind, mtime: u64) -> Self {
+        Self {
+            path: path.into(),
+            kind,
+            mtime,
+        }
+    }
+
+    pub fn modify(path: impl Into<PathBuf>, mtime: u64) -> Self {
+        Self::new(path, DiskEventKind::Modify, mtime)
+    }
+
+    pub fn create(path: impl Into<PathBuf>, mtime: u64) -> Self {
+        Self::new(path, DiskEventKind::Create, mtime)
+    }
+
+    pub fn delete(path: impl Into<PathBuf>, mtime: u64) -> Self {
+        Self::new(path, DiskEventKind::Delete, mtime)
+    }
+
+    pub fn at_clock(
+        path: impl Into<PathBuf>,
+        kind: DiskEventKind,
+        clock: &impl ClockPort,
+    ) -> Self {
+        Self::new(path, kind, clock.unix_ms())
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn kind(&self) -> DiskEventKind {
+        self.kind
+    }
+
+    pub fn mtime(&self) -> u64 {
+        self.mtime
+    }
+}
+
+/// Injected clock. Tests use [`FakeClock`] and never `thread::sleep`.
+pub trait ClockPort: Send + Sync {
+    fn now(&self) -> Instant;
+    fn unix_ms(&self) -> u64;
+}
+
+/// Wall clock. Not used in deterministic tests.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemClock;
+
+impl ClockPort for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn unix_ms(&self) -> u64 {
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => u64::try_from(d.as_millis()).unwrap_or(u64::MAX),
+            Err(_) => 0,
+        }
+    }
+}
+
+/// Deterministic clock. Advance with [`FakeClock::advance_ms`] — never sleep.
+pub struct FakeClock {
+    origin: Instant,
+    offset_ms: AtomicU64,
+    unix_ms: AtomicU64,
+}
+
+impl FakeClock {
+    pub fn at_unix_ms(unix_ms: u64) -> Self {
+        Self {
+            origin: Instant::now(),
+            offset_ms: AtomicU64::new(0),
+            unix_ms: AtomicU64::new(unix_ms),
+        }
+    }
+
+    pub fn advance_ms(&self, ms: u64) {
+        self.offset_ms.fetch_add(ms, Ordering::SeqCst);
+        self.unix_ms.fetch_add(ms, Ordering::SeqCst);
+    }
+
+    pub fn offset_ms(&self) -> u64 {
+        self.offset_ms.load(Ordering::SeqCst)
+    }
+}
+
+impl ClockPort for FakeClock {
+    fn now(&self) -> Instant {
+        self.origin + Duration::from_millis(self.offset_ms())
+    }
+
+    fn unix_ms(&self) -> u64 {
+        self.unix_ms.load(Ordering::SeqCst)
+    }
+}
+
+/// Disk events go through this Port. Production [`crate::watch::NotifyWatch`] maps
+/// `notify` types; the composition root owns the OS watcher. Tests use [`FakeWatch`].
+pub trait WatchPort {
+    fn watch(&mut self, path: &Path) -> Result<(), IdeError>;
+    fn unwatch(&mut self, path: &Path);
+    fn poll(&mut self) -> Vec<DiskEvent>;
+}
+
+/// Test double: inject events. Never calls `notify` OS APIs.
+#[derive(Clone, Debug, Default)]
+pub struct FakeWatch {
+    events: VecDeque<DiskEvent>,
+    watched: BTreeSet<PathBuf>,
+}
+
+impl FakeWatch {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn inject(&mut self, event: DiskEvent) {
+        self.events.push_back(event);
+    }
+
+    pub fn inject_modify(&mut self, path: impl Into<PathBuf>, mtime: u64) {
+        self.inject(DiskEvent::modify(path, mtime));
+    }
+
+    pub fn queued_len(&self) -> usize {
+        self.events.len()
+    }
+
+    pub fn is_watching(&self, path: impl AsRef<Path>) -> bool {
+        self.watched.contains(path.as_ref())
+    }
+
+    pub fn watched_len(&self) -> usize {
+        self.watched.len()
+    }
+}
+
+impl WatchPort for FakeWatch {
+    fn watch(&mut self, path: &Path) -> Result<(), IdeError> {
+        let path = require_absolute(path)?;
+        self.watched.insert(path);
+        Ok(())
+    }
+
+    fn unwatch(&mut self, path: &Path) {
+        self.watched.remove(path);
+    }
+
+    fn poll(&mut self) -> Vec<DiskEvent> {
+        self.events.drain(..).collect()
+    }
+}
+
 pub(crate) fn require_absolute(path: &Path) -> Result<PathBuf, IdeError> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
@@ -328,6 +524,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn fake_dialog_test_double_returns_queued_paths() {
@@ -620,5 +817,96 @@ mod tests {
             require_absolute(Path::new("/abs")).unwrap(),
             PathBuf::from("/abs")
         );
+    }
+
+    #[test]
+    fn disk_event_dto_path_kind_mtime_round_trip() {
+        let ev = DiskEvent::new("/ws/a.rs", DiskEventKind::Modify, 7);
+        assert_eq!(ev.path(), Path::new("/ws/a.rs"));
+        assert_eq!(ev.kind(), DiskEventKind::Modify);
+        assert_eq!(ev.mtime(), 7);
+        assert_eq!(DiskEventKind::Create.as_str(), "create");
+        assert_eq!(DiskEventKind::Modify.as_str(), "modify");
+        assert_eq!(DiskEventKind::Delete.as_str(), "delete");
+        assert_eq!(DiskEventKind::parse("create"), Some(DiskEventKind::Create));
+        assert_eq!(DiskEventKind::parse("modify"), Some(DiskEventKind::Modify));
+        assert_eq!(DiskEventKind::parse("delete"), Some(DiskEventKind::Delete));
+        assert_eq!(DiskEventKind::parse("CREATE"), None);
+        assert_eq!(DiskEventKind::parse(""), None);
+        assert_eq!(DiskEventKind::parse("other"), None);
+        let created = DiskEvent::create("/ws/b.rs", 1);
+        assert_eq!(created.kind(), DiskEventKind::Create);
+        assert_eq!(created.mtime(), 1);
+        let deleted = DiskEvent::delete("/ws/c.rs", 2);
+        assert_eq!(deleted.kind(), DiskEventKind::Delete);
+        assert_eq!(DiskEvent::modify("/ws/a.rs", 7), ev);
+    }
+
+    #[test]
+    fn clock_port_fake_clock_never_sleeps_advance_is_deterministic() {
+        let clock = FakeClock::at_unix_ms(1_700_000_000_000);
+        assert_eq!(clock.unix_ms(), 1_700_000_000_000);
+        assert_eq!(clock.offset_ms(), 0);
+        let a = clock.now();
+        let b = clock.now();
+        assert_eq!(a, b);
+        clock.advance_ms(0);
+        assert_eq!(clock.unix_ms(), 1_700_000_000_000);
+        clock.advance_ms(250);
+        assert_eq!(clock.unix_ms(), 1_700_000_000_250);
+        assert_eq!(clock.offset_ms(), 250);
+        assert_eq!(clock.now().duration_since(a), Duration::from_millis(250));
+        clock.advance_ms(50);
+        assert_eq!(clock.unix_ms(), 1_700_000_000_300);
+        let stamped = DiskEvent::at_clock("/ws/a.rs", DiskEventKind::Modify, &clock);
+        assert_eq!(stamped.mtime(), 1_700_000_000_300);
+        assert_eq!(stamped.kind(), DiskEventKind::Modify);
+    }
+
+    #[test]
+    fn system_clock_reports_sane_unix_ms() {
+        let clock = SystemClock;
+        let _ = clock.now();
+        let ms = clock.unix_ms();
+        assert!(ms > 1_577_836_800_000, "unix_ms={ms}");
+        assert!(ms < 10_000_000_000_000, "unix_ms={ms}");
+        let _ = SystemClock;
+        let _ = SystemClock::default();
+    }
+
+    #[test]
+    fn fake_watch_test_double_injects_events_without_os() {
+        let mut watch = FakeWatch::new();
+        assert_eq!(watch.queued_len(), 0);
+        assert_eq!(watch.watched_len(), 0);
+        assert!(!watch.is_watching("/ws"));
+        assert!(watch.poll().is_empty());
+        assert_eq!(FakeWatch::default().queued_len(), 0);
+
+        assert!(watch.watch(Path::new("rel")).unwrap_err().is_not_absolute());
+        watch.watch(Path::new("/ws")).unwrap();
+        assert!(watch.is_watching("/ws"));
+        assert_eq!(watch.watched_len(), 1);
+        watch.watch(Path::new("/ws")).unwrap();
+        assert_eq!(watch.watched_len(), 1);
+        watch.unwatch(Path::new("/other"));
+        assert!(watch.is_watching("/ws"));
+        watch.unwatch(Path::new("/ws"));
+        assert!(!watch.is_watching("/ws"));
+        assert_eq!(watch.watched_len(), 0);
+
+        watch.inject_modify("/ws/a.rs", 11);
+        watch.inject(DiskEvent::create("/ws/b.rs", 12));
+        watch.inject(DiskEvent::delete("/ws/c.rs", 13));
+        assert_eq!(watch.queued_len(), 3);
+        let events = watch.poll();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].path(), Path::new("/ws/a.rs"));
+        assert_eq!(events[0].kind(), DiskEventKind::Modify);
+        assert_eq!(events[0].mtime(), 11);
+        assert_eq!(events[1].kind(), DiskEventKind::Create);
+        assert_eq!(events[2].kind(), DiskEventKind::Delete);
+        assert!(watch.poll().is_empty());
+        assert_eq!(watch.queued_len(), 0);
     }
 }

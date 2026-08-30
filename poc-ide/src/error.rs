@@ -20,6 +20,8 @@ pub enum IdeError {
     InvalidUtf8(PathBuf),
     #[error("clipboard: {0}")]
     Clipboard(String),
+    #[error("watch: {0}")]
+    Watch(String),
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -53,12 +55,20 @@ impl IdeError {
         matches!(self, Self::Clipboard(_))
     }
 
+    pub fn is_watch(&self) -> bool {
+        matches!(self, Self::Watch(_))
+    }
+
     pub fn is_io(&self) -> bool {
         matches!(self, Self::Io(_))
     }
 
     pub fn clipboard(msg: impl Into<String>) -> Self {
         Self::Clipboard(msg.into())
+    }
+
+    pub fn watch(msg: impl Into<String>) -> Self {
+        Self::Watch(msg.into())
     }
 }
 
@@ -97,6 +107,7 @@ mod tests {
             IdeError::clipboard("denied").to_string(),
             "clipboard: denied"
         );
+        assert_eq!(IdeError::watch("overflow").to_string(), "watch: overflow");
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -116,7 +127,9 @@ mod tests {
         assert!(IdeError::InvalidUtf8(PathBuf::from("/a")).is_invalid_utf8());
         assert!(!IdeError::InvalidUtf8(PathBuf::from("/a")).is_clipboard());
         assert!(IdeError::clipboard("x").is_clipboard());
-        assert!(!IdeError::clipboard("x").is_io());
+        assert!(!IdeError::clipboard("x").is_watch());
+        assert!(IdeError::watch("x").is_watch());
+        assert!(!IdeError::watch("x").is_io());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());

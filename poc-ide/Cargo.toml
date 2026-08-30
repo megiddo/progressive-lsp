@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "POC IDE consumer sample: folder/file, tree, tabs, buffers, syntect"
+description = "POC IDE consumer sample: folder/file, tree, tabs, buffers, syntect, disk conflict"
 
 [lib]
 name = "poc_ide"
@@ -23,6 +23,7 @@ rfd = "=0.15.4"
 ropey = "1.6.1"
 syntect = "5.3.0"
 arboard = "3.6.1"
+notify = "8.2.0"
 
 [dev-dependencies]
 tempfile.workspace = true

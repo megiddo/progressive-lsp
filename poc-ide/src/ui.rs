@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use egui::text::LayoutJob;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    BufferMap, ClipboardPort, DialogPort, EditCommand, FileTree, FsPort, HighlightSpan,
-    Highlighter, IdeError, LayoutState, OpenBuffer, Selection, StdFs, TabStrip, TreeNode,
-    WorkspaceRoot,
+    BufferMap, ClipboardPort, ConflictChoice, DialogPort, DiskEvent, DiskWatch, EditCommand,
+    FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, NotifyWatch, OpenBuffer,
+    Selection, StdFs, TabStrip, TreeNode, WatchPort, WorkspaceRoot,
 };
+use std::sync::mpsc;
 
 /// Native `rfd` Adapter. Tests never construct this type.
 pub struct RfdDialog;
@@ -20,6 +22,60 @@ impl DialogPort for RfdDialog {
 
     fn open_file(&mut self) -> Option<PathBuf> {
         rfd::FileDialog::new().pick_file()
+    }
+}
+
+/// Production `WatchPort` Adapter. Owns the `notify` OS watcher; mapping stays on
+/// [`NotifyWatch`]. Tests never construct this type.
+struct LiveWatch {
+    watcher: Option<RecommendedWatcher>,
+    mapped: NotifyWatch,
+    root: Option<PathBuf>,
+}
+
+impl LiveWatch {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        let watcher = notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        })
+        .ok();
+        Self {
+            watcher,
+            mapped: NotifyWatch::from_receiver(rx),
+            root: None,
+        }
+    }
+
+    fn watch_root(&mut self, path: &Path) -> Result<(), IdeError> {
+        if let Some(old) = self.root.take() {
+            self.unwatch(&old);
+        }
+        self.watch(path)?;
+        self.root = Some(path.to_path_buf());
+        Ok(())
+    }
+}
+
+impl WatchPort for LiveWatch {
+    fn watch(&mut self, path: &Path) -> Result<(), IdeError> {
+        if let Some(watcher) = &mut self.watcher {
+            watcher
+                .watch(path, RecursiveMode::Recursive)
+                .map_err(|e| IdeError::watch(e.to_string()))?;
+        }
+        self.mapped.watch(path)
+    }
+
+    fn unwatch(&mut self, path: &Path) {
+        if let Some(watcher) = &mut self.watcher {
+            let _ = watcher.unwatch(path);
+        }
+        self.mapped.unwatch(path);
+    }
+
+    fn poll(&mut self) -> Vec<DiskEvent> {
+        self.mapped.poll()
     }
 }
 
@@ -50,6 +106,8 @@ pub struct PocIdeApp {
     buffers: BufferMap,
     highlighter: Highlighter,
     layout: LayoutState,
+    watch: LiveWatch,
+    disk: DiskWatch,
     status: String,
 }
 
@@ -65,6 +123,8 @@ impl PocIdeApp {
             buffers: BufferMap::new(),
             highlighter: Highlighter::new(),
             layout: LayoutState::new(),
+            watch: LiveWatch::new(),
+            disk: DiskWatch::new(),
             status: String::new(),
         };
         if let Some(dir) = folder {
@@ -96,10 +156,12 @@ impl PocIdeApp {
                 if self.root.as_ref() != Some(&root) {
                     self.tabs = TabStrip::new();
                     self.buffers = BufferMap::new();
+                    self.disk = DiskWatch::new();
                 }
+                let watch_err = self.watch.watch_root(root.as_path()).err();
                 self.root = Some(root);
                 self.tree = Some(tree);
-                self.status.clear();
+                self.status = watch_err.map(|e| e.to_string()).unwrap_or_default();
                 if let Some(file) = open_file {
                     self.open_path(&file);
                 }
@@ -142,10 +204,43 @@ impl PocIdeApp {
             }
         }
     }
+
+    fn show_conflict_modal(&mut self, ui: &mut egui::Ui) {
+        let Some(modal) = self.disk.first_pending().cloned() else {
+            return;
+        };
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("disk_conflict")).show(ui.ctx(), |ui| {
+            ui.heading("File changed on disk");
+            ui.label(format!(
+                "{} changed on disk. Load from disk or keep in memory?",
+                modal.path().display()
+            ));
+            ui.horizontal(|ui| {
+                if ui.button("Load from disk").clicked() {
+                    choice = Some(ConflictChoice::LoadDisk);
+                }
+                if ui.button("Keep in memory").clicked() {
+                    choice = Some(ConflictChoice::KeepMemory);
+                }
+            });
+        });
+        if let Some(choice) = choice {
+            if let Err(e) = self
+                .disk
+                .resolve(modal.path(), choice, &mut self.buffers, &self.fs)
+            {
+                self.status = e.to_string();
+            }
+        }
+    }
 }
 
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.disk.ingest(&mut self.watch, &self.buffers);
+        self.show_conflict_modal(ui);
+
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
         }

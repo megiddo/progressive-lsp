@@ -143,6 +143,16 @@ impl OpenBuffer {
         Ok(())
     }
 
+    /// Replace the rope from `FsPort` and clear dirty. Used by `ConflictChoice::LoadDisk`.
+    pub fn reload_from(&mut self, fs: &(impl FsPort + ?Sized)) -> Result<(), IdeError> {
+        let bytes = fs.read(&self.path)?;
+        let text = String::from_utf8(bytes).map_err(|_| IdeError::InvalidUtf8(self.path.clone()))?;
+        self.rope = Rope::from_str(&text);
+        self.dirty.clear();
+        self.selection = self.clamp_selection(self.selection);
+        Ok(())
+    }
+
     pub(crate) fn insert_text(&mut self, text: &str) -> bool {
         let sel = self.clamp_selection(self.selection);
         let changed = sel.start != sel.end || !text.is_empty();
@@ -367,6 +377,37 @@ mod tests {
         assert!(err.is_directory());
         assert!(buf.is_dirty());
         assert_eq!(buf.text(), "xhi");
+    }
+
+    #[test]
+    fn open_buffer_entity_reload_from_replaces_rope_and_clears_dirty() {
+        let mut fs = sample_fs();
+        let mut buf = OpenBuffer::load("/ws/src/lib.rs", &fs).unwrap();
+        assert!(buf.insert_text("EDIT"));
+        buf.set_selection(Selection::new(0, 100));
+        assert!(buf.is_dirty());
+        fs.write(Path::new("/ws/src/lib.rs"), b"from disk\n")
+            .unwrap();
+        buf.reload_from(&fs).unwrap();
+        assert_eq!(buf.text(), "from disk\n");
+        assert!(!buf.is_dirty());
+        assert_eq!(buf.selection(), Selection::new(0, buf.len_chars()));
+
+        let mut dirty = OpenBuffer::load("/ws/src/lib.rs", &fs).unwrap();
+        dirty.insert_text("x");
+        fs.write(Path::new("/ws/src/lib.rs"), &[0xff, 0xfe]).unwrap();
+        assert!(dirty.reload_from(&fs).unwrap_err().is_invalid_utf8());
+        assert_eq!(dirty.text(), "xfrom disk\n");
+        assert!(dirty.is_dirty());
+
+        let mut missing = OpenBuffer::load("/ws/src/café.rs", &fs).unwrap();
+        missing.insert_text("keep");
+        assert!(missing
+            .reload_from(&MemFs::new())
+            .unwrap_err()
+            .is_not_found());
+        assert_eq!(missing.text(), "keeplet café = 1;\n");
+        assert!(missing.is_dirty());
     }
 
     #[test]

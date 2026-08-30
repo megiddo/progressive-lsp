@@ -239,11 +239,11 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## IDE-3 (`ide3` branch)
 
-**Status: UNSIGNED.** Do not open `ide4` until this table is signed off.
+**Status: SIGNED OFF** on `ide3`. Do not open `ide4` until this table stays signed off.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| IDE-3.1 | `DiskWatch` + `ConflictModal` | IDE-2 | `FakeWatch` / `FakeClock`; no `sleep` |
+| IDE-3.1 | `DiskWatch` + `ConflictModal` | IDE-2 | **SIGNED OFF.** `FakeWatch` / `FakeClock`; no `sleep`. llvm-cov **95.79%** lines. Mutants poc-ide **278/282 (98.6%)**, 60 unviable |
 
 ## IDE-4 (`ide4` branch)
 

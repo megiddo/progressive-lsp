@@ -403,25 +403,25 @@ Plugin seam: T2 Strategy selectable per language; **default remains heuristics**
 
 ## IDE-3 — Disk conflict modal
 
-**Status: UNSIGNED.** Do not start IDE-4 until this section is signed off. No LSP.
+**Status: SIGNED OFF** on branch `ide3`. Do not start IDE-4 until this section stays signed off. No LSP.
 
-- `DiskWatch` Observer on `WatchPort`; `FakeWatch` + `FakeClock` (reuse local ClockPort).
+- `DiskWatch` Observer on `WatchPort`; `FakeWatch` + `FakeClock` (local `ClockPort` in poc-ide; no `progressive-lsp-core` dep).
 - Open buffer + watch event on that path → `ConflictModal` with `LoadDisk` | `KeepMemory`.
 - Always prompt when the open path changes on disk (including clean buffers).
-- `LoadDisk` rereads `FsPort` and clears dirty; `KeepMemory` keeps rope.
+- `LoadDisk` rereads `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime`.
 
 **Exit:** FakeWatch modify on an open dirty buffer surfaces the modal; both choices have invariant tests. No `thread::sleep`.
 
 **Sign-off checklist (IDE-3)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch
-- [ ] 95% llvm-cov (same excludes)
-- [ ] 80% mutants on poc-ide (and listed crates that changed)
-- [ ] No `sleep`
-- [ ] `check-static` — **N/A**
-- [ ] Pattern table updated
-- [ ] Docs updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch
+- [x] 95% llvm-cov (same excludes) — **95.79% lines**
+- [x] 80% mutants on poc-ide (and listed crates that changed) — poc-ide **278 caught / 282 scored (98.6%)**, 60 unviable, 4 missed
+- [x] No `sleep`
+- [x] `check-static` — **N/A**
+- [x] Pattern table updated (`DiskEvent`, `DiskEventKind`, `SystemClock`)
+- [x] Docs updated if a locked decision was refined (`notify` 8.2.0; live `RecommendedWatcher` in the bin)
 
 ## IDE-4 — Language catalog + stock LSP discovery
 
