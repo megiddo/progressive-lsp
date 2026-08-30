@@ -66,7 +66,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 
 Prefer a **local `ClockPort`** in poc-ide (same invariant: tests never `thread::sleep`) rather than depending on `progressive-lsp-core`. Do not take a dependency on core just for the clock.
 
-`RunLog` is a per-process sqlite Repository. Each `cargo run -p poc-ide` writes a new file under `$HOME/.progressivelsp/poc-ide-runs/poc-ide-{unix_ms}-{pid}.sqlite` (override with `POC_IDE_LOG_DIR`). Tests inject `:memory:` or a tempfile path. Rows are `timestamp_ms`, `category`, `event`, optional JSON payload (method + error, never file bodies / clipboard / secrets). A failed write is `IdeError::Log` and is ignored at the composition root — the editor does not panic.
+`RunLog` is a per-process sqlite Repository. Each `cargo run -p poc-ide` writes a new file under `$HOME/.progressivelsp/poc-ide-runs/poc-ide-{unix_ms}-{pid}.sqlite` (override with `POC_IDE_LOG_DIR`). Tests inject `:memory:` or a tempfile path. Rows are `timestamp_ms`, `category`, `event`, optional JSON payload (method + error, never file bodies / clipboard / secrets). Discover rows also store `path`, `uri`, `line`, `character`, `location_count`. A failed write is `IdeError::Log` and is ignored at the composition root — the editor does not panic.
 
 ## LSP client
 

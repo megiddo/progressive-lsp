@@ -77,10 +77,22 @@ impl DiscoverCommand {
         };
         let (line, character) = position_at(&buf.text(), buf.selection().start());
         let path = buf.path().to_path_buf();
+        let method = self.lsp_method();
+        let uri = crate::lsp::file_uri(&path).unwrap_or_else(|_| String::new());
         let Some(client) = lsp else {
+            if let Some(log) = run_log {
+                log.log_discover(
+                    method,
+                    &path,
+                    &uri,
+                    line,
+                    character,
+                    None,
+                    Some(&IdeError::MissingBinary.to_string()),
+                );
+            }
             return Err(IdeError::MissingBinary);
         };
-        let method = self.lsp_method();
         let result = match self.kind {
             DiscoverKind::Definition => client.definition(&path, line, character),
             DiscoverKind::Implementation => client.implementation(&path, line, character),
@@ -89,13 +101,29 @@ impl DiscoverCommand {
         match result {
             Ok(locations) => {
                 if let Some(log) = run_log {
-                    log.log_lsp(method, None);
+                    log.log_discover(
+                        method,
+                        &path,
+                        &uri,
+                        line,
+                        character,
+                        Some(locations.len() as u64),
+                        None,
+                    );
                 }
                 LspClient::<T>::jump(&locations, tabs, buffers, fs)
             }
             Err(e) => {
                 if let Some(log) = run_log {
-                    log.log_lsp(method, Some(&e.to_string()));
+                    log.log_discover(
+                        method,
+                        &path,
+                        &uri,
+                        line,
+                        character,
+                        None,
+                        Some(&e.to_string()),
+                    );
                 }
                 Err(e)
             }
@@ -369,6 +397,14 @@ mod tests {
         assert_eq!(lsp_rows.len(), 1);
         assert_eq!(lsp_rows[0].event(), "textDocument/definition");
         assert_eq!(lsp_rows[0].payload().unwrap()["error"], json!("lsp: eof"));
+        assert_eq!(lsp_rows[0].payload().unwrap()["path"], "/ws/lib.rs");
+        assert_eq!(lsp_rows[0].payload().unwrap()["uri"], "file:///ws/lib.rs");
+        assert_eq!(lsp_rows[0].payload().unwrap()["line"], 0);
+        assert_eq!(lsp_rows[0].payload().unwrap()["character"], 0);
+        assert_eq!(
+            lsp_rows[0].payload().unwrap()["location_count"],
+            Value::Null
+        );
     }
 
     #[test]
@@ -396,10 +432,15 @@ mod tests {
         assert_eq!(lsp_rows.len(), 1);
         assert_eq!(lsp_rows[0].event(), "textDocument/implementation");
         assert_eq!(lsp_rows[0].payload().unwrap()["error"], Value::Null);
+        assert_eq!(lsp_rows[0].payload().unwrap()["path"], "/ws/lib.rs");
+        assert_eq!(lsp_rows[0].payload().unwrap()["uri"], "file:///ws/lib.rs");
+        assert_eq!(lsp_rows[0].payload().unwrap()["line"], 0);
+        assert_eq!(lsp_rows[0].payload().unwrap()["character"], 0);
+        assert_eq!(lsp_rows[0].payload().unwrap()["location_count"], 0);
     }
 
     #[test]
-    fn discover_command_does_not_log_when_client_missing() {
+    fn discover_command_logs_missing_client() {
         let (fs, mut tabs, mut buffers) = open_lib();
         let mut log = RunLog::memory(FakeClock::at_unix_ms(3)).unwrap();
         let err = DiscoverCommand::definition()
@@ -412,11 +453,22 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.is_missing_binary());
-        assert!(log
+        let lsp_rows: Vec<_> = log
             .rows()
             .unwrap()
-            .iter()
-            .all(|r| r.category() != LogCategory::Lsp));
+            .into_iter()
+            .filter(|r| r.category() == LogCategory::Lsp)
+            .collect();
+        assert_eq!(lsp_rows.len(), 1);
+        assert_eq!(lsp_rows[0].event(), "textDocument/definition");
+        assert!(lsp_rows[0].payload().unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("binary"));
+        assert_eq!(
+            lsp_rows[0].payload().unwrap()["location_count"],
+            Value::Null
+        );
     }
 
     #[test]

@@ -41,6 +41,7 @@ main   # after IDE-5 merge
                                             └── poc-dialog-defer   # File Open Folder/File after the menu closes (not IDE-6)
                                                   └── poc-open-unblock   # non-recursive watch + deferred LSP initialize (not IDE-6)
                                                         └── poc-tree-sort   # dirs then files; dot names last (not IDE-6)
+                                                              └── poc-discover-log   # discover uri/position/count in RunLog (not IDE-6)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.

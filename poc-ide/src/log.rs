@@ -408,6 +408,38 @@ impl RunLog {
         );
     }
 
+    /// Discover request as the IDE sent it: uri, caret, hit count. Never file bodies.
+    pub fn log_discover(
+        &mut self,
+        method: &str,
+        path: &Path,
+        uri: &str,
+        line: u32,
+        character: u32,
+        location_count: Option<u64>,
+        error: Option<&str>,
+    ) {
+        self.record(
+            LogCategory::Lsp,
+            method,
+            Some(json_obj([
+                ("method", json!(method)),
+                ("path", json!(path.display().to_string())),
+                ("uri", json!(uri)),
+                ("line", json!(line)),
+                ("character", json!(character)),
+                (
+                    "location_count",
+                    match location_count {
+                        Some(n) => json!(n),
+                        None => Value::Null,
+                    },
+                ),
+                ("error", opt_str(error)),
+            ])),
+        );
+    }
+
     pub fn log_control_connect_error(&mut self, error: &str) {
         self.record(
             LogCategory::Control,
@@ -722,6 +754,15 @@ mod tests {
         log.log_lsp("textDocument/didChange", None);
         log.log_lsp("textDocument/didSave", None);
         log.log_lsp("textDocument/definition", Some("eof"));
+        log.log_discover(
+            "textDocument/definition",
+            Path::new("/ws/a.rs"),
+            "file:///ws/a.rs",
+            3,
+            4,
+            Some(0),
+            None,
+        );
         log.log_lsp("textDocument/implementation", None);
         log.log_lsp("textDocument/references", None);
         log.log_control_connect_error("control socket missing");
@@ -756,6 +797,18 @@ mod tests {
         assert_eq!(def.payload().unwrap()["method"], "textDocument/definition");
         assert_eq!(def.payload().unwrap()["error"], "eof");
         assert!(def.payload().unwrap().get("text").is_none());
+        let discover = rows
+            .iter()
+            .find(|r| {
+                r.event() == "textDocument/definition"
+                    && r.payload().and_then(|p| p.get("location_count")).is_some()
+            })
+            .unwrap();
+        assert_eq!(discover.payload().unwrap()["path"], "/ws/a.rs");
+        assert_eq!(discover.payload().unwrap()["uri"], "file:///ws/a.rs");
+        assert_eq!(discover.payload().unwrap()["line"], 3);
+        assert_eq!(discover.payload().unwrap()["character"], 4);
+        assert_eq!(discover.payload().unwrap()["location_count"], 0);
         let tree_err = rows
             .iter()
             .filter(|r| r.event() == EVENT_TREE_LOAD)

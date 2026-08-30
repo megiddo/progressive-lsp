@@ -667,7 +667,17 @@ pub fn file_uri(path: &Path) -> Result<String, IdeError> {
     if !path.is_absolute() {
         return Err(IdeError::NotAbsolute(path.to_path_buf()));
     }
-    Ok(format!("file://{}", path.to_string_lossy()))
+    let raw = path.to_string_lossy();
+    let mut out = String::from("file://");
+    for b in raw.as_bytes() {
+        match *b {
+            b'/' | b'-' | b'_' | b'.' | b'~' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => {
+                out.push(*b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    Ok(out)
 }
 
 pub fn path_from_file_uri(uri: &str) -> Result<PathBuf, IdeError> {
@@ -1473,6 +1483,14 @@ mod tests {
             PathBuf::from("/ws/a.rs")
         );
         assert_eq!(file_uri(Path::new("/ws/a.rs")).unwrap(), "file:///ws/a.rs");
+        assert_eq!(
+            file_uri(Path::new("/Users/me/My Drive/a.rs")).unwrap(),
+            "file:///Users/me/My%20Drive/a.rs"
+        );
+        assert_eq!(
+            path_from_file_uri("file:///Users/me/My%20Drive/a.rs").unwrap(),
+            PathBuf::from("/Users/me/My Drive/a.rs")
+        );
         assert_eq!(percent_decode("%2F"), "/");
         assert_eq!(percent_decode("%zz"), "%zz");
         assert_eq!(percent_decode("%2"), "%2");

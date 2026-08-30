@@ -191,8 +191,9 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
 | `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
+| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX` |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
-| `RunLog` | Repository | One sqlite file (or `:memory:`) per run; append + query; write failure is `IdeError::Log`, never a panic |
+| `RunLog` | Repository | One sqlite file (or `:memory:`) per run; append + query; write failure is `IdeError::Log`, never a panic. Discover rows include `path`, `uri`, `line`, `character`, `location_count` |
 | `RunLogPath` | Value object | `{dir}/poc-ide-{unix_ms}-{pid}.sqlite`; tests inject dir / path |
 | `LogRow` | DTO | `timestamp_ms` + `category` + `event` + optional JSON; payload is structured, never file bodies |
 | `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict`; unknown parse → `None` |
