@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "SqliteLogRepository, WriterActor, CrashSafeBatch, ServeLogPath (WAL)"
+description = "SqliteLogRepository, WriterActor, CrashSafeBatch, ServeLogPath, LogOpenPlan (WAL)"
 
 [dependencies]
 progressive-lsp-core.workspace = true

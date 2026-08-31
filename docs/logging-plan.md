@@ -2,7 +2,7 @@
 
 Agents implement from this file plus [logging.md](logging.md), [design-patterns.md](design-patterns.md), and the LOG WPs in [implementation-plan.md](implementation-plan.md). Do not start LOG-N+1 until LOG-N is signed off. Branch stack: [branching.md](branching.md) (`log0`–`log11`; `log0`–`log5` **signed off**; `log0`–`log4` on **current `main`**, not `poc-no-console`; parent of `log5` is `log4`). Pointer payload: [logging/agent-context.md](logging/agent-context.md).
 
-LOG-0–LOG-8 are **signed off**. Do not reopen them. LOG-9–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
+LOG-0–LOG-9 are **signed off**. Do not reopen them. LOG-10–LOG-11 close remaining silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
 
 ## Current vs target
 
@@ -156,6 +156,8 @@ Docs only. Coverage matrix, LOG-6–LOG-11 mutation, pattern rows, and stack. No
 **Do not** fail the user on T3 skip. **Do not** emit on every hot-path resolve after the first skip. **Do not** start child capture. **Do not** start `Command` spawn.
 
 ### LOG-9 — Durable MemoryLog fallback
+
+**SIGNED OFF** on `log9`. `LogOpenPlan` Command opens primary → fallback → temp WAL. Do not start child capture.
 
 | File | Change |
 |---|---|

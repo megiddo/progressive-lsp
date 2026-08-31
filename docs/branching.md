@@ -59,12 +59,12 @@ main   # after poc-discover-log merge (current main)
                                       └── log6  # supervisor + ScriptHost lifecycle emits
                                             └── log7  # protocol + control socket + install hash
                                                   └── log8  # T3 skip + session completeness
-                                                        └── log9  # durable WAL fallback
+                                                        └── log9  # durable WAL fallback (SIGNED OFF)
                                                               └── log10 # child capture (FakeChildStderr; ready when spawn exists)
                                                                     └── log11 # operational Err hygiene gate
 ```
 
-LOG-0–LOG-8 are **signed off**. Do not reopen them. Remaining operational coverage is `log9`–`log11`. Parent of `log8` is `log7`. **Supersedes** “stack complete at `log4` / do not open `log5`.”
+LOG-0–LOG-9 are **signed off**. Do not reopen them. Remaining operational coverage is `log10`–`log11`. Parent of `log9` is `log8`. **Supersedes** “stack complete at `log4` / do not open `log5`.”
 
 ## Rules
 

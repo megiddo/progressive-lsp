@@ -9,6 +9,7 @@ pub mod cli_usage;
 pub mod config_warn;
 pub mod log_file_tail;
 pub mod lsp_message;
+pub mod open_plan;
 pub mod path;
 pub mod reentrancy;
 pub mod repository;
@@ -23,6 +24,7 @@ pub use cli_usage::CliUsageAdapter;
 pub use config_warn::ConfigWarnAdapter;
 pub use log_file_tail::LogFileTailAdapter;
 pub use lsp_message::LspLogMessageAdapter;
+pub use open_plan::LogOpenPlan;
 pub use path::{ServeLogPath, ENV_LOG_PATH};
 pub use reentrancy::ReentrancyGuard;
 pub use repository::SqliteLogRepository;
@@ -43,11 +45,15 @@ mod tests {
         assert_eq!(CHANNEL_CAP, 4096);
         assert_eq!(ENV_LOG_PATH, "PROGRESSIVE_LSP_LOG");
         assert_eq!(STDERR_DRAIN_CAP, 1024);
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
         let _ = ServeLogPath::new("/l", 1, 2);
+        let _ = ServeLogPath::fallback("/l", 1, 2);
+        let _ = ServeLogPath::in_temp("/t", 1, 2);
+        let _ = LogOpenPlan::new("/l", "/t", 1, 2, Arc::clone(&clock) as _);
         let _ = CrashSafeBatch::new(0);
         let _ = ReentrancyGuard::enter();
-        let clock = Arc::new(FakeClock::at_unix_ms(1));
-        let repo = SqliteLogRepository::open_memory_with_batch(clock, 1, 0).unwrap();
+        let repo =
+            SqliteLogRepository::open_memory_with_batch(Arc::clone(&clock) as _, 1, 0).unwrap();
         repo.info("reexport");
         repo.flush();
         assert_eq!(

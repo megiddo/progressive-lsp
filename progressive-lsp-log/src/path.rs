@@ -54,6 +54,23 @@ impl ServeLogPath {
     pub fn into_path(self) -> PathBuf {
         self.path
     }
+
+    /// Same-dir fallback when the primary WAL cannot open. Never `$HOME`.
+    pub fn fallback(log_dir: impl AsRef<Path>, unix_ms: u64, pid: u32) -> Self {
+        let name = format!("serve-fallback-{unix_ms}-{pid}.sqlite");
+        Self {
+            path: log_dir.as_ref().join(name),
+        }
+    }
+
+    /// Temp-dir WAL when primary and same-dir fallback cannot open. Tests inject
+    /// `temp_dir`; production passes `std::env::temp_dir()`. Never `$HOME`.
+    pub fn in_temp(temp_dir: impl AsRef<Path>, unix_ms: u64, pid: u32) -> Self {
+        let name = format!("progressive-lsp-serve-{unix_ms}-{pid}.sqlite");
+        Self {
+            path: temp_dir.as_ref().join(name),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +130,37 @@ mod tests {
         match old {
             Some(v) => std::env::set_var(ENV_LOG_PATH, v),
             None => std::env::remove_var(ENV_LOG_PATH),
+        }
+    }
+
+    #[test]
+    fn fallback_and_in_temp_are_value_objects_never_home() {
+        let fb = ServeLogPath::fallback("/injected/log", 1_700_000_000_000, 4242);
+        assert_eq!(
+            fb.as_path(),
+            Path::new("/injected/log/serve-fallback-1700000000000-4242.sqlite")
+        );
+        let tmp = ServeLogPath::in_temp("/injected/tmp", 1_700_000_000_000, 4242);
+        assert_eq!(
+            tmp.as_path(),
+            Path::new("/injected/tmp/progressive-lsp-serve-1700000000000-4242.sqlite")
+        );
+        assert_ne!(fb, tmp);
+        assert_eq!(
+            fb.clone().into_path(),
+            PathBuf::from("/injected/log/serve-fallback-1700000000000-4242.sqlite")
+        );
+        if let Ok(home) = std::env::var("HOME") {
+            assert!(
+                !fb.as_path().starts_with(&home),
+                "fallback must not use $HOME: {}",
+                fb.as_path().display()
+            );
+            assert!(
+                !tmp.as_path().starts_with(&home),
+                "in_temp must not use $HOME: {}",
+                tmp.as_path().display()
+            );
         }
     }
 }

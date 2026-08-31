@@ -471,23 +471,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-9 (`log9` branch)
 
-**Status: not started.** Do not open `log10` until this table is signed off. No syslog / JSON / OTel.
+**Status: SIGNED OFF** on `log9`. Parent is `log8`. Do not open `log10` until this table is signed off (it is). No syslog / JSON / OTel.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-9.1 | `LogOpenPlan` + `ServeLogPath::fallback` / `in_temp`; `wire_process_log` uses it | LOG-8 | tempfile: primary fail → fallback WAL has warn + replay. **Do not** start child capture. |
-| LOG-9.2 | User troubleshooting for missing primary sqlite | LOG-9.1 | `serve-fallback-*.sqlite` then temp WAL |
+| LOG-9.1 | `LogOpenPlan` + `ServeLogPath::fallback` / `in_temp`; `wire_process_log` uses it | LOG-8 | **SIGNED OFF.** tempfile: primary fail → fallback WAL has warn + replay. **Do not** start child capture. |
+| LOG-9.2 | User troubleshooting for missing primary sqlite | LOG-9.1 | **SIGNED OFF.** `serve-fallback-*.sqlite` then temp WAL |
 
 **Sign-off checklist (LOG-9)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch — `cargo test -p progressive-lsp-log` and bin tests `--test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed — `progressive-lsp-log`
-- [ ] No `sleep`
-- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
-- [ ] [design-patterns.md](design-patterns.md) names `LogOpenPlan`
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test -p progressive-lsp-log` and bin tests `--test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **96.02%** lines
+- [x] 80% mutants on listed crates that changed — `progressive-lsp-log` **140 caught / 153 scored (91.5%)**, 36 unviable, 12 missed, 1 timeout
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
+- [x] [design-patterns.md](design-patterns.md) names `LogOpenPlan`
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-10 (`log10` branch)
 

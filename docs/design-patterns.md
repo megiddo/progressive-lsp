@@ -126,7 +126,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 
 ## Global logging (LOG-1+)
 
-Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 landed sqlite Actor types in `progressive-lsp-log`. LOG-3 landed capture Adapters + `ChildIo`. LOG-4 wired serve/install bootstrap. LOG-5+ closes remaining operational silent paths (`LogOpenPlan` on LOG-9; supervisor/`ScriptHost` `LogPort` on LOG-6). poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
+Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 landed sqlite Actor types in `progressive-lsp-log`. LOG-3 landed capture Adapters + `ChildIo`. LOG-4 wired serve/install bootstrap. LOG-6 landed supervisor/`ScriptHost` `LogPort`. LOG-9 landed `LogOpenPlan` (Command). poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|

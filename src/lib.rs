@@ -18,8 +18,8 @@ use progressive_lsp_install::{
     PackSelector,
 };
 use progressive_lsp_log::{
-    CliUsageAdapter, LogCrateBridge, ServeLogPath, SqliteLogRepository, StderrEmitAdapter,
-    TracingBridge,
+    CliUsageAdapter, LogCrateBridge, LogOpenPlan, ServeLogPath, SqliteLogRepository,
+    StderrEmitAdapter, TracingBridge,
 };
 use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
@@ -269,30 +269,17 @@ fn wire_process_log(
     Option<Arc<NeverFailLog<SqliteLogRepository>>>,
 ) {
     let clock = Arc::new(SystemClock);
+    let unix_ms = clock.unix_ms();
+    let pid = std::process::id();
     let config_path = std::fs::read_to_string(layout.config_path())
         .ok()
         .and_then(|src| Config::from_toml(&src).ok())
         .and_then(|load| load.config.log_path);
-    let named = ServeLogPath::from_env_or_config(
-        layout.log_dir(),
-        clock.unix_ms(),
-        std::process::id(),
-        config_path.as_deref(),
-    );
-    match SqliteLogRepository::open(named.as_path(), clock) {
-        Ok(repo) => {
-            for rec in mem.drain() {
-                repo.emit(rec);
-            }
-            let durable = Arc::new(NeverFailLog::new(repo));
-            let log: Arc<dyn LogPort> = Arc::clone(&durable) as Arc<dyn LogPort>;
-            (log, Some(durable))
-        }
-        Err(_) => {
-            mem.warn("sqlite log open failed; keeping MemoryLog");
-            (Arc::new(mem), None)
-        }
-    }
+    let named =
+        ServeLogPath::from_env_or_config(layout.log_dir(), unix_ms, pid, config_path.as_deref());
+    LogOpenPlan::new(layout.log_dir(), std::env::temp_dir(), unix_ms, pid, clock)
+        .with_primary(named)
+        .execute(mem)
 }
 
 pub fn serve_with_io_and_log<R, W>(
@@ -972,6 +959,9 @@ mod tests {
 
     #[test]
     fn serve_handshake_writes_one_wal_sqlite_log_repository() {
+        let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH);
         let prefix = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         std::fs::write(prefix.path().join("config.toml"), "future = 1\n").unwrap();
@@ -999,6 +989,10 @@ mod tests {
                 .any(|m| m.contains("not discovered") || m.contains("stub pack")),
             "held supervisor must try_spawn after workspace root: {msgs:?}"
         );
+        match old {
+            Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
+            None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
+        }
     }
 
     #[test]
@@ -1029,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn serve_sqlite_open_fail_keeps_memory_log_test_double() {
+    fn serve_sqlite_primary_open_fail_writes_fallback_wal() {
         let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
         let prefix = tempfile::tempdir().unwrap();
         let blocker = prefix.path().join("not-a-dir");
@@ -1053,11 +1047,71 @@ mod tests {
         }
         result.unwrap();
         assert!(!wal.exists());
-        assert!(sqlite_files(&prefix.path().join("log")).is_empty());
+        let files = sqlite_files(&prefix.path().join("log"));
+        assert_eq!(files.len(), 1, "{files:?}");
+        let name = files[0].file_name().and_then(|s| s.to_str()).unwrap_or("");
+        assert!(
+            name.starts_with("serve-fallback-") && name.ends_with(".sqlite"),
+            "{name}"
+        );
+        let msgs = progressive_lsp_log::actor::read_messages(&files[0]).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("opened fallback WAL") && m.contains("after previous failed")),
+            "{msgs:?}"
+        );
+        if let Ok(home) = std::env::var("HOME") {
+            assert!(
+                !files[0].starts_with(&home),
+                "fallback must not use $HOME: {}",
+                files[0].display()
+            );
+        }
+    }
+
+    #[test]
+    fn wire_process_log_replays_ring_into_fallback_command() {
+        let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let blocked = prefix.path().join("blocked-primary");
+        std::fs::create_dir_all(&blocked).unwrap();
+        let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, &blocked);
+        let mem = MemoryLog::new();
+        mem.info("bootstrap-ring");
+        let (log, durable) = wire_process_log(&layout, mem);
+        match old {
+            Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
+            None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
+        }
+        let durable = durable.expect("LogOpenPlan fallback");
+        let path = durable.inner().path().to_path_buf();
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        assert!(
+            name.starts_with("serve-fallback-") && name.ends_with(".sqlite"),
+            "{name}"
+        );
+        durable.inner().flush();
+        let msgs = progressive_lsp_log::actor::read_messages(&path).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("bootstrap-ring")),
+            "replayed ring: {msgs:?}"
+        );
+        assert!(
+            msgs.iter().any(|m| m.contains("opened fallback WAL")),
+            "{msgs:?}"
+        );
+        drop(log);
+        drop(durable);
     }
 
     #[test]
     fn install_writes_one_wal_sqlite_log_repository() {
+        let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH);
         let dir = tempfile::tempdir().unwrap();
         run_install(InstallOpts {
             prefix: dir.path().to_path_buf(),
@@ -1065,6 +1119,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(sqlite_files(&dir.path().join("log")).len(), 1);
+        match old {
+            Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
+            None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
+        }
     }
 
     static ENV_LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
