@@ -430,24 +430,24 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-7 (`log7` branch)
 
-**Status: not started.** Do not open `log8` until this table is signed off. No LSP bodies. No `LogOpenPlan`. No child capture.
+**Status: SIGNED OFF** on `log7`. Parent is `log6`. Do not open `log8` until this table is signed off (it is). No LSP bodies. No `LogOpenPlan`. No child capture.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-7.1 | `LspFacade::with_log`; parse / Content-Length / method-not-found / mux | LOG-6 | FakeLog `operation=protocol`. **Never** log payload bytes. |
-| LOG-7.2 | Control bind/accept/`PayloadTooLarge`/unknown method/`Status::error`; `--control-fd` warn | LOG-7.1 | FakeLog `operation=control`. **Do not** implement `--control-fd`. |
-| LOG-7.3 | `InstallError::Hash` + verify refuse emit before `remove_or_emit` | LOG-6 | FakeLog `operation=install`; expected/actual hex. **Do not** start durable fallback. |
+| LOG-7.1 | `LspFacade::with_log`; parse / Content-Length / method-not-found / mux | LOG-6 | **SIGNED OFF.** FakeLog `operation=protocol`. **Never** log payload bytes. |
+| LOG-7.2 | Control bind/accept/`PayloadTooLarge`/unknown method/`Status::error`; `--control-fd` warn | LOG-7.1 | **SIGNED OFF.** FakeLog `operation=control`. **Do not** implement `--control-fd`. |
+| LOG-7.3 | `InstallError::Hash` + verify refuse emit before `remove_or_emit` | LOG-6 | **SIGNED OFF.** FakeLog `operation=install`; expected/actual hex. **Do not** start durable fallback. |
 
 **Sign-off checklist (LOG-7)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed — protocol, control, install
-- [ ] No `sleep`
-- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
-- [ ] [design-patterns.md](design-patterns.md) updated
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **95.89%** lines
+- [x] 80% mutants on listed crates that changed — protocol **107 caught / 130 scored (82.3%)**, 18 unviable, 23 missed, 3 timeouts; control **88 caught / 95 scored (92.6%)**, 1 unviable, 7 missed; install **117 caught / 124 scored (94.4%)**, 10 unviable, 7 missed, 1 timeout; combined **312 caught / 349 scored (89.4%)**, 29 unviable, 37 missed, 4 timeouts
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
+- [x] [design-patterns.md](design-patterns.md) names every new type (prefer `with_log`; no new Facade)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-8 (`log8` branch)
 

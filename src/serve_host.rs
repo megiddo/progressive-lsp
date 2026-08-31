@@ -14,7 +14,8 @@ use progressive_lsp_control::{
 };
 use progressive_lsp_core::{
     apply_worktree_excludes, Config, ConfigError, ConfigLoad, ConfigOverlay, FakeClock,
-    InitializeFailed, LogPort, LogScope, NullLog, PackageId, PrefixLayout, OVERLAY_DIR_NAME,
+    InitializeFailed, LogComponent, LogPort, LogScope, NullLog, PackageId, PrefixLayout,
+    OVERLAY_DIR_NAME,
 };
 use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes, EngineSupervisor};
 use progressive_lsp_install::{hex_encode, sha256, Installer, LocalFs, Manifest, ManifestArtifact};
@@ -100,6 +101,15 @@ impl ServeHost {
 
     fn emit_config_warnings(&self, warnings: &[String]) {
         ConfigWarnAdapter::new(Arc::clone(&self.log)).emit_warnings(warnings);
+    }
+
+    fn emit_control_status_error(&self, method: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("control")
+                .component(LogComponent::control()),
+        );
+        self.log.warn(&format!("{method} Status::error"));
     }
 
     pub fn layout(&self) -> &PrefixLayout {
@@ -362,12 +372,14 @@ impl ControlPlane for ServeHost {
                 o
             }
             Err(e) => {
+                self.emit_control_status_error("SetConfig");
                 return SetConfigResponse {
                     status: Some(Status::error(1, e.to_string())),
                 };
             }
         };
         if let Err(e) = self.persist_overlay_or_prefix(&overlay) {
+            self.emit_control_status_error("SetConfig");
             return SetConfigResponse {
                 status: Some(Status::error(1, e)),
             };
@@ -387,15 +399,21 @@ impl ControlPlane for ServeHost {
                     status: Some(Status::ok()),
                 }
             }
-            Err(e) => ReloadConfigResponse {
-                status: Some(Status::error(1, e)),
-            },
+            Err(e) => {
+                self.emit_control_status_error("ReloadConfig");
+                ReloadConfigResponse {
+                    status: Some(Status::error(1, e)),
+                }
+            }
         }
     }
 
     fn install_packs(&self, req: &InstallPacksRequest) -> InstallPacksResponse {
         for raw in &req.packs {
-            if let Err(e) = install_pack_from_inbox_or_stub(&self.layout, raw) {
+            if let Err(e) =
+                install_pack_from_inbox_or_stub(&self.layout, raw, Arc::clone(&self.log))
+            {
+                self.emit_control_status_error("InstallPacks");
                 return InstallPacksResponse {
                     status: Some(Status::error(1, e)),
                 };
@@ -499,9 +517,12 @@ impl ControlPlane for ServeHost {
             Ok(()) => ReloadScriptsResponse {
                 status: Some(Status::ok()),
             },
-            Err(e) => ReloadScriptsResponse {
-                status: Some(Status::error(1, e.0)),
-            },
+            Err(e) => {
+                self.emit_control_status_error("ReloadScripts");
+                ReloadScriptsResponse {
+                    status: Some(Status::error(1, e.0)),
+                }
+            }
         }
     }
 }
@@ -627,7 +648,11 @@ fn parse_sha256_hex(hex: &str) -> Result<[u8; 32], String> {
 }
 
 /// Inbox: `$PREFIX/inbox/<pack>/payload` + `expected.sha256`. Else stub bytes (CLI install).
-fn install_pack_from_inbox_or_stub(layout: &PrefixLayout, raw: &str) -> Result<(), String> {
+fn install_pack_from_inbox_or_stub(
+    layout: &PrefixLayout,
+    raw: &str,
+    log: Arc<dyn LogPort>,
+) -> Result<(), String> {
     let pack = canonical_pack(raw);
     let binary = binary_name_for_pack(pack).ok_or_else(|| format!("unknown pack {raw}"))?;
     let inbox_named = layout.root().join("inbox").join(raw);
@@ -650,7 +675,7 @@ fn install_pack_from_inbox_or_stub(layout: &PrefixLayout, raw: &str) -> Result<(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let installer = Installer::new(LocalFs);
+    let installer = Installer::new(LocalFs).with_log(log);
     let plan = installer
         .plan(dest.clone(), bytes, expected, true)
         .map_err(|e| e.to_string())?;
@@ -1086,9 +1111,9 @@ mod tests {
         let prefix = tempfile::tempdir().unwrap();
         let layout = PrefixLayout::from_path(prefix.path());
         layout.ensure_dirs().unwrap();
-        install_pack_from_inbox_or_stub(&layout, "python").unwrap();
+        install_pack_from_inbox_or_stub(&layout, "python", Arc::new(NullLog)).unwrap();
         assert!(layout.engines_dir().join("python/ty").is_file());
-        assert!(install_pack_from_inbox_or_stub(&layout, "nope").is_err());
+        assert!(install_pack_from_inbox_or_stub(&layout, "nope", Arc::new(NullLog)).is_err());
         assert_eq!(
             mtime_stamp(&std::fs::metadata(prefix.path()).unwrap()) > 0 || true,
             true
@@ -1102,7 +1127,7 @@ mod tests {
         std::fs::write(workspace.path().join("App.java"), "class App {}\n").unwrap();
         let layout = PrefixLayout::from_path(prefix.path());
         layout.ensure_dirs().unwrap();
-        install_pack_from_inbox_or_stub(&layout, "python").unwrap();
+        install_pack_from_inbox_or_stub(&layout, "python", Arc::new(NullLog)).unwrap();
         let log = progressive_lsp_core::FakeLog::new();
         let mut sup = EngineSupervisor::new(Arc::new(FakeClock::at_unix_ms(1)), layout.clone())
             .with_log(Arc::new(log.clone()));
@@ -1124,5 +1149,85 @@ mod tests {
             "{:?}",
             log.records()
         );
+    }
+
+    #[test]
+    fn control_plane_status_error_emits_operation_control() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout.clone(), Arc::new(log.clone())).unwrap();
+        const LEAK: &str = "LEAK_TOML_BODY";
+        assert!(
+            host.set_config(&SetConfigRequest {
+                patch_toml: format!("[[ {LEAK}"),
+            })
+            .status
+            .unwrap()
+            .code
+                != 0
+        );
+        std::fs::remove_file(layout.config_path()).ok();
+        std::fs::create_dir_all(layout.config_path()).unwrap();
+        assert!(
+            host.set_config(&SetConfigRequest {
+                patch_toml: "packs = [\"python\"]\n".into(),
+            })
+            .status
+            .unwrap()
+            .code
+                != 0
+        );
+        assert!(
+            host.reload_config(&ReloadConfigRequest {})
+                .status
+                .unwrap()
+                .code
+                != 0
+        );
+        std::fs::remove_dir_all(layout.config_path()).unwrap();
+        std::fs::write(layout.config_path(), "scripts = [\"abort.rhai\"]\n").unwrap();
+        std::fs::write(
+            layout.scripts_dir().join("abort.rhai"),
+            "fn on_bootstrap() { abort(\"nope\"); }\n",
+        )
+        .unwrap();
+        assert!(host
+            .reload_config(&ReloadConfigRequest {})
+            .status
+            .unwrap()
+            .is_ok());
+        assert!(
+            host.reload_scripts(&ReloadScriptsRequest {})
+                .status
+                .unwrap()
+                .code
+                != 0
+        );
+        assert!(
+            host.install_packs(&InstallPacksRequest {
+                packs: vec!["nope".into()],
+            })
+            .status
+            .unwrap()
+            .code
+                != 0
+        );
+        let recs = log.records();
+        for method in ["SetConfig", "ReloadConfig", "ReloadScripts", "InstallPacks"] {
+            assert!(
+                recs.iter()
+                    .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                        && r.operation.as_deref() == Some("control")
+                        && r.component.as_ref().map(|c| c.as_str()) == Some("control")
+                        && r.message.contains(method)
+                        && r.message.contains("Status::error")),
+                "{method} missing in {recs:?}"
+            );
+        }
+        for r in &recs {
+            assert!(!r.message.contains(LEAK), "body leaked: {}", r.message);
+        }
     }
 }

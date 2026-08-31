@@ -688,7 +688,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-7 — Protocol + control socket + install hash
 
-**Status: not started.** Parent is `log6`. No sqlite-open fallback. No child capture. No LSP/Envelope **bodies** in logs. No `-rpc.trace`.
+**Status: SIGNED OFF** on branch `log7`. Parent is `log6`. No sqlite-open fallback. No child capture. No LSP/Envelope **bodies** in logs. No `-rpc.trace`. poc-ide `RunLog` unchanged.
 
 - `LspFacade::with_log`: parse, missing Content-Length, method-not-found, mux errors.
 - `bind_control_socket` / accept / `PayloadTooLarge` / unknown Envelope method / `Status::error` / `--control-fd` ignored.
@@ -696,18 +696,24 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 **Exit**
 
-- [ ] FakeLog asserts `operation=protocol`/`control`/`install`; hash expected/actual hex; no payload bytes in `message`/`extras`.
+- [x] FakeLog asserts `operation=protocol`/`control`/`install`; hash expected/actual hex; no payload bytes in `message`/`extras`.
 
 **Sign-off checklist (LOG-7)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed (protocol, control, install)
-- [ ] No `sleep`
-- [ ] `check-static` — Darwin: do not fake musl greens
-- [ ] Pattern table updated (`LspFacade` / `ControlServer` / `bind_control_socket` take `LogPort`)
-- [ ] Docs in this tree updated
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.89%** lines
+- [x] 80% mutants on listed crates that changed (protocol, control, install) — protocol **107 caught / 130 scored (82.3%)**, 18 unviable, 23 missed, 3 timeouts; control **88 caught / 95 scored (92.6%)**, 1 unviable, 7 missed; install **117 caught / 124 scored (94.4%)**, 10 unviable, 7 missed, 1 timeout; combined **312 caught / 349 scored (89.4%)**, 29 unviable, 37 missed, 4 timeouts
+- [x] No `sleep`
+- [x] `check-static` — fixture `libdl` fail-closed. Darwin: do not fake musl greens
+- [x] [design-patterns.md](design-patterns.md) rows updated (`LspFacade` / `ControlServer` / `bind_control_socket` take `LogPort`)
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-7 gate on macOS.
+- `--control-fd` stays parsed-and-ignored (`pending`); tests assert the **warn** row, not a live fd.
+- This host cannot produce a musl `progressive-lsp` ELF. Linux CI must `check-static` the rusqlite-linked ELF. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## LOG-8 — T3 skip + session completeness
 

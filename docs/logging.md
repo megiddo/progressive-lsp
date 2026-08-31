@@ -4,7 +4,7 @@ First-class observability for `progressive-lsp serve` / `install` and for every 
 
 This file is the **source of truth** for the logging stack. `poc-ide` `RunLog` is a **consumer-sample** sqlite debug file ([poc-ide/architecture.md](poc-ide/architecture.md)); it does not satisfy this spec. Do not merge the two schemas in LOG-1–LOG-11.
 
-**LOG-0–LOG-6 are signed off.** Do not reopen them. Remaining operational silent paths are LOG-7+ ([coverage matrix](#coverage-matrix-zero-blind-spots)). After LOG-11, a silent operational class in that matrix is a defect.
+**LOG-0–LOG-7 are signed off.** Do not reopen them. Remaining operational silent paths are LOG-8+ ([coverage matrix](#coverage-matrix-zero-blind-spots)). After LOG-11, a silent operational class in that matrix is a defect.
 
 ## Locked decisions
 

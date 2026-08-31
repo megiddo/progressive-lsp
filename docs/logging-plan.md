@@ -2,7 +2,7 @@
 
 Agents implement from this file plus [logging.md](logging.md), [design-patterns.md](design-patterns.md), and the LOG WPs in [implementation-plan.md](implementation-plan.md). Do not start LOG-N+1 until LOG-N is signed off. Branch stack: [branching.md](branching.md) (`log0`–`log11`; `log0`–`log5` **signed off**; `log0`–`log4` on **current `main`**, not `poc-no-console`; parent of `log5` is `log4`). Pointer payload: [logging/agent-context.md](logging/agent-context.md).
 
-LOG-0–LOG-6 are **signed off**. Do not reopen them. LOG-7–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
+LOG-0–LOG-7 are **signed off**. Do not reopen them. LOG-8–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
 
 ## Current vs target
 
@@ -125,6 +125,8 @@ Docs only. Coverage matrix, LOG-6–LOG-11 mutation, pattern rows, and stack. No
 **Do not** start sqlite bootstrap (already LOG-4). **Do not** start `std::process::Command`. **Do not** start ChildIo pipe readers (LOG-10). **Do not** start protocol/control emits (LOG-7). **Do not** insert `EngineResolver` (LOG-8). Darwin: do not fake musl greens.
 
 ### LOG-7 — Protocol + control socket + install hash
+
+**SIGNED OFF** on `log7`. `LspFacade` / `ControlServer` / `Installer` `with_log`. Emit parse / framing / mux / method-not-found (`operation=protocol`), bind/accept/`PayloadTooLarge`/unknown method/`Status::error`/`--control-fd` ignored (`operation=control`), hash/verify refuse (`operation=install`) **without** payload bytes. Hash rows include expected/actual hex **before** `remove_or_emit`.
 
 | File | Change |
 |---|---|

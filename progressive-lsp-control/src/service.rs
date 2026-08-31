@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use progressive_lsp_core::{LogComponent, LogPort, LogScope, NullLog};
 use prost::Message;
 
 use crate::codec::{decode_exact, encode_frame, CodecError};
@@ -33,13 +34,14 @@ pub trait ControlPlane: Send + Sync {
 }
 
 /// Same domain services as LSP, different encoding.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ControlServer {
     pub config_toml: String,
     files_since: Option<Arc<dyn FilesSincePort>>,
     plane: Option<Arc<dyn ControlPlane>>,
     pending_tier_ready: Arc<std::sync::Mutex<Vec<TierReady>>>,
     progressive_connected: bool,
+    log: Arc<dyn LogPort>,
 }
 
 impl std::fmt::Debug for ControlServer {
@@ -63,6 +65,12 @@ impl PartialEq for ControlServer {
 
 impl Eq for ControlServer {}
 
+impl Default for ControlServer {
+    fn default() -> Self {
+        Self::new("")
+    }
+}
+
 impl ControlServer {
     pub fn new(config_toml: impl Into<String>) -> Self {
         Self {
@@ -71,7 +79,22 @@ impl ControlServer {
             plane: None,
             pending_tier_ready: Arc::new(std::sync::Mutex::new(Vec::new())),
             progressive_connected: false,
+            log: Arc::new(NullLog),
         }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
+    }
+
+    fn emit_control_info(&self, message: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("control")
+                .component(LogComponent::control()),
+        );
+        self.log.info(message);
     }
 
     pub fn with_files_since(mut self, port: Arc<dyn FilesSincePort>) -> Self {
@@ -109,7 +132,8 @@ impl ControlServer {
     }
 
     pub fn take_tier_ready(&self) -> Vec<TierReady> {
-        let mut local = std::mem::take(&mut *self.pending_tier_ready.lock().expect("tier ready lock"));
+        let mut local =
+            std::mem::take(&mut *self.pending_tier_ready.lock().expect("tier ready lock"));
         if let Some(plane) = &self.plane {
             local.extend(plane.take_tier_ready());
         }
@@ -239,15 +263,29 @@ impl ControlServer {
             }
             METHOD_RELOAD_CONFIG => {
                 let req = env.decode_body::<ReloadConfigRequest>().unwrap_or_default();
-                Envelope::reply(METHOD_RELOAD_CONFIG, env.request_id, self.reload_config(&req))
+                Envelope::reply(
+                    METHOD_RELOAD_CONFIG,
+                    env.request_id,
+                    self.reload_config(&req),
+                )
             }
             METHOD_INSTALL_PACKS => {
                 let req = env.decode_body::<InstallPacksRequest>().unwrap_or_default();
-                Envelope::reply(METHOD_INSTALL_PACKS, env.request_id, self.install_packs(&req))
+                Envelope::reply(
+                    METHOD_INSTALL_PACKS,
+                    env.request_id,
+                    self.install_packs(&req),
+                )
             }
             METHOD_WATCH_SUBSCRIBE => {
-                let req = env.decode_body::<WatchSubscribeRequest>().unwrap_or_default();
-                Envelope::reply(METHOD_WATCH_SUBSCRIBE, env.request_id, self.watch_subscribe(&req))
+                let req = env
+                    .decode_body::<WatchSubscribeRequest>()
+                    .unwrap_or_default();
+                Envelope::reply(
+                    METHOD_WATCH_SUBSCRIBE,
+                    env.request_id,
+                    self.watch_subscribe(&req),
+                )
             }
             METHOD_FILES_SINCE => {
                 let req = env.decode_body::<FilesSinceRequest>().unwrap_or_default();
@@ -262,14 +300,23 @@ impl ControlServer {
                 Envelope::reply(METHOD_TIER_STATUS, env.request_id, self.tier_status(&req))
             }
             METHOD_RELOAD_SCRIPTS => {
-                let req = env.decode_body::<ReloadScriptsRequest>().unwrap_or_default();
-                Envelope::reply(METHOD_RELOAD_SCRIPTS, env.request_id, self.reload_scripts(&req))
+                let req = env
+                    .decode_body::<ReloadScriptsRequest>()
+                    .unwrap_or_default();
+                Envelope::reply(
+                    METHOD_RELOAD_SCRIPTS,
+                    env.request_id,
+                    self.reload_scripts(&req),
+                )
             }
-            other => Envelope::reply(
-                other,
-                env.request_id,
-                Status::error(2, format!("unknown method: {other}")),
-            ),
+            other => {
+                self.emit_control_info(&format!("unknown method: {other}"));
+                Envelope::reply(
+                    other,
+                    env.request_id,
+                    Status::error(2, format!("unknown method: {other}")),
+                )
+            }
         }
     }
 
@@ -303,15 +350,11 @@ impl ControlServer {
     }
 
     pub fn encode_watch_batch(&self) -> Result<Vec<u8>, CodecError> {
-        encode_frame(
-            &Envelope::push(METHOD_WATCH_BATCH, self.last_watch_batch()).encode_to_vec(),
-        )
+        encode_frame(&Envelope::push(METHOD_WATCH_BATCH, self.last_watch_batch()).encode_to_vec())
     }
 
     pub fn encode_files_since(&self, req: &FilesSinceRequest) -> Result<Vec<u8>, CodecError> {
-        encode_frame(
-            &Envelope::reply(METHOD_FILES_SINCE, 1, self.files_since(req)).encode_to_vec(),
-        )
+        encode_frame(&Envelope::reply(METHOD_FILES_SINCE, 1, self.files_since(req)).encode_to_vec())
     }
 
     pub fn encode_envelope_frame(&self, env: &Envelope) -> Result<Vec<u8>, CodecError> {
@@ -451,14 +494,30 @@ mod tests {
     fn empty_answers_are_ok_and_not_truncated() {
         let srv = ControlServer::new("packs = []\n");
         assert_eq!(srv.get_config(&GetConfigRequest {}).toml, "packs = []\n");
-        assert!(srv.set_config(&SetConfigRequest { patch_toml: String::new() }).status.unwrap().is_ok());
-        assert!(srv.reload_config(&ReloadConfigRequest {}).status.unwrap().is_ok());
         assert!(srv
-            .install_packs(&InstallPacksRequest { packs: vec!["python".into()] })
+            .set_config(&SetConfigRequest {
+                patch_toml: String::new()
+            })
             .status
             .unwrap()
             .is_ok());
-        assert!(srv.watch_subscribe(&WatchSubscribeRequest {}).status.unwrap().is_ok());
+        assert!(srv
+            .reload_config(&ReloadConfigRequest {})
+            .status
+            .unwrap()
+            .is_ok());
+        assert!(srv
+            .install_packs(&InstallPacksRequest {
+                packs: vec!["python".into()]
+            })
+            .status
+            .unwrap()
+            .is_ok());
+        assert!(srv
+            .watch_subscribe(&WatchSubscribeRequest {})
+            .status
+            .unwrap()
+            .is_ok());
         let batch = srv.empty_watch_batch();
         assert!(batch.events.is_empty());
         assert!(!batch.overflow);
@@ -469,7 +528,11 @@ mod tests {
         assert!(idx.packages.is_empty());
         assert_eq!(idx.cache_entries, 0);
         assert!(srv.tier_status(&TierStatusRequest {}).rows.is_empty());
-        assert!(srv.reload_scripts(&ReloadScriptsRequest {}).status.unwrap().is_ok());
+        assert!(srv
+            .reload_scripts(&ReloadScriptsRequest {})
+            .status
+            .unwrap()
+            .is_ok());
         assert_eq!(ControlServer::default().config_toml, "");
         assert!(srv.last_watch_batch().events.is_empty());
         assert_eq!(ControlServer::new("a"), ControlServer::new("a"));
@@ -513,14 +576,32 @@ mod tests {
         let srv = ControlServer::new("packs = [\"rust\"]\n");
         for (method, body) in [
             (METHOD_GET_CONFIG, GetConfigRequest {}.encode_to_vec()),
-            (METHOD_SET_CONFIG, SetConfigRequest { patch_toml: String::new() }.encode_to_vec()),
+            (
+                METHOD_SET_CONFIG,
+                SetConfigRequest {
+                    patch_toml: String::new(),
+                }
+                .encode_to_vec(),
+            ),
             (METHOD_RELOAD_CONFIG, ReloadConfigRequest {}.encode_to_vec()),
-            (METHOD_INSTALL_PACKS, InstallPacksRequest { packs: vec![] }.encode_to_vec()),
-            (METHOD_WATCH_SUBSCRIBE, WatchSubscribeRequest {}.encode_to_vec()),
-            (METHOD_FILES_SINCE, FilesSinceRequest { since: None }.encode_to_vec()),
+            (
+                METHOD_INSTALL_PACKS,
+                InstallPacksRequest { packs: vec![] }.encode_to_vec(),
+            ),
+            (
+                METHOD_WATCH_SUBSCRIBE,
+                WatchSubscribeRequest {}.encode_to_vec(),
+            ),
+            (
+                METHOD_FILES_SINCE,
+                FilesSinceRequest { since: None }.encode_to_vec(),
+            ),
             (METHOD_INDEX_STATUS, IndexStatusRequest {}.encode_to_vec()),
             (METHOD_TIER_STATUS, TierStatusRequest {}.encode_to_vec()),
-            (METHOD_RELOAD_SCRIPTS, ReloadScriptsRequest {}.encode_to_vec()),
+            (
+                METHOD_RELOAD_SCRIPTS,
+                ReloadScriptsRequest {}.encode_to_vec(),
+            ),
         ] {
             let env = Envelope {
                 method: method.into(),
@@ -532,7 +613,11 @@ mod tests {
             assert_eq!(reply.request_id, 42);
             assert!(!reply.body.is_empty() || method == METHOD_GET_CONFIG);
         }
-        let get = srv.dispatch_envelope(&Envelope::request(METHOD_GET_CONFIG, 3, GetConfigRequest {}));
+        let get = srv.dispatch_envelope(&Envelope::request(
+            METHOD_GET_CONFIG,
+            3,
+            GetConfigRequest {},
+        ));
         let cfg = get.decode_body::<GetConfigResponse>().unwrap();
         assert_eq!(cfg.toml, "packs = [\"rust\"]\n");
         assert!(cfg.status.unwrap().is_ok());
@@ -548,13 +633,53 @@ mod tests {
     }
 
     #[test]
+    fn unknown_method_emits_control_info_without_body() {
+        const LEAK: &str = "LEAK_ENVELOPE_BODY";
+        let log = progressive_lsp_core::FakeLog::new();
+        let srv = ControlServer::new("").with_log(Arc::new(log.clone()));
+        let unknown = srv.dispatch_envelope(&Envelope {
+            method: "NotAMethod".into(),
+            request_id: 9,
+            body: LEAK.as_bytes().to_vec(),
+        });
+        assert!(unknown
+            .decode_body::<Status>()
+            .unwrap()
+            .message
+            .contains("NotAMethod"));
+        let recs = log.records();
+        assert!(
+            recs.iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("control")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("control")
+                    && r.message.contains("unknown method")
+                    && r.message.contains("NotAMethod")),
+            "{recs:?}"
+        );
+        for r in &recs {
+            assert!(!r.message.contains(LEAK), "body leaked: {}", r.message);
+            if let Some(ex) = &r.extras {
+                for v in ex.values() {
+                    assert!(!v.contains(LEAK), "body leaked in extras: {v}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn plane_overrides_stubs_and_pushes_use_request_id_zero() {
         let plane = Arc::new(StubPlane {
             toml: "packs = [\"python\"]\n".into(),
             set_ok: false,
         });
-        let srv = ControlServer::new("ignored").with_plane(plane).with_progressive(true);
-        assert_eq!(srv.get_config(&GetConfigRequest {}).toml, "packs = [\"python\"]\n");
+        let srv = ControlServer::new("ignored")
+            .with_plane(plane)
+            .with_progressive(true);
+        assert_eq!(
+            srv.get_config(&GetConfigRequest {}).toml,
+            "packs = [\"python\"]\n"
+        );
         assert!(!srv
             .set_config(&SetConfigRequest {
                 patch_toml: "[[".into(),
@@ -580,7 +705,10 @@ mod tests {
         assert_eq!(idx.packages[0].package_id, "lib");
         assert_eq!(idx.cache_entries, 4);
         assert_eq!(srv.tier_status(&TierStatusRequest {}).rows[0].tier, "graph");
-        assert!(srv.files_since(&FilesSinceRequest { since: None }).truncated);
+        assert!(
+            srv.files_since(&FilesSinceRequest { since: None })
+                .truncated
+        );
         assert!(srv.last_watch_batch().overflow);
         srv.push_tier_ready("extra", "syntax");
         let pushes = srv.drain_pushes();
@@ -598,7 +726,9 @@ mod tests {
             truncated: false,
             generation: 3,
         });
-        let srv = ControlServer::new("").with_files_since(port).with_progressive(true);
+        let srv = ControlServer::new("")
+            .with_files_since(port)
+            .with_progressive(true);
         let fs = srv
             .encode_files_since(&FilesSinceRequest {
                 since: Some(files_since_request::Since::SinceGeneration(1)),
@@ -636,7 +766,11 @@ mod tests {
         assert!(srv.handle_mux_payload(b"{").is_err());
         assert!(srv.dispatch_payload(&[]).is_err());
         let framed = srv
-            .encode_envelope_frame(&Envelope::request(METHOD_GET_CONFIG, 1, GetConfigRequest {}))
+            .encode_envelope_frame(&Envelope::request(
+                METHOD_GET_CONFIG,
+                1,
+                GetConfigRequest {},
+            ))
             .unwrap();
         assert!(matches!(
             crate::codec::decode_frame(&framed).unwrap(),

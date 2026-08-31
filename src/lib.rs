@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use progressive_lsp_control::ControlServer;
 use progressive_lsp_core::{
-    apply_worktree_excludes, ClockPort, Config, InstallError, LogPort, MemoryLog, NeverFailLog,
-    PrefixLayout, SystemClock,
+    apply_worktree_excludes, ClockPort, Config, InstallError, LogComponent, LogPort, LogScope,
+    MemoryLog, NeverFailLog, PrefixLayout, SystemClock,
 };
 use progressive_lsp_engine::{
     binary_name_for_pack, stub_pack_bytes, EngineSupervisor, PackAdapter,
@@ -329,16 +329,33 @@ where
     });
     if let Some(path) = &opts.control_socket {
         let abs = control_socket::advertised_socket_path(path);
-        let listener = control_socket::bind_control_socket(&abs)?;
+        let listener = control_socket::bind_control_socket(&abs, Arc::clone(&log))?;
         let srv = ControlServer::new("")
+            .with_log(Arc::clone(&log))
             .with_plane(Arc::clone(&host) as Arc<dyn progressive_lsp_control::ControlPlane>)
             .with_progressive(true);
-        control_socket::spawn_control_accept(listener, Arc::new(srv), Arc::clone(&host));
+        control_socket::spawn_control_accept(
+            listener,
+            Arc::new(srv),
+            Arc::clone(&host),
+            Arc::clone(&log),
+        );
     }
-    let _ = opts.control_fd;
-    let facade = LspFacade::new(advertised, opts.mux).with_intelligence(Arc::clone(&host) as _);
+    if opts.control_fd.is_some() {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("control")
+                .component(LogComponent::control()),
+        );
+        log.warn("--control-fd ignored (pending)");
+    }
+    let facade = LspFacade::new(advertised, opts.mux)
+        .with_log(Arc::clone(&log))
+        .with_intelligence(Arc::clone(&host) as _);
     if opts.mux {
-        let srv = ControlServer::new("").with_progressive(true);
+        let srv = ControlServer::new("")
+            .with_log(Arc::clone(&log))
+            .with_progressive(true);
         let mut reader = reader;
         let mut writer = writer;
         facade.serve_mux(
@@ -836,6 +853,36 @@ mod tests {
             .path()
             .join(".progressivelsp/.gitignore")
             .is_file());
+    }
+
+    #[test]
+    fn control_fd_ignored_emits_control_warn() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let mut out = Vec::new();
+        serve_with_io_and_log(
+            ServeOpts {
+                prefix: Some(prefix.path().to_path_buf()),
+                control_socket: None,
+                control_fd: Some(3),
+                mux: false,
+            },
+            std::io::Cursor::new(handshake_bytes(Some(workspace.path()))),
+            &mut out,
+            Arc::new(log.clone()),
+        )
+        .unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("control")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("control")
+                    && r.message.contains("--control-fd")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[test]
