@@ -11,7 +11,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
 | `progressive-lsp` bin | Composition root | Only the bin wires the graph; libs take traits |
-| `PluginRegistry` | Factory / Registry | Lookup by `LanguageId` / pack name is deterministic; unknown → `UnsupportedLanguage`, no panic |
+| `PluginRegistry` | Factory / Registry | Lookup by `LanguageId` / pack name is deterministic; unknown → `UnsupportedLanguage`, no panic; `with_log` emits `info` `operation=resolve` on `get` fail (LOG-8) |
 | `LanguageFactory` | Abstract Factory | Produces grammar id + resolver chain for one language |
 | `ScriptEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai; watch tests do not hard-code Rhai |
 | `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
@@ -38,7 +38,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `EngineAdapter` | Adapter | Child argv/stdio/ready → supervisor API |
 | `EngineBinary`, `SpawnCtx`, `ChildHandle`, `ReadyKind` | Value objects for Adapter | Discover/spawn/ready go through `EngineAdapter`; supervisor does not parse pack layouts ad hoc |
 | `EngineSupervisor` | Supervisor | Crash → backoff; core stays up; T2 remains. Takes `Arc<dyn LogPort>` like `ClockPort` (LOG-6); `try_spawn` / `note_crash` emit; `last_error` is still queryable. Serve must not drop the supervisor |
-| `LspFacade` | Facade | JSON-RPC in; domain queries out; no watch internals leak. Takes `Arc<dyn LogPort>` (LOG-7); parse / method-not-found / framing / mux emit **without** message bodies |
+| `LspFacade` | Facade | JSON-RPC in; domain queries out; no watch internals leak. Takes `Arc<dyn LogPort>` (LOG-7); parse / method-not-found / framing / mux emit **without** message bodies; `InitializeFailed` warn `operation=initialize` with JSON-RPC `-32002` (LOG-8); `shutdown` debug (LOG-8) |
 | `ControlServer` | Facade | Proto RPCs; same domain services as LSP, different encoding; takes `Arc<dyn LogPort>` (LOG-7) or emit from `ServeHost` plane; unknown method / `Status::error` without logging body bytes |
 | `IndexService` | Facade | Owns `DirtySet` + `PriorityIndex` + `IndexCache`; not a god server |
 | `WatchCoalescer` | Observer + Scheduler | N events in window → 1 batch; FakeClock advances window; overflow drop emits `LogPort` warn via `LogScope` (`operation=watch`) |
@@ -48,16 +48,16 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `IdentityWatchFilter` | Decorator / Filter | Pass-through; identity is a valid v1 filter |
 | `DefaultIgnoreFilter` | Decorator / Filter | Drops ignore globs; manifests still pass |
 | `DenyListFilter` | Decorator / Filter | Explicit drops never enter `DirtySet` |
-| `FilesSinceJournal` / `FilesSinceAnswer` | Repository + DTO | Overflow or generation gap ⇒ `truncated`; never silent drop; truncated also emits `LogPort` info `operation=filesSince` (LOG-8) |
+| `FilesSinceJournal` / `FilesSinceAnswer` | Repository + DTO | Overflow or generation gap ⇒ `truncated`; never silent drop; `ServeHost::files_since` emits `LogPort` info `operation=filesSince` when truncated (LOG-8; one place, not journal+host) |
 | `FilesSincePort` / `SharedCoalescer` | Port / Adapter | Control proto calls the journal; no `$/` JSON-RPC |
 | `NotifyWatcher` | Adapter | Maps notify-style kinds; coalescer never calls OS APIs |
 | `SharedIndex` | Adapter | `IndexService` behind a mutex is a `SymbolIndex` |
 | `LanguageIndexer` / `JavaIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `JavaLanguageFactory` | Abstract Factory | `language_id` = java; T2 Strategy from config (`heuristic` default) then T1 |
-| `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues |
+| `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues; `prepend` puts T3 `EngineResolver` first (LOG-8) |
 | `NotReadyResolver` | Test double | T3 skip; must not drop a later T2 `FakeResolver` |
 | `DirectoryAdapter` / `MavenAdapter` / `GradleAdapter` / `EclipseAdapter` | Adapter | Detect from files only; no host JDK |
-| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer`; `LogScope` around didOpen/didChange/definition (Context Object); `didClose` debug (LOG-8); holds `EngineSupervisor` when serve attaches it (LOG-6) |
+| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer`; `LogScope` around didOpen/didChange/definition (Context Object); `didClose` debug (LOG-8); `indexer_for` None → once-per-id `info` `operation=resolve`; holds `EngineSupervisor` when serve attaches it (LOG-6); `attach_supervisor` prepends `EngineResolver` (skip-once, never fail the user) |
 | `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
 | `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`) |
@@ -91,7 +91,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `ControlServer::push_tier_ready` | Observer | Push only when progressive connected; stock clients get `workDoneProgress` only |
 | `FakeEngineAdapter` | Test double | Same `EngineAdapter` trait as prod; crash/backoff tests never `thread::sleep` |
 | `EngineCapabilities` | Value object | Merge is OR; empty has no methods |
-| `EngineResolver` | Adapter / Chain step | `NotReady` unless supervisor is ready for `(language, package)`; once-per pair `info` `operation=resolve` “pack skipped” (LOG-8); never fail the user; never emit every `definition` |
+| `EngineResolver` | Adapter / Chain step | `NotReady` unless supervisor is ready for `(language, package)`; `with_log` + skip-once `HashSet` invariant: second `definition` for the same pair does not duplicate `info` `operation=resolve` “pack skipped” (LOG-8); `with_file_language` for the session chain; never fail the user; never emit every `definition` |
 | `discover_pack` / `EngineBinary` | Repository + Value object | Missing pack or hash mismatch → no spawn; path is `$PREFIX/engines/<pack>/` |
 | `BackoffPolicy` | Strategy | Delay doubles then caps; `can_respawn` uses `ClockPort.unix_ms` |
 | `SpawnTweak` / `SpawnDecision` | Command / DTO | Only allowlisted argv/cwd/env apply; Abort spawn skips the engine |
@@ -109,7 +109,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
 | `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
-| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail; `ConfigWarnAdapter` emits; `LogScope` around didOpen/didChange/definition |
+| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail; `ConfigWarnAdapter` emits; `LogScope` around didOpen/didChange/definition; initialize success `info` `operation=initialize`; truncated FilesSince `info` `operation=filesSince` (LOG-8) |
 | `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
 | `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
 | `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |

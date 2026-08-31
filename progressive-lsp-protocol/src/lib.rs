@@ -149,6 +149,12 @@ impl LspFacade {
             "initialize" => {
                 if let Some(intel) = &self.intelligence {
                     if let Err(e) = intel.on_initialize(&req.params) {
+                        let _g = LogScope::enter(
+                            LogScope::new()
+                                .operation("initialize")
+                                .component(LogComponent::protocol()),
+                        );
+                        self.log.warn(&format!("InitializeFailed: {e}"));
                         return Some(rpc::failure(
                             req.id.clone(),
                             JsonRpcError {
@@ -160,7 +166,15 @@ impl LspFacade {
                 }
                 Some(rpc::success(req.id.clone(), self.initialize_result()))
             }
-            "shutdown" => Some(rpc::success(req.id.clone(), Value::Null)),
+            "shutdown" => {
+                let _g = LogScope::enter(
+                    LogScope::new()
+                        .operation("shutdown")
+                        .component(LogComponent::protocol()),
+                );
+                self.log.debug("shutdown");
+                Some(rpc::success(req.id.clone(), Value::Null))
+            }
             "exit" | "initialized" => None,
             "textDocument/didOpen" => {
                 if let Some(intel) = &self.intelligence {
@@ -1020,5 +1034,70 @@ mod tests {
             "{rows4:?}"
         );
         assert_no_payload_leak(&log4);
+    }
+
+    #[test]
+    fn shutdown_debug_and_initialize_failed_warn_jsonrpc_32002() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let facade = LspFacade::new(None, false).with_log(Arc::new(log.clone()));
+        let shut = facade.handle_request(&JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(2)),
+            method: "shutdown".into(),
+            params: Value::Null,
+        });
+        assert!(shut.unwrap()["result"].is_null());
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Debug
+                    && r.operation.as_deref() == Some("shutdown")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("protocol")
+                    && r.message.contains("shutdown")),
+            "{:?}",
+            log.records()
+        );
+
+        struct FailInit;
+        impl LspIntelligence for FailInit {
+            fn resolve(&self, _q: &ResolveQuery) -> progressive_lsp_resolve::ResolveResult {
+                progressive_lsp_resolve::ResolveResult::empty(progressive_lsp_core::Tier::Syntax)
+            }
+            fn did_open(&self, _uri: &str, _language_id: &str, _text: &str) {}
+            fn did_change(&self, _uri: &str, _text: &str) {}
+            fn did_close(&self, _uri: &str) {}
+            fn semantic_tokens(&self, _uri: &str) -> Vec<u32> {
+                Vec::new()
+            }
+            fn on_initialize(
+                &self,
+                _params: &Value,
+            ) -> Result<(), progressive_lsp_core::InitializeFailed> {
+                Err(progressive_lsp_core::InitializeFailed("nope".into()))
+            }
+        }
+
+        let log2 = progressive_lsp_core::FakeLog::new();
+        let facade2 = LspFacade::new(None, false)
+            .with_log(Arc::new(log2.clone()))
+            .with_intelligence(Arc::new(FailInit));
+        let resp = facade2
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "initialize".into(),
+                params: json!({}),
+            })
+            .unwrap();
+        assert_eq!(resp["error"]["code"], -32002);
+        assert!(
+            log2.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.message.contains("InitializeFailed")),
+            "{:?}",
+            log2.records()
+        );
     }
 }

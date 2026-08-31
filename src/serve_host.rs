@@ -353,6 +353,12 @@ impl LspIntelligence for ServeHost {
             self.disk_watch.snapshot_root(&self.session);
             let _ = self.poll_disk_watch();
         }
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("initialize")
+                .component(LogComponent::core()),
+        );
+        self.log.info("initialize ok");
         Ok(())
     }
 }
@@ -454,6 +460,14 @@ impl ControlPlane for ServeHost {
             }
         }
         let _ = files_since_request::Since::SinceGeneration(0);
+        if ans.truncated {
+            let _g = LogScope::enter(
+                LogScope::new()
+                    .operation("filesSince")
+                    .component(LogComponent::watch()),
+            );
+            self.log.info("FilesSince truncated");
+        }
         ans.to_proto()
     }
 
@@ -1229,5 +1243,89 @@ mod tests {
         for r in &recs {
             assert!(!r.message.contains(LEAK), "body leaked: {}", r.message);
         }
+    }
+
+    #[test]
+    fn initialize_success_and_files_since_truncated_emit() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        host.on_initialize(&serde_json::json!({
+            "rootPath": workspace.path().to_string_lossy()
+        }))
+        .unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.message.contains("initialize ok")),
+            "{:?}",
+            log.records()
+        );
+        host.journal.lock().expect("journal").mark_overflow(3);
+        let ans = host.files_since(&FilesSinceRequest {
+            since: Some(files_since_request::Since::SinceGeneration(0)),
+        });
+        assert!(ans.truncated);
+        let truncated_rows = log
+            .records()
+            .iter()
+            .filter(|r| {
+                r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("filesSince")
+                    && r.message.contains("truncated")
+            })
+            .count();
+        assert_eq!(truncated_rows, 1, "{:?}", log.records());
+        let untruncated = host.files_since(&FilesSinceRequest { since: None });
+        assert!(!untruncated.truncated);
+        let after = log
+            .records()
+            .iter()
+            .filter(|r| r.operation.as_deref() == Some("filesSince"))
+            .count();
+        assert_eq!(after, truncated_rows);
+    }
+
+    #[test]
+    fn initialize_fail_is_log_and_jsonrpc_32002() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(
+            layout.scripts_dir().join("abort.rhai"),
+            "fn on_bootstrap() { abort(\"nope\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(layout.config_path(), "scripts = [\"abort.rhai\"]\n").unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        let facade = progressive_lsp_protocol::LspFacade::new(None, false)
+            .with_log(Arc::new(log.clone()))
+            .with_intelligence(Arc::new(host));
+        let resp = facade
+            .handle_request(&progressive_lsp_protocol::rpc::JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(serde_json::json!(1)),
+                method: "initialize".into(),
+                params: serde_json::json!({
+                    "rootPath": workspace.path().to_string_lossy()
+                }),
+            })
+            .unwrap();
+        assert_eq!(resp["error"]["code"], -32002);
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")),
+            "{:?}",
+            log.records()
+        );
     }
 }

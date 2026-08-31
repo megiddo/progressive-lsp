@@ -717,25 +717,30 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-8 — T3 skip + session completeness
 
-**Status: not started.** Parent is `log7`. Do not fail the user on T3 skip. Do not emit every `definition` after the first skip for that pair. No `Command` spawn.
+**Status: SIGNED OFF** on `log8`. Parent is `log7`. Do not fail the user on T3 skip. Do not emit every `definition` after the first skip for that pair. No `Command` spawn.
 
 - `EngineResolver` first in the session chain when supervisor attached; once-per `(language, package)` `info` `operation=resolve`.
 - `initialize` success info / fail warn; `didClose` debug; `shutdown` debug; `FilesSince` truncated info; unknown language / `UnsupportedLanguage` info once.
 
 **Exit**
 
-- [ ] FakeLog: one skip row then a second definition does not duplicate; T2/T1 still `Ready`; truncated FilesSince emits; initialize fail is in sqlite **and** JSON-RPC `-32002`.
+- [x] FakeLog: one skip row then a second definition does not duplicate; T2/T1 still `Ready`; truncated FilesSince emits; initialize fail is in sqlite **and** JSON-RPC `-32002`.
 
 **Sign-off checklist (LOG-8)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed (engine resolve, session)
-- [ ] No `sleep`
-- [ ] `check-static` — Darwin: do not fake musl greens
-- [ ] Pattern table updated (`EngineResolver` skip-once invariant)
-- [ ] Docs in this tree updated
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed (engine resolve, session) — engine **151 caught / 172 scored (87.8%)**, 67 unviable, 21 missed; protocol **109 caught / 130 scored (83.8%)**, 18 unviable, 21 missed, 3 timeouts; plugin **7 caught / 8 scored (87.5%)**, 4 unviable, 1 missed; resolve **108 caught / 130 scored (83.1%)**, 38 unviable, 22 missed, 1 timeout; combined **375 caught / 440 scored (85.2%)**, 127 unviable, 65 missed, 4 timeouts
+- [x] No `sleep`
+- [x] `check-static` — fixture `libdl` fail-closed. Darwin: do not fake musl greens
+- [x] Pattern table updated (`EngineResolver` skip-once invariant)
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-8 gate on macOS.
+- This host cannot produce a musl `progressive-lsp` ELF. Linux CI must `check-static` the rusqlite-linked ELF. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## LOG-9 — Durable WAL fallback
 

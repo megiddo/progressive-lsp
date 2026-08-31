@@ -22,6 +22,10 @@ impl ResolverChain {
         self.steps.push(step);
     }
 
+    pub fn prepend(&mut self, step: Box<dyn Resolver>) {
+        self.steps.insert(0, step);
+    }
+
     pub fn len(&self) -> usize {
         self.steps.len()
     }
@@ -68,7 +72,11 @@ mod tests {
     use progressive_lsp_core::{FileId, LanguageId, PackageId, Tier};
 
     fn def_query() -> ResolveQuery {
-        ResolveQuery::new(FileId::new("A.java"), Position::new(0, 0), QueryKind::Definition)
+        ResolveQuery::new(
+            FileId::new("A.java"),
+            Position::new(0, 0),
+            QueryKind::Definition,
+        )
     }
 
     #[test]
@@ -101,7 +109,11 @@ mod tests {
             Box::new(FakeResolver::syntax("t1-hit")),
         ]);
         chain.push(Box::new(FakeResolver::syntax("unused")));
-        assert_eq!(chain.len(), 4);
+        chain.prepend(Box::new(NotReadyResolver::new(
+            LanguageId::new("python"),
+            PackageId::new("pkg"),
+        )));
+        assert_eq!(chain.len(), 5);
         assert!(!chain.is_empty());
         match chain.resolve(&def_query()) {
             ResolveOutcome::Ready(r) => {
@@ -143,11 +155,9 @@ mod tests {
                 LanguageId::new("python"),
                 PackageId::new("pkg"),
             ))),
-            Some(Box::new(FakeResolver::graph("t2").with_location(LspLocation::new(
-                "file:///t2",
-                Range::default(),
-                Tier::Graph,
-            )))),
+            Some(Box::new(FakeResolver::graph("t2").with_location(
+                LspLocation::new("file:///t2", Range::default(), Tier::Graph),
+            ))),
             Box::new(FakeResolver::syntax("t1").with_location(LspLocation::new(
                 "file:///t1",
                 Range::default(),
@@ -162,11 +172,9 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let t3_ready = ResolverChain::with_tiers(
-            Some(Box::new(FakeResolver::types("t3").with_location(LspLocation::new(
-                "file:///t3",
-                Range::default(),
-                Tier::Types,
-            )))),
+            Some(Box::new(FakeResolver::types("t3").with_location(
+                LspLocation::new("file:///t3", Range::default(), Tier::Types),
+            ))),
             Some(Box::new(FakeResolver::graph("t2"))),
             Box::new(FakeResolver::syntax("t1")),
         );

@@ -451,23 +451,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-8 (`log8` branch)
 
-**Status: not started.** Do not open `log9` until this table is signed off. Do not fail the user on T3 skip. No `Command` spawn.
+**Status: SIGNED OFF** on `log8`. Parent is `log7`. Do not open `log9` until this table is signed off (it is). Do not fail the user on T3 skip. No `Command` spawn.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-8.1 | `EngineResolver` first in session chain when supervisor attached; once-per `(language, package)` skip | LOG-7 | FakeLog `operation=resolve` `info`. Second definition does not duplicate. |
-| LOG-8.2 | initialize success/fail; `didClose` debug; `shutdown` debug; FilesSince truncated; unknown language | LOG-8.1 | FakeLog. **Do not** emit every `didChange`. |
+| LOG-8.1 | `EngineResolver` first in session chain when supervisor attached; once-per `(language, package)` skip | LOG-7 | **SIGNED OFF.** FakeLog `operation=resolve` `info`. Second definition does not duplicate. T2/T1 still `Ready`. |
+| LOG-8.2 | initialize success/fail; `didClose` debug; `shutdown` debug; FilesSince truncated; unknown language | LOG-8.1 | **SIGNED OFF.** FakeLog. Truncated FilesSince emits from `ServeHost` only. Initialize fail is sqlite **and** JSON-RPC `-32002`. **Do not** emit every `didChange`. |
 
 **Sign-off checklist (LOG-8)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed
-- [ ] No `sleep`
-- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
-- [ ] [design-patterns.md](design-patterns.md) updated
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — engine **151 caught / 172 scored (87.8%)**, 67 unviable, 21 missed; protocol **109 caught / 130 scored (83.8%)**, 18 unviable, 21 missed, 3 timeouts; plugin **7 caught / 8 scored (87.5%)**, 4 unviable, 1 missed; resolve **108 caught / 130 scored (83.1%)**, 38 unviable, 22 missed, 1 timeout; combined **375 caught / 440 scored (85.2%)**, 127 unviable, 65 missed, 4 timeouts
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
+- [x] [design-patterns.md](design-patterns.md) updated (`EngineResolver` skip-once invariant; `ServeHost` FilesSince emit)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-9 (`log9` branch)
 

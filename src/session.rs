@@ -1,13 +1,14 @@
 //! Composition-time session: watch + index + resolve + ingest + scripts. Not a god LspServer.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use progressive_lsp_core::{
-    FakeClock, InitializeFailed, LogComponent, LogPort, LogScope, NullLog, PackageId, PrefixLayout,
-    T2Backend, Tier,
+    FakeClock, InitializeFailed, LanguageId, LogComponent, LogPort, LogScope, NullLog, PackageId,
+    PrefixLayout, T2Backend, Tier,
 };
-use progressive_lsp_engine::EngineSupervisor;
+use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::{
     IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex,
 };
@@ -57,6 +58,7 @@ pub struct WorkspaceSession {
     skipped_packages: Mutex<Vec<PackageId>>,
     supervisor: Option<Arc<EngineSupervisor>>,
     log: Arc<dyn LogPort>,
+    unknown_languages: Mutex<HashSet<String>>,
 }
 
 impl WorkspaceSession {
@@ -71,6 +73,7 @@ impl WorkspaceSession {
             skipped_packages: Mutex::new(Vec::new()),
             supervisor: None,
             log: Arc::new(NullLog),
+            unknown_languages: Mutex::new(HashSet::new()),
         }
     }
 
@@ -80,11 +83,21 @@ impl WorkspaceSession {
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
-        self.supervisor = Some(supervisor);
+        self.attach_supervisor(supervisor);
         self
     }
 
     pub fn attach_supervisor(&mut self, supervisor: Arc<EngineSupervisor>) {
+        if self.supervisor.is_none() {
+            let resolver = EngineResolver::new(
+                Arc::clone(&supervisor),
+                LanguageId::new("java"),
+                PackageId::new("pkg"),
+            )
+            .with_log(Arc::clone(&self.log))
+            .with_file_language();
+            self.chain.prepend(Box::new(resolver));
+        }
         self.supervisor = Some(supervisor);
     }
 
@@ -182,8 +195,26 @@ impl WorkspaceSession {
             "cpp" => Some(Box::new(CppIndexer)),
             #[cfg(feature = "lang-csharp")]
             "csharp" => Some(Box::new(CSharpIndexer)),
-            _ => None,
+            _ => {
+                self.note_unknown_language(lang);
+                None
+            }
         }
+    }
+
+    fn note_unknown_language(&self, language_id: &str) {
+        {
+            let mut seen = self.unknown_languages.lock().expect("unknown langs");
+            if !seen.insert(language_id.to_string()) {
+                return;
+            }
+        }
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("resolve")
+                .component(LogComponent::core()),
+        );
+        self.log.info(&format!("unknown language: {language_id}"));
     }
 
     pub fn index_path(&self, path: &Path, source: &str) {
@@ -531,6 +562,12 @@ impl LspIntelligence for WorkspaceSession {
 
     fn did_close(&self, uri: &str) {
         let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(path.to_string_lossy().into_owned())
+                .operation("textDocument/didClose"),
+        );
+        self.log.debug("textDocument/didClose");
         self.index.lock().close_buffer(&path);
     }
 
@@ -1103,6 +1140,90 @@ mod tests {
                     && r.message.contains("read_to_string")),
             "{:?}",
             log.records()
+        );
+    }
+
+    #[test]
+    fn engine_resolver_first_skip_once_does_not_fail_user() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let prefix = PrefixLayout::from_path("/tmp/log8-session-skip");
+        let sup = Arc::new(EngineSupervisor::new(clock, prefix));
+        let session = WorkspaceSession::java_default()
+            .with_log(Arc::new(log.clone()))
+            .with_supervisor(sup);
+        let q = ResolveQuery::new(
+            progressive_lsp_core::FileId::new("a.py"),
+            progressive_lsp_resolve::Position::default(),
+            QueryKind::Definition,
+        );
+        let first = session.resolve(&q);
+        let skips_first = log
+            .records()
+            .into_iter()
+            .filter(|r| {
+                r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("resolve")
+                    && r.message.contains("pack skipped")
+            })
+            .count();
+        assert_eq!(skips_first, 1, "{:?}", log.records());
+        let second = session.resolve(&q);
+        assert_eq!(first.tier, Tier::Syntax);
+        assert_eq!(second.tier, Tier::Syntax);
+        let skips: Vec<_> = log
+            .records()
+            .into_iter()
+            .filter(|r| {
+                r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("resolve")
+                    && r.message.contains("pack skipped")
+            })
+            .collect();
+        assert_eq!(skips.len(), 1, "{skips:?}");
+        assert!(skips[0].message.contains("python"), "{skips:?}");
+    }
+
+    #[test]
+    fn did_close_debug_and_unknown_language_once_per_id() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let session = WorkspaceSession::new(
+            SharedIndex::new(IndexService::new()),
+            ResolverChain::empty(),
+        )
+        .with_log(Arc::new(log.clone()));
+        session.did_close("file:///Tmp.java");
+        session.did_open("file:///x.brainfuck", "brainfuck", "++");
+        session.did_open("file:///y.brainfuck", "brainfuck", "+");
+        session.did_change("file:///x.brainfuck", "+++");
+        let recs = log.records();
+        assert!(
+            recs.iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Debug
+                    && r.operation.as_deref() == Some("textDocument/didClose")
+                    && r.message.contains("didClose")),
+            "{recs:?}"
+        );
+        let unknown: Vec<_> = recs
+            .iter()
+            .filter(|r| {
+                r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("resolve")
+                    && r.message.contains("unknown language")
+                    && r.message.contains("brainfuck")
+            })
+            .collect();
+        assert_eq!(unknown.len(), 1, "{recs:?}");
+        let change_info = recs
+            .iter()
+            .filter(|r| {
+                r.operation.as_deref() == Some("textDocument/didChange")
+                    && r.level == progressive_lsp_core::LogLevel::Info
+            })
+            .count();
+        assert_eq!(
+            change_info, 0,
+            "must not emit info on every didChange: {recs:?}"
         );
     }
 }

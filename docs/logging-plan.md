@@ -2,7 +2,7 @@
 
 Agents implement from this file plus [logging.md](logging.md), [design-patterns.md](design-patterns.md), and the LOG WPs in [implementation-plan.md](implementation-plan.md). Do not start LOG-N+1 until LOG-N is signed off. Branch stack: [branching.md](branching.md) (`log0`–`log11`; `log0`–`log5` **signed off**; `log0`–`log4` on **current `main`**, not `poc-no-console`; parent of `log5` is `log4`). Pointer payload: [logging/agent-context.md](logging/agent-context.md).
 
-LOG-0–LOG-7 are **signed off**. Do not reopen them. LOG-8–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
+LOG-0–LOG-8 are **signed off**. Do not reopen them. LOG-9–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
 
 ## Current vs target
 
@@ -148,7 +148,7 @@ Docs only. Coverage matrix, LOG-6–LOG-11 mutation, pattern rows, and stack. No
 | `progressive-lsp-engine/src/resolve.rs` | Once per `(language, package)` `info` “pack skipped” / `EngineNotReady`; `operation=resolve` |
 | `src/session.rs` | `EngineResolver` first in `ResolverChain` when supervisor attached; `didClose` debug; `indexer_for` None → once-per-id info; initialize fail already warn from LOG-6 + Facade |
 | `src/serve_host.rs` | `initialize` success info; `files_since` truncated → info `operation=filesSince` |
-| `progressive-lsp-watch/src/journal.rs` | Emit when `FilesSinceAnswer.truncated` (or ServeHost only — one place, not both) |
+| `progressive-lsp-watch/src/journal.rs` | **ServeHost only** (one place): truncated emit is `ServeHost::files_since`, not the journal |
 | `progressive-lsp-protocol/src/lib.rs` | `shutdown` debug; `InitializeFailed` warn if not already from LOG-7 |
 | `progressive-lsp-plugin/src/lib.rs` | `UnsupportedLanguage` info when `get` fails (if serve calls it) |
 | Tests | `FakeLog` once-per-pair (second `definition` does not duplicate); T2/T1 still `Ready`; no sleep |
