@@ -37,6 +37,21 @@ impl ChildStderrAdapter {
         Some(Self::new(port, pack))
     }
 
+    /// Attach only when `ChildIo` has a stderr pipe **and** a stderr `Read` exists.
+    /// `ChildHandle` has no live OS `Read`; tests pass [`FakeChildStderr`].
+    pub fn attach_if_stderr_read(
+        has_stderr_pipe: bool,
+        stdout_is_lsp: bool,
+        stderr: Option<&FakeChildStderr>,
+        port: Arc<dyn LogPort>,
+        pack: &str,
+    ) -> Option<Self> {
+        let fake = stderr?;
+        let adapter = Self::attach_if_stderr_pipe(has_stderr_pipe, stdout_is_lsp, port, pack)?;
+        adapter.drain_fake(fake);
+        Some(adapter)
+    }
+
     pub fn ingest_bytes(&self, bytes: &[u8]) {
         self.ingest_line(&message_from_bytes(bytes));
     }
@@ -166,6 +181,47 @@ mod tests {
         let attached =
             ChildStderrAdapter::attach_if_stderr_pipe(true, true, Arc::new(log.clone()), "python");
         assert!(attached.is_some());
+        let fake = FakeChildStderr::new();
+        fake.push_line("INFO rust_analyzer: hello");
+        assert!(ChildStderrAdapter::attach_if_stderr_read(
+            true,
+            false,
+            Some(&fake),
+            Arc::new(log.clone()),
+            "python"
+        )
+        .is_none());
+        assert!(ChildStderrAdapter::attach_if_stderr_read(
+            true,
+            true,
+            None,
+            Arc::new(log.clone()),
+            "python"
+        )
+        .is_none());
+        assert!(ChildStderrAdapter::attach_if_stderr_read(
+            false,
+            true,
+            Some(&fake),
+            Arc::new(log.clone()),
+            "python"
+        )
+        .is_none());
+        let drained = ChildStderrAdapter::attach_if_stderr_read(
+            true,
+            true,
+            Some(&fake),
+            Arc::new(log.clone()),
+            "python",
+        );
+        assert!(drained.is_some());
+        let recs = log.records();
+        assert!(
+            recs.iter().any(|r| r.source_repo == LogOrigin::ThirdParty
+                && r.operation.as_deref() == Some("spawn")
+                && r.message.contains("hello")),
+            "{recs:?}"
+        );
     }
 
     #[test]
@@ -208,6 +264,8 @@ mod tests {
         let recs = log.records();
         assert_eq!(recs.len(), STDERR_DRAIN_CAP);
         assert_eq!(recs[0].message, "l2");
+        assert!(recs.iter().all(|r| r.operation.as_deref() == Some("spawn")));
+        assert!(recs.iter().all(|r| r.source_repo == LogOrigin::ThirdParty));
         assert!(fake.drain().is_empty());
         fake.push_bytes(b"one");
         assert_eq!(fake.len(), 1);

@@ -2,7 +2,7 @@
 
 Agents implement from this file plus [logging.md](logging.md), [design-patterns.md](design-patterns.md), and the LOG WPs in [implementation-plan.md](implementation-plan.md). Do not start LOG-N+1 until LOG-N is signed off. Branch stack: [branching.md](branching.md) (`log0`–`log11`; `log0`–`log5` **signed off**; `log0`–`log4` on **current `main`**, not `poc-no-console`; parent of `log5` is `log4`). Pointer payload: [logging/agent-context.md](logging/agent-context.md).
 
-LOG-0–LOG-9 are **signed off**. Do not reopen them. LOG-10–LOG-11 close remaining silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
+LOG-0–LOG-10 are **signed off**. Do not reopen them. LOG-11 closes remaining silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
 
 ## Current vs target
 
@@ -11,7 +11,7 @@ LOG-0–LOG-9 are **signed off**. Do not reopen them. LOG-10–LOG-11 close rema
 | `$PREFIX/log/` | WAL `serve-<ts>-<pid>.sqlite`; open fail → `MemoryLog` dies with process | Same WAL; `LogOpenPlan` fallback then temp WAL; `MemoryLog` only if all three fail |
 | `EngineSupervisor` | No `LogPort`; `last_error` in-memory; serve **drops** the supervisor | `with_log`; spawn/crash/backoff/abort/hash/stub refuse emit; serve **holds** supervisor and `try_spawn`s |
 | `PackAdapter::spawn` | Refuses `Command` (stub / Linux CI) with no sqlite row | Same refuse; **warn** `operation=spawn`. No real `Command` on this stack |
-| Child capture | Adapters exist; `ChildIo` is bools; no live pipes | LOG-10: `FakeChildStderr` tests; attach when a `Read` exists. No Darwin spawn |
+| Child capture | LOG-10: `FakeChildStderr` drain → FakeLog; attach when a `Read` exists | Same. No Darwin spawn. `PackAdapter` still refuses `Command` |
 | `ScriptHost` | No `LogPort`; Abort → client `InitializeFailed` only | `with_log`; bootstrap abort / spawn skip / pre_index skip emit |
 | Protocol / control | JSON-RPC / Envelope errors client-only | `warn`/`info` `operation=protocol`/`control`; **no** bodies |
 | T3 `NotReady` | Silent fallback to T2/T1 | Once per `(language, package)` `info` `operation=resolve` |
@@ -25,6 +25,7 @@ progressive-lsp (bin) ──► progressive-lsp-log ──► progressive-lsp-co
          │                         │
          │                         └── rusqlite bundled (static amalgamation)
          └── existing crates ──► progressive-lsp-core  (LogPort only)
+         └── progressive-lsp-engine ──► progressive-lsp-log  (capture Adapters only; no Connection)
 ```
 
 `progressive-lsp-core` stays sqlite-free. Do not thread `LogPort` through every constructor in LOG-1; LOG-3 is the migrate-call-sites WP. Process-wide `OnceLock<LogPort>` is forbidden.
@@ -171,7 +172,7 @@ Docs only. Coverage matrix, LOG-6–LOG-11 mutation, pattern rows, and stack. No
 
 ### LOG-10 — Child capture wiring
 
-Gated on `ChildIo` existing. Ready when spawn exists. Tests with `FakeChildStderr`.
+**SIGNED OFF** on `log10`. Gated on `ChildIo` existing. Ready when spawn exists. Tests with `FakeChildStderr`. Do not start LOG-11 from this branch.
 
 | File | Change |
 |---|---|

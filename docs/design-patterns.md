@@ -37,7 +37,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WorkspaceModel` | Domain model / DTO | Roots and classpath-like entries **exist on disk**; scripts cannot invent jars |
 | `EngineAdapter` | Adapter | Child argv/stdio/ready → supervisor API |
 | `EngineBinary`, `SpawnCtx`, `ChildHandle`, `ReadyKind` | Value objects for Adapter | Discover/spawn/ready go through `EngineAdapter`; supervisor does not parse pack layouts ad hoc |
-| `EngineSupervisor` | Supervisor | Crash → backoff; core stays up; T2 remains. Takes `Arc<dyn LogPort>` like `ClockPort` (LOG-6); `try_spawn` / `note_crash` emit; `last_error` is still queryable. Serve must not drop the supervisor |
+| `EngineSupervisor` | Supervisor | Crash → backoff; core stays up; T2 remains. Takes `Arc<dyn LogPort>` like `ClockPort` (LOG-6); `try_spawn` / `note_crash` emit; `last_error` is still queryable. Serve must not drop the supervisor. LOG-10: `attach_if_stderr_pipe` + `FakeChildStderr` drain; `LogFileTailAdapter` / `LspLogMessageAdapter` only when a tail path / proxied logMessage exists; never attach to engine stdout |
 | `LspFacade` | Facade | JSON-RPC in; domain queries out; no watch internals leak. Takes `Arc<dyn LogPort>` (LOG-7); parse / method-not-found / framing / mux emit **without** message bodies; `InitializeFailed` warn `operation=initialize` with JSON-RPC `-32002` (LOG-8); `shutdown` debug (LOG-8) |
 | `ControlServer` | Facade | Proto RPCs; same domain services as LSP, different encoding; takes `Arc<dyn LogPort>` (LOG-7) or emit from `ServeHost` plane; unknown method / `Status::error` without logging body bytes |
 | `IndexService` | Facade | Owns `DirtySet` + `PriorityIndex` + `IndexCache`; not a god server |
@@ -151,9 +151,9 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | `StderrEmitAdapter` | Adapter | Former diagnostic `eprintln!` sites; after LOG-3, grep of diagnostic `eprintln!` in `src/` and `progressive-lsp-*` is empty except tests and the CLI usage exception |
 | `LogCrateBridge` | Adapter | `log::Log::log`; origin is third-party unless target starts with `progressive_lsp`; installed once in the composition root |
 | `TracingBridge` | Adapter | `tracing` `Event`s; same origin rule as `LogCrateBridge`; server default features have no tracing emitters |
-| `ChildStderrAdapter` | Observer + Adapter | Line-delimited stderr of a pack; origin third-party; stdout of the child is **never** this Adapter; bounded drain so stderr cannot stall LSP; invalid UTF-8 → lossy; no regex panic |
-| `LogFileTailAdapter` | Adapter | Engine log **file**; origin third-party; prefer `$PREFIX/log/<pack>/`; do not parse LSP from the file |
-| `LspLogMessageAdapter` | Adapter | `window/logMessage` / `window/showMessage` / `$/logTrace`; origin third-party; secondary — never a substitute for crash/panic on stderr |
+| `ChildStderrAdapter` | Observer + Adapter | Line-delimited stderr of a pack; origin third-party; stdout of the child is **never** this Adapter; bounded drain so stderr cannot stall LSP; invalid UTF-8 → lossy; no regex panic; `attach_if_stderr_read` is `Some` only when a stderr pipe **and** a `Read`/`FakeChildStderr` exist (LOG-10) |
+| `LogFileTailAdapter` | Adapter | Engine log **file**; origin third-party; prefer `$PREFIX/log/<pack>/`; do not parse LSP from the file; `attach_if_tail_path` is `Some` only when a tail path exists (LOG-10) |
+| `LspLogMessageAdapter` | Adapter | `window/logMessage` / `window/showMessage` / `$/logTrace`; origin third-party; secondary — never a substitute for crash/panic on stderr; `attach_if_proxied` is `Some` only for those methods (LOG-10) |
 | `ConfigWarnAdapter` | Adapter | `ConfigLoad.warnings`; first-party; unknown keys emit `warn` + `operation=config` |
 | `CliUsageAdapter` | Adapter | `--help` / usage; first-party; **also** writes stderr (IT-1.7); `LogPort::warn` with `operation=cli` |
 | `NullStderrAdapter` | Adapter | `stderr(Stdio::null())`; **Forbidden** on production pack spawn |

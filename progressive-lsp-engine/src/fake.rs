@@ -8,7 +8,7 @@ use progressive_lsp_resolve::{
     Hover, LspLocation, QueryKind, Range, ResolveOutcome, ResolveQuery, ResolveResult,
 };
 
-use crate::adapter::{ChildHandle, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx};
+use crate::adapter::{ChildHandle, ChildIo, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx};
 use crate::capabilities::EngineCapabilities;
 use crate::discovery::{
     discover_pack_opt, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, PHPANTOM_PACK, PYTHON_PACK,
@@ -35,6 +35,7 @@ pub struct FakeEngineAdapter {
     capabilities: EngineCapabilities,
     ready_kind: Mutex<ReadyKind>,
     extra: Vec<LanguageId>,
+    io: ChildIo,
 }
 
 impl FakeEngineAdapter {
@@ -51,6 +52,7 @@ impl FakeEngineAdapter {
             capabilities: EngineCapabilities::types_full(),
             ready_kind: Mutex::new(ReadyKind::Initialize),
             extra: Vec::new(),
+            io: ChildIo::lsp_with_stderr_pipe(),
         }
     }
 
@@ -96,6 +98,11 @@ impl FakeEngineAdapter {
 
     pub fn with_binary(self, binary: EngineBinary) -> Self {
         *self.discovered.lock().expect("disc") = Some(binary);
+        self
+    }
+
+    pub fn with_child_io(mut self, io: ChildIo) -> Self {
+        self.io = io;
         self
     }
 
@@ -168,7 +175,8 @@ impl EngineAdapter for FakeEngineAdapter {
             u64::from(self.spawn_count.load(Ordering::SeqCst)),
             self.pack_name.clone(),
             self.capabilities,
-        ))
+        )
+        .with_io(self.io.clone()))
     }
 
     fn ready_signal(&self) -> ReadyKind {
@@ -260,6 +268,8 @@ mod tests {
         let fake = FakeEngineAdapter::ty();
         fake.set_answers(FakeEngineAdapter::typed_fixture("greet", "file:///a.py"));
         let h = fake.spawn(spawn_ctx("python")).unwrap();
+        assert!(h.io().has_stderr_pipe());
+        assert!(h.io().stdout_is_never_log_adapter());
         assert_eq!(fake.spawn_count(), 1);
         assert_eq!(fake.pack_name(), "python");
         assert_eq!(fake.language_id().as_str(), "python");
@@ -293,9 +303,15 @@ mod tests {
             FakeEngineAdapter::clangd().extra_languages(),
             vec![LanguageId::new("cpp")]
         );
-        assert_eq!(FakeEngineAdapter::tsgo().language_id().as_str(), "typescript");
+        assert_eq!(
+            FakeEngineAdapter::tsgo().language_id().as_str(),
+            "typescript"
+        );
         assert_eq!(FakeEngineAdapter::phpantom().pack_name(), "phpantom");
-        assert_eq!(FakeEngineAdapter::superhtml().language_id().as_str(), "html");
+        assert_eq!(
+            FakeEngineAdapter::superhtml().language_id().as_str(),
+            "html"
+        );
         assert_eq!(FakeEngineAdapter::biome().language_id().as_str(), "css");
         assert_eq!(FakeEngineAdapter::gopls().language_id().as_str(), "go");
         assert_eq!(FakeEngineAdapter::zls().language_id().as_str(), "zig");
@@ -309,7 +325,11 @@ mod tests {
         fake.set_answers(FakeEngineAdapter::typed_fixture("x", "file:///x.py"));
         fake.set_crash_after_ready(true);
         let h = fake.spawn(spawn_ctx("python")).unwrap();
-        let q = ResolveQuery::new(FileId::new("x.py"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("x.py"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         assert!(!fake.resolve_query(&h, &q).is_ready());
         assert!(!h.is_alive());
         fake.set_alive(true);
@@ -322,9 +342,7 @@ mod tests {
             fake.ready_signal(),
             ReadyKind::IndexedPackage(PackageId::new("pkg"))
         );
-        assert!(fake
-            .discover(&PrefixLayout::from_path("/nope"))
-            .is_none());
+        assert!(fake.discover(&PrefixLayout::from_path("/nope")).is_none());
         let with = FakeEngineAdapter::ty().with_binary(EngineBinary {
             pack_name: "python".into(),
             path: PathBuf::from("/p/ty"),
@@ -332,5 +350,9 @@ mod tests {
         });
         assert!(with.discover(&PrefixLayout::from_path("/nope")).is_some());
         assert!(fake.spawn(spawn_ctx("other")).is_err());
+        let quiet = FakeEngineAdapter::ty().with_child_io(ChildIo::lsp_without_stderr());
+        let hq = quiet.spawn(spawn_ctx("python")).unwrap();
+        assert!(!hq.io().has_stderr_pipe());
+        assert!(hq.io().stdout_is_never_log_adapter());
     }
 }

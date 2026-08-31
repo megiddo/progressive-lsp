@@ -11,7 +11,7 @@ use progressive_lsp_core::{
 };
 use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery};
 
-use crate::adapter::{ChildHandle, EngineAdapter, ReadyKind, SpawnCtx};
+use crate::adapter::{ChildHandle, ChildIo, EngineAdapter, ReadyKind, SpawnCtx};
 use crate::backoff::{can_respawn, BackoffPolicy};
 use crate::capabilities::EngineCapabilities;
 use crate::discovery::discover_pack;
@@ -33,6 +33,8 @@ struct SupervisorState {
     progress_notes: Vec<String>,
     last_error: BTreeMap<String, EngineError>,
     stderr_attached: BTreeSet<String>,
+    tail_attached: BTreeSet<String>,
+    log_message_attached: BTreeSet<String>,
 }
 
 impl SupervisorState {
@@ -48,6 +50,8 @@ impl SupervisorState {
             progress_notes: Vec::new(),
             last_error: BTreeMap::new(),
             stderr_attached: BTreeSet::new(),
+            tail_attached: BTreeSet::new(),
+            log_message_attached: BTreeSet::new(),
         }
     }
 }
@@ -326,6 +330,97 @@ impl EngineSupervisor {
             .contains(pack)
     }
 
+    fn child_io(&self, pack: &str) -> Option<ChildIo> {
+        self.inner
+            .lock()
+            .expect("sup")
+            .children
+            .get(pack)
+            .map(|c| c.handle.io().clone())
+    }
+
+    /// Attach `ChildStderrAdapter` when this child has a stderr pipe **and** a `Read` exists.
+    /// `ChildHandle` has no live OS `Read`; tests pass `FakeChildStderr`.
+    pub fn attach_if_stderr_pipe(
+        &self,
+        pack: &str,
+        stderr: Option<&progressive_lsp_log::FakeChildStderr>,
+    ) -> bool {
+        let Some(io) = self.child_io(pack) else {
+            return false;
+        };
+        if !io.stdout_is_never_log_adapter() {
+            return false;
+        }
+        let Some(_adapter) = progressive_lsp_log::ChildStderrAdapter::attach_if_stderr_read(
+            io.has_stderr_pipe(),
+            io.stdout_is_lsp(),
+            stderr,
+            Arc::clone(&self.log),
+            pack,
+        ) else {
+            return false;
+        };
+        true
+    }
+
+    /// `LogFileTailAdapter` only when a tail path exists. Do not enable `-rpc.trace`.
+    pub fn attach_log_file_tail(&self, pack: &str, tail_path: Option<&Path>) -> bool {
+        let Some(adapter) = progressive_lsp_log::LogFileTailAdapter::attach_if_tail_path(
+            tail_path,
+            Arc::clone(&self.log),
+            pack,
+        ) else {
+            return false;
+        };
+        adapter.poll();
+        self.inner
+            .lock()
+            .expect("sup")
+            .tail_attached
+            .insert(pack.into());
+        true
+    }
+
+    /// `LspLogMessageAdapter` only when a proxied `window/logMessage` / `$/logTrace` exists.
+    pub fn ingest_proxied_log_message(
+        &self,
+        pack: &str,
+        method: &str,
+        message: &str,
+        lsp_type: u64,
+    ) -> bool {
+        let Some(adapter) = progressive_lsp_log::LspLogMessageAdapter::attach_if_proxied(
+            method,
+            Arc::clone(&self.log),
+            pack,
+        ) else {
+            return false;
+        };
+        match method {
+            "$/logTrace" => adapter.ingest_log_trace(message),
+            _ => adapter.ingest_log_message(lsp_type, message),
+        }
+        self.inner
+            .lock()
+            .expect("sup")
+            .log_message_attached
+            .insert(pack.into());
+        true
+    }
+
+    pub fn log_file_tail_attached(&self, pack: &str) -> bool {
+        self.inner.lock().expect("sup").tail_attached.contains(pack)
+    }
+
+    pub fn lsp_log_message_attached(&self, pack: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("sup")
+            .log_message_attached
+            .contains(pack)
+    }
+
     pub fn note_crash(&self, pack: &str) {
         self.note_crash_err(pack, EngineError::Crashed(pack.into()));
     }
@@ -342,6 +437,8 @@ impl EngineSupervisor {
             }
             st.children.remove(pack);
             st.stderr_attached.remove(pack);
+            st.tail_attached.remove(pack);
+            st.log_message_attached.remove(pack);
             let n = st.crash_count.entry(pack.into()).or_insert(0);
             *n = n.saturating_add(1);
             let until = self.policy.next_attempt_ms(now, *n);
@@ -1033,5 +1130,212 @@ mod tests {
             "{:?}",
             spawn_records(&log)
         );
+    }
+
+    fn third_party_spawn(log: &FakeLog) -> Vec<progressive_lsp_core::LogRecord> {
+        log.records()
+            .into_iter()
+            .filter(|r| {
+                r.operation.as_deref() == Some("spawn")
+                    && r.source_repo == progressive_lsp_core::LogOrigin::ThirdParty
+            })
+            .collect()
+    }
+
+    #[test]
+    fn supervisor_attaches_child_stderr_adapter_when_fake_read_exists() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let fake = FakeEngineAdapter::ty().with_binary(EngineBinary {
+            pack_name: "python".into(),
+            path: PathBuf::from("/p/ty"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix).with_log(Arc::new(log.clone()));
+        sup.register(Box::new(fake));
+        assert!(sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap());
+        assert!(sup.stderr_capture_attached("python"));
+        assert!(
+            !sup.attach_if_stderr_pipe("python", None),
+            "ChildHandle has no live OS Read"
+        );
+        assert!(third_party_spawn(&log).is_empty());
+
+        let stderr = progressive_lsp_log::FakeChildStderr::new();
+        stderr.push_line("INFO ty::main: pack ready");
+        stderr.push_line("not a level line");
+        assert!(sup.attach_if_stderr_pipe("python", Some(&stderr)));
+        let recs = third_party_spawn(&log);
+        assert!(
+            recs.iter().any(|r| r.message.contains("pack ready")
+                && r.component.as_ref().map(|c| c.as_str()) == Some("python")),
+            "{recs:?}"
+        );
+        assert!(
+            recs.iter().any(|r| r.message == "not a level line"),
+            "{recs:?}"
+        );
+        assert!(
+            recs.iter()
+                .all(|r| r.source_repo == progressive_lsp_core::LogOrigin::ThirdParty),
+            "{recs:?}"
+        );
+    }
+
+    #[test]
+    fn fake_child_stderr_overflow_drops_oldest_observer() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let fake = FakeEngineAdapter::ty().with_binary(EngineBinary {
+            pack_name: "python".into(),
+            path: PathBuf::from("/p/ty"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix).with_log(Arc::new(log.clone()));
+        sup.register(Box::new(fake));
+        assert!(sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap());
+        let stderr = progressive_lsp_log::FakeChildStderr::new();
+        stderr.push_line("keep-me");
+        stderr.push_line("and-me");
+        assert!(sup.attach_if_stderr_pipe("python", Some(&stderr)));
+        let recs = third_party_spawn(&log);
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].message, "keep-me");
+        assert!(stderr.drain().is_empty());
+        assert_eq!(progressive_lsp_log::STDERR_DRAIN_CAP, 1024);
+    }
+
+    #[test]
+    fn child_io_stdout_is_never_log_adapter_and_null_stderr_forbidden() {
+        assert!(progressive_lsp_log::NullStderrAdapter::forbidden_on_prod_spawn());
+        assert!(!progressive_lsp_log::InheritStderrAdapter::allowed_on_serve());
+        let piped = ChildIo::lsp_with_stderr_pipe();
+        assert!(piped.stdout_is_never_log_adapter());
+        assert!(piped.has_stderr_pipe());
+
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let fake = FakeEngineAdapter::ty()
+            .with_child_io(ChildIo::lsp_without_stderr())
+            .with_binary(EngineBinary {
+                pack_name: "python".into(),
+                path: PathBuf::from("/p/ty"),
+                sha256: [0; 32],
+            });
+        let mut sup = EngineSupervisor::new(clock, prefix).with_log(Arc::new(log.clone()));
+        sup.register(Box::new(fake));
+        assert!(sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap());
+        assert!(!sup.stderr_capture_attached("python"));
+        let stderr = progressive_lsp_log::FakeChildStderr::new();
+        stderr.push_line("INFO ty: should not attach");
+        assert!(!sup.attach_if_stderr_pipe("python", Some(&stderr)));
+        assert!(third_party_spawn(&log).is_empty());
+        assert!(!sup.attach_if_stderr_pipe("missing", Some(&stderr)));
+    }
+
+    #[test]
+    fn supervisor_attaches_log_file_tail_adapter_only_when_path_exists() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let sup = EngineSupervisor::new(clock, prefix).with_log(Arc::new(log.clone()));
+        assert!(!sup.attach_log_file_tail("zls", None));
+        assert!(!sup.log_file_tail_attached("zls"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zls.log");
+        std::fs::write(&path, "zls file line\n").unwrap();
+        assert!(sup.attach_log_file_tail("zls", Some(path.as_path())));
+        assert!(sup.log_file_tail_attached("zls"));
+        let recs = third_party_spawn(&log);
+        assert!(
+            recs.iter()
+                .any(|r| r.level == LogLevel::Info && r.message == "zls file line"),
+            "{recs:?}"
+        );
+    }
+
+    #[test]
+    fn supervisor_ingests_lsp_log_message_adapter_only_when_proxied() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let sup = EngineSupervisor::new(clock, prefix).with_log(Arc::new(log.clone()));
+        assert!(!sup.ingest_proxied_log_message("ty", "textDocument/definition", "nope", 1));
+        assert!(!sup.lsp_log_message_attached("ty"));
+        assert!(sup.ingest_proxied_log_message("ty", "window/logMessage", "engine err", 1));
+        assert!(sup.ingest_proxied_log_message("ty", "window/showMessage", "shown", 2));
+        assert!(sup.ingest_proxied_log_message("ty", "$/logTrace", "trace-me", 0));
+        assert!(sup.lsp_log_message_attached("ty"));
+        let recs = third_party_spawn(&log);
+        assert!(
+            recs.iter()
+                .any(|r| r.level == LogLevel::Error && r.message == "engine err"),
+            "{recs:?}"
+        );
+        assert!(
+            recs.iter()
+                .any(|r| r.level == LogLevel::Warn && r.message == "shown"),
+            "{recs:?}"
+        );
+        assert!(
+            recs.iter()
+                .any(|r| r.level == LogLevel::Debug && r.message == "trace-me"),
+            "{recs:?}"
+        );
+        assert!(
+            recs.iter().all(|r| r.operation.as_deref() != Some("crash")),
+            "logMessage is not a crash substitute"
+        );
+    }
+
+    #[test]
+    fn pack_spawn_still_refuses_command_and_does_not_set_rpc_trace() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let bytes = stub_pack_bytes("python", TY_BINARY);
+        write_pack(&prefix, "python", TY_BINARY, &bytes, &hex_of(&bytes));
+        let pack = PackAdapter::python();
+        let ctx = SpawnCtx {
+            workspace: PathBuf::from("/w"),
+            language: LanguageId::new("python"),
+            package: PackageId::new("p"),
+            argv: vec![pack.pack_name().into()],
+            cwd: PathBuf::from("/w"),
+            env: BTreeMap::new(),
+            binary: pack.discover(&prefix).unwrap(),
+        };
+        assert!(!ctx.argv.iter().any(|a| a.contains("-rpc.trace")));
+        assert!(!ctx.env.contains_key("RA_LOG_FILE"));
+        assert!(!ctx.env.contains_key("TY_LOG_PROFILE"));
+        let err = pack.spawn(ctx).unwrap_err();
+        assert!(err.to_string().contains("stub pack"), "{err}");
+        assert!(progressive_lsp_log::NullStderrAdapter::forbidden_on_prod_spawn());
+        let _ = clock;
+        let _ = prefix;
     }
 }

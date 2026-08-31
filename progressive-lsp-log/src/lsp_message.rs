@@ -19,6 +19,27 @@ impl LspLogMessageAdapter {
         }
     }
 
+    /// `Some` only for proxied `window/logMessage` / `window/showMessage` / `$/logTrace`.
+    pub fn attach_if_proxied(method: &str, port: Arc<dyn LogPort>, pack: &str) -> Option<Self> {
+        match method {
+            "window/logMessage" | "window/showMessage" | "$/logTrace" => {
+                Some(Self::new(port, pack))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn ingest_log_message(&self, lsp_type: u64, message: &str) {
+        self.ingest(
+            "window/logMessage",
+            &serde_json::json!({"type": lsp_type, "message": message}),
+        );
+    }
+
+    pub fn ingest_log_trace(&self, message: &str) {
+        self.ingest("$/logTrace", &serde_json::json!({"message": message}));
+    }
+
     /// Ingest a proxied engine notification. Unknown methods are ignored.
     pub fn ingest(&self, method: &str, params: &Value) {
         let (level, message) = match method {
@@ -82,16 +103,43 @@ mod tests {
         adapter.ingest("window/logMessage", &json!({"type": 4, "message": "log"}));
         adapter.ingest("textDocument/definition", &json!({}));
         adapter.ingest("window/logMessage", &json!({}));
+        adapter.ingest_log_message(1, "helper-err");
+        adapter.ingest_log_trace("helper-trace");
+        assert!(LspLogMessageAdapter::attach_if_proxied(
+            "textDocument/definition",
+            Arc::new(log.clone()),
+            "ty"
+        )
+        .is_none());
+        assert!(LspLogMessageAdapter::attach_if_proxied(
+            "window/logMessage",
+            Arc::new(log.clone()),
+            "ty"
+        )
+        .is_some());
+        assert!(
+            LspLogMessageAdapter::attach_if_proxied("$/logTrace", Arc::new(log.clone()), "ty")
+                .is_some()
+        );
+        assert!(LspLogMessageAdapter::attach_if_proxied(
+            "window/showMessage",
+            Arc::new(log.clone()),
+            "ty"
+        )
+        .is_some());
         let recs = log.records();
-        assert_eq!(recs.len(), 6);
+        assert_eq!(recs.len(), 8);
         assert_eq!(recs[0].level, LogLevel::Error);
         assert_eq!(recs[0].message, "engine err");
         assert_eq!(recs[0].source_repo, LogOrigin::ThirdParty);
+        assert_eq!(recs[0].operation.as_deref(), Some("spawn"));
         assert_eq!(recs[1].level, LogLevel::Warn);
         assert_eq!(recs[2].level, LogLevel::Debug);
         assert_eq!(recs[2].message, "trace-me");
         assert_eq!(recs[3].level, LogLevel::Info);
         assert_eq!(recs[4].level, LogLevel::Debug);
+        assert_eq!(recs[6].message, "helper-err");
+        assert_eq!(recs[7].message, "helper-trace");
         assert!(
             recs.iter().all(|r| r.operation.as_deref() != Some("crash")),
             "logMessage is not a crash substitute"

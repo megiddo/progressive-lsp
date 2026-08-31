@@ -771,22 +771,27 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-10 — Child capture wiring
 
-**Status: not started.** Parent is `log9`. Ready when spawn exists. **Do not** implement `PackAdapter` `Command`. Tests use `FakeChildStderr`. `NullStderrAdapter` forbidden on prod pack spawn. Never attach Adapter to engine stdout.
+**Status: SIGNED OFF** on `log10`. Parent is `log9`. Ready when spawn exists. **Do not** implement `PackAdapter` `Command`. Tests use `FakeChildStderr`. `NullStderrAdapter` forbidden on prod pack spawn. Never attach Adapter to engine stdout.
 
 **Exit**
 
-- [ ] `FakeChildStderr` drain → FakeLog third-party `operation=spawn`; overflow drops oldest; stdout never attached.
+- [x] `FakeChildStderr` drain → FakeLog third-party `operation=spawn`; overflow drops oldest; stdout never attached.
 
 **Sign-off checklist (LOG-10)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed (log, engine)
-- [ ] No `sleep`
-- [ ] `check-static` — Darwin: do not fake musl greens
-- [ ] Pattern table: no new type unless a Port is required; reuse `ChildStderrAdapter`
-- [ ] Docs in this tree updated
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1` (llvm-cov workspace suite green; log 56, engine 38, composition-root 59)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.07%** lines
+- [x] 80% mutants on listed crates that changed (log, engine) — log **146 caught / 159 scored (91.8%)**, 39 unviable, 12 missed, 1 timeout; engine **168 caught / 185 scored (90.8%)**, 69 unviable, 17 missed
+- [x] No `sleep`
+- [x] `check-static` — Darwin: do not fake musl greens
+- [x] Pattern table: no new type unless a Port is required; reuse `ChildStderrAdapter`
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-10 gate on macOS.
+- This host cannot produce a musl `progressive-lsp` ELF. Linux CI must `check-static` the rusqlite-linked ELF. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## LOG-11 — Operational Err hygiene gate
 

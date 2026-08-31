@@ -4,7 +4,7 @@ First-class observability for `progressive-lsp serve` / `install` and for every 
 
 This file is the **source of truth** for the logging stack. `poc-ide` `RunLog` is a **consumer-sample** sqlite debug file ([poc-ide/architecture.md](poc-ide/architecture.md)); it does not satisfy this spec. Do not merge the two schemas in LOG-1–LOG-11.
 
-**LOG-0–LOG-9 are signed off.** Do not reopen them. Remaining operational silent paths are LOG-10+ ([coverage matrix](#coverage-matrix-zero-blind-spots)). After LOG-11, a silent operational class in that matrix is a defect.
+**LOG-0–LOG-10 are signed off.** Do not reopen them. Remaining operational silent paths are LOG-11 ([coverage matrix](#coverage-matrix-zero-blind-spots)). After LOG-11, a silent operational class in that matrix is a defect.
 
 ## Locked decisions
 
@@ -45,7 +45,7 @@ Covered today at default **info**: config unknown keys, watch overflow, index-ca
 | Serve drops the supervisor | `src/lib.rs` `serve_with_io_and_log` | Constructs `PackAdapter`s then `let _supervisor = supervisor` — never `try_spawn`, never attached to `ServeHost` / `WorkspaceSession` |
 | `discover_pack_opt` swallows `EngineError::Hash` | `progressive-lsp-engine/src/discovery.rs` | `.ok()` turns hash mismatch into `NotDiscovered` / `Ok(false)` |
 | `PackAdapter::spawn` refuses `Command` | `progressive-lsp-engine/src/pack.rs` | Returns `EngineError::Spawn` (“stub pack” / “reserved for Linux CI”). No emit. Do **not** implement real spawn to get logs — **log the refuse** |
-| `ChildHandle` has no live OS pipes | `adapter.rs` `ChildIo` is two bools | `ChildStderrAdapter` / `LogFileTailAdapter` / `LspLogMessageAdapter` exist; `stderr_attached` is a set flag; nothing ingests child bytes. `NullStderrAdapter` stays forbidden on prod spawn |
+| `ChildHandle` has no live OS pipes | `adapter.rs` `ChildIo` is two bools | LOG-10: `ChildStderrAdapter` attaches when a stderr `Read` exists (tests: `FakeChildStderr::drain`); `LogFileTailAdapter` / `LspLogMessageAdapter` only when a tail path / proxied logMessage exists. `ChildHandle` still has no live OS `Read`. `NullStderrAdapter` stays forbidden on prod spawn |
 | `ScriptHost` has no `LogPort` | `progressive-lsp-script/src/host.rs` | `on_bootstrap` Abort → `InitializeFailed` to the client only. `on_engine_spawn` Skip is silent. `on_pre_index` skip / `on_workspace_discover` drop roots stay in `skipped_packages` |
 | Control socket | `src/control_socket.rs` | `bind_control_socket` / `spawn_control_accept` / `PayloadTooLarge` / empty-method drop: no `LogPort`. `--control-fd` is parsed then `let _ = opts.control_fd` |
 | Protocol crate | `progressive-lsp-protocol` `rpc` / `framing` / `mux` / `LspFacade` | Parse, missing `Content-Length`, method-not-found, mux errors: JSON-RPC / process `Err` only. **Never** log message bodies or buffer text |

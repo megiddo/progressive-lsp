@@ -31,6 +31,15 @@ impl LogFileTailAdapter {
         &self.path
     }
 
+    /// Wire only when a tail path exists. Missing file is still attached (poll is silent).
+    pub fn attach_if_tail_path(
+        tail_path: Option<&Path>,
+        port: Arc<dyn LogPort>,
+        pack: &str,
+    ) -> Option<Self> {
+        tail_path.map(|path| Self::new(port, pack, path))
+    }
+
     /// Read newly appended bytes. Missing file / IO errors are silent (never fail).
     /// Lines that look like LSP `Content-Length` are emitted as text, not parsed.
     pub fn poll(&self) {
@@ -75,6 +84,32 @@ impl LogFileTailAdapter {
 mod tests {
     use super::*;
     use progressive_lsp_core::FakeLog;
+
+    #[test]
+    fn log_file_tail_adapter_attaches_only_when_path_exists() {
+        let log = FakeLog::new();
+        assert!(
+            LogFileTailAdapter::attach_if_tail_path(None, Arc::new(log.clone()), "zls").is_none()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zls.log");
+        std::fs::write(&path, "engine line\n").unwrap();
+        let tail = LogFileTailAdapter::attach_if_tail_path(
+            Some(path.as_path()),
+            Arc::new(log.clone()),
+            "zls",
+        )
+        .expect("tail path attaches");
+        tail.poll();
+        let recs = log.records();
+        assert!(
+            recs.iter().any(|r| r.level == LogLevel::Info
+                && r.source_repo == LogOrigin::ThirdParty
+                && r.operation.as_deref() == Some("spawn")
+                && r.message == "engine line"),
+            "{recs:?}"
+        );
+    }
 
     #[test]
     fn log_file_tail_adapter_does_not_parse_lsp_adapter() {

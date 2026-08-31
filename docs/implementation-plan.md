@@ -491,23 +491,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-10 (`log10` branch)
 
-**Status: not started.** Do not open `log11` until this table is signed off. Ready when spawn exists. **Do not** implement `PackAdapter` `Command`.
+**Status: SIGNED OFF** on `log10`. Parent is `log9`. Ready when spawn exists. **Do not** implement `PackAdapter` `Command`. Do not open `log11` from this branch.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-10.1 | Attach `ChildStderrAdapter` when a stderr `Read` exists; tests `FakeChildStderr` | LOG-9 | stdout never attached; `NullStderrAdapter` forbidden on prod spawn |
-| LOG-10.2 | `LogFileTailAdapter` / `LspLogMessageAdapter` only when a tail path / proxied logMessage exists | LOG-10.1 | tempfile / FakeLog. **Do not** enable `-rpc.trace`. |
+| LOG-10.1 | Attach `ChildStderrAdapter` when a stderr `Read` exists; tests `FakeChildStderr` | LOG-9 | **SIGNED OFF.** stdout never attached; `NullStderrAdapter` forbidden on prod spawn |
+| LOG-10.2 | `LogFileTailAdapter` / `LspLogMessageAdapter` only when a tail path / proxied logMessage exists | LOG-10.1 | **SIGNED OFF.** tempfile / FakeLog. **Do not** enable `-rpc.trace`. |
 
 **Sign-off checklist (LOG-10)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed — log, engine
-- [ ] No `sleep`
-- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
-- [ ] [design-patterns.md](design-patterns.md) — reuse existing Adapters; no new type unless a Port is required
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1` (llvm-cov workspace suite green; log 56, engine 38, composition-root 59)
+- [x] 95% llvm-cov on crates that exist — **96.07%** lines
+- [x] 80% mutants on listed crates that changed — log **146 caught / 159 scored (91.8%)**, 39 unviable, 12 missed, 1 timeout; engine **168 caught / 185 scored (90.8%)**, 69 unviable, 17 missed
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
+- [x] [design-patterns.md](design-patterns.md) — reuse existing Adapters; no new type unless a Port is required
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-11 (`log11` branch)
 

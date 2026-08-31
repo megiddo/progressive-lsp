@@ -3277,6 +3277,7 @@ version = "0.1.0"
 dependencies = [
  "progressive-lsp-core",
  "progressive-lsp-install",
+ "progressive-lsp-log",
  "progressive-lsp-resolve",
  "progressive-lsp-script",
  "tempfile",
