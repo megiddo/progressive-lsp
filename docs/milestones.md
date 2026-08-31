@@ -613,7 +613,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-4 — Wire serve/install + docs lock
 
-**Status: SIGNED OFF** on branch `log4`. Last LOG branch. Stack complete. Do not open `log5`. Parent is `log3`. poc-ide `RunLog` unchanged. IT-1.7 usage still stderr.
+**Status: SIGNED OFF** on branch `log4`. Parent of `log5`. Do not reopen LOG-0–LOG-4. Remaining operational coverage is LOG-5+ ([logging.md](logging.md) coverage matrix). Parent is `log3`. poc-ide `RunLog` unchanged. IT-1.7 usage still stderr.
 
 - Bootstrap order from [logging.md](logging.md): `MemoryLog` → prefix/`ensure_dirs` → `SqliteLogRepository` (keep `MemoryLog` if open fails) → replay ring → bridges → config + `ConfigWarnAdapter` → serve/install → `Flush` + join on shutdown.
 - `LogScope` around didOpen/didChange/definition. Index/watch/install silent-failure paths emit.
@@ -639,6 +639,158 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - The composition-root bin **is** wired to `SqliteLogRepository`. This host cannot produce a musl `progressive-lsp` ELF. Linux CI must `check-static` that ELF. Do not run `check-static` on a Darwin Mach-O and call it green.
 - IT-1.7 usage/help stays on stderr. Optional sqlite file after `serve` handshake is asserted on Linux CI / Docker (IT-1.1) and by the Darwin tempfile unit test.
 
-## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5)
+## LOG-5 — Remaining-coverage documentation ingest
 
-Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux.
+**Status: SIGNED OFF** on branch `log5`. Do not start LOG-6 crates until this section is signed off (it is). Parent is `log4`. Docs only. No Rust. No rusqlite changes. No `eprintln!` changes. Do not reopen LOG-0–LOG-5.
+
+**Scope:** [logging.md](logging.md) coverage matrix + durable fallback, [logging-plan.md](logging-plan.md) LOG-5+ mutation, [logging/agent-context.md](logging/agent-context.md), this file, [implementation-plan.md](implementation-plan.md), [branching.md](branching.md), [design-patterns.md](design-patterns.md) `LogOpenPlan`, user troubleshooting. poc-ide `RunLog` unchanged.
+
+**Exit**
+
+- [x] [logging.md](logging.md) remaining problem + coverage matrix is the zero-blind-spots definition; locked decisions unchanged.
+- [x] branching / implementation-plan / this file list `log5`–`log11` stacked on `log4`. “Do not open log5” superseded.
+- [x] [design-patterns.md](design-patterns.md) names `LogOpenPlan` and updated ServeLogPath / supervisor / ScriptHost / LspFacade rows.
+- [x] poc-ide `RunLog` stays a separate schema.
+
+**Sign-off checklist (LOG-5)**
+
+- [x] Exit criteria met
+- [x] Tests / llvm-cov / mutants / `sleep` / `check-static` — **N/A** (docs only)
+- [x] Docs in this tree updated
+
+## LOG-6 — Supervisor + ScriptHost lifecycle emits
+
+**Status: not started.** Parent is `log5`. No `Command` spawn. No ChildIo pipe readers. No protocol/control emits. No `LogOpenPlan`. poc-ide `RunLog` unchanged.
+
+- `EngineSupervisor::with_log` / `ScriptHost::with_log`. Emit `try_spawn` (NotDiscovered, Hash, Aborted, Backoff, stub/reserved Spawn), `note_crash`, bootstrap Abort, engine-spawn Skip, pre_index skip.
+- Composition root **holds** the supervisor (do not `let _supervisor = supervisor`) and `try_spawn`s after initialize has a workspace root so the refuse is a sqlite row.
+
+**Exit**
+
+- [ ] FakeLog asserts on `warn`/`info`, `operation=spawn`/`initialize`/`index`, `component=engine`/`script`. No sleep. Stub refuse is visible without real `Command`.
+
+**Sign-off checklist (LOG-6)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist (same ignores)
+- [ ] 80% mutants on listed crates that changed (engine, script)
+- [ ] No `sleep`
+- [ ] `check-static` — fixture `libdl` fail-closed. Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) rows updated (`EngineSupervisor` / `ScriptHost` take `LogPort`)
+- [ ] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-6 gate on macOS.
+- `PackAdapter::spawn` still refuses exec. Tests assert the **warn** row, not a live child.
+
+## LOG-7 — Protocol + control socket + install hash
+
+**Status: not started.** Parent is `log6`. No sqlite-open fallback. No child capture. No LSP/Envelope **bodies** in logs. No `-rpc.trace`.
+
+- `LspFacade::with_log`: parse, missing Content-Length, method-not-found, mux errors.
+- `bind_control_socket` / accept / `PayloadTooLarge` / unknown Envelope method / `Status::error` / `--control-fd` ignored.
+- `Installer::apply_with_verify`: `InstallError::Hash` and verify refuse emit **before** `remove_or_emit`.
+
+**Exit**
+
+- [ ] FakeLog asserts `operation=protocol`/`control`/`install`; hash expected/actual hex; no payload bytes in `message`/`extras`.
+
+**Sign-off checklist (LOG-7)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed (protocol, control, install)
+- [ ] No `sleep`
+- [ ] `check-static` — Darwin: do not fake musl greens
+- [ ] Pattern table updated (`LspFacade` / `ControlServer` / `bind_control_socket` take `LogPort`)
+- [ ] Docs in this tree updated
+
+## LOG-8 — T3 skip + session completeness
+
+**Status: not started.** Parent is `log7`. Do not fail the user on T3 skip. Do not emit every `definition` after the first skip for that pair. No `Command` spawn.
+
+- `EngineResolver` first in the session chain when supervisor attached; once-per `(language, package)` `info` `operation=resolve`.
+- `initialize` success info / fail warn; `didClose` debug; `shutdown` debug; `FilesSince` truncated info; unknown language / `UnsupportedLanguage` info once.
+
+**Exit**
+
+- [ ] FakeLog: one skip row then a second definition does not duplicate; T2/T1 still `Ready`; truncated FilesSince emits; initialize fail is in sqlite **and** JSON-RPC `-32002`.
+
+**Sign-off checklist (LOG-8)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed (engine resolve, session)
+- [ ] No `sleep`
+- [ ] `check-static` — Darwin: do not fake musl greens
+- [ ] Pattern table updated (`EngineResolver` skip-once invariant)
+- [ ] Docs in this tree updated
+
+## LOG-9 — Durable WAL fallback
+
+**Status: not started.** Parent is `log8`. No syslog / journald / OTel / JSON files. No child capture.
+
+- `LogOpenPlan`: primary `ServeLogPath` → `fallback` → `in_temp`. Replay `MemoryLog`. `error` only if all three fail.
+
+**Exit**
+
+- [ ] tempfile: primary open fails, fallback WAL exists, contains warn + replayed ring; `BATCH_MAX=1`; no `$HOME`; no sleep.
+- [ ] User README names `serve-fallback-*.sqlite` and the temp WAL.
+
+**Sign-off checklist (LOG-9)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — `cargo test -p progressive-lsp-log` and composition-root tests `--test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed (`progressive-lsp-log`)
+- [ ] No `sleep`
+- [ ] `check-static` — Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) names `LogOpenPlan`
+- [ ] Docs in this tree updated
+
+## LOG-10 — Child capture wiring
+
+**Status: not started.** Parent is `log9`. Ready when spawn exists. **Do not** implement `PackAdapter` `Command`. Tests use `FakeChildStderr`. `NullStderrAdapter` forbidden on prod pack spawn. Never attach Adapter to engine stdout.
+
+**Exit**
+
+- [ ] `FakeChildStderr` drain → FakeLog third-party `operation=spawn`; overflow drops oldest; stdout never attached.
+
+**Sign-off checklist (LOG-10)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed (log, engine)
+- [ ] No `sleep`
+- [ ] `check-static` — Darwin: do not fake musl greens
+- [ ] Pattern table: no new type unless a Port is required; reuse `ChildStderrAdapter`
+- [ ] Docs in this tree updated
+
+## LOG-11 — Operational Err hygiene gate
+
+**Status: not started.** Parent is `log10`. Last LOG branch of this stack. No new Adapters. poc-ide `RunLog` unchanged.
+
+- Grep/allowlist: every operational `Err` on `serve`/`install` emits or is listed as client-visible only with a reason in [logging.md](logging.md).
+
+**Exit**
+
+- [ ] Hygiene test green; coverage matrix has no silent class; stack complete at `log11`.
+
+**Sign-off checklist (LOG-11)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — hygiene test + `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants — **N/A** if no listed crate logic change (hygiene test only)
+- [ ] No `sleep`
+- [ ] `check-static` — **N/A** unless ELF changed. Darwin: do not fake musl greens
+- [ ] Docs in this tree updated
+
+## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
+
+Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

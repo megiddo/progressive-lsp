@@ -11,13 +11,14 @@ The `progressive-lsp` bin crate is the **composition root**. It:
 1. Builds `ClockPort` (real vs test).
 2. Starts `MemoryLog` (ring, cap 4096) so prefix/config failures are not silent.
 3. Resolves prefix (`PROGRESSIVE_LSP_HOME`, `--prefix`, else `$HOME/.progressivelsp`); `ensure_dirs` (creates `log/`).
-4. Opens `SqliteLogRepository` (or keeps `MemoryLog` on failure); replays the ring (best-effort).
-5. Installs `LogCrateBridge` / `TracingBridge`.
-6. Calls `register_builtins()` / `inventory` into `PluginRegistry`.
-7. Loads config merge chain into `Config`; `ConfigWarnAdapter` emits warnings.
-8. Constructs `ScriptHost`, `WatchCoalescer`, `IndexService`, `EngineSupervisor` (libs take `Arc<dyn LogPort>`).
-9. Starts `LspFacade` on stdio; optionally `ControlServer`.
-10. On shutdown: `Flush` + join the writer.
+4. `LogOpenPlan`: opens `SqliteLogRepository` on primary `ServeLogPath`; on failure retries same-dir fallback then a temp WAL (LOG-9). Only if all three fail: keep `MemoryLog`.
+5. Replays the ring into whichever WAL opened (best-effort).
+6. Installs `LogCrateBridge` / `TracingBridge`.
+7. Calls `register_builtins()` / `inventory` into `PluginRegistry`.
+8. Loads config merge chain into `Config`; `ConfigWarnAdapter` emits warnings.
+9. Constructs `ScriptHost`, `WatchCoalescer`, `IndexService`, `EngineSupervisor` (libs take `Arc<dyn LogPort>`). Serve **holds** the supervisor (LOG-6).
+10. Starts `LspFacade` on stdio; optionally `ControlServer`.
+11. On shutdown: `Flush` + join the writer.
 
 No other crate `new()`s the whole graph. Process-wide `OnceLock<LogPort>` is forbidden. The bin is the only place that constructs the sqlite Adapter. Spec: [logging.md](logging.md). `LogPort::emit` returns `()` (never `Result`). `LogRecord` construction never fails. Tests inject `FakeLog` / `MemoryLog` / `NullLog`. Production uses `NeverFailLog` around `SqliteLogRepository`.
 

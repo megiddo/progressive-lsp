@@ -117,4 +117,4 @@ Separate from the server’s musl bar. Spec: [poc-ide/README.md](poc-ide/README.
 - [ ] pattern table updated if a type was added
 - [ ] exit row in [milestones.md](milestones.md)
 
-**Docs-0 / LOG-0:** tests, llvm-cov, mutants, `sleep`, and `check-static` are **N/A** (no crates). Do not invent tests to fill this checklist.
+**Docs-0 / LOG-0 / LOG-5:** tests, llvm-cov, mutants, `sleep`, and `check-static` are **N/A** (no crates). Do not invent tests to fill this checklist.

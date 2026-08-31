@@ -44,7 +44,7 @@ If phpactor: still a **static** ELF (static php), documented here. Host `php` is
 
 ## Runtime host deps for **our** binaries
 
-**Empty.** No libstdc++.so, no libphp, no libjvm. No host `libsqlite3.so` — the amalgamation is **static C in our ELF** ([logging.md](logging.md)). `check-static` must stay green after rusqlite is linked (no `DT_NEEDED`, no interpreter, no `libdl` from sqlite extensions).
+**Empty.** No libstdc++.so, no libphp, no libjvm. No host `libsqlite3.so` — the amalgamation is **static C in our ELF** ([logging.md](logging.md)). Fallback WALs (LOG-9 `serve-fallback-*` and temp-dir sqlite) use the same bundled crate. `check-static` must stay green after rusqlite is linked (no `DT_NEEDED`, no interpreter, no `libdl` from sqlite extensions).
 
 Allowed **project** compilers on PATH for **accuracy**, not for our libc: `rustc` sysroot, `go`, `zig`. Absence is degrade-to-T2, not a dynamic link of our ELF.
 

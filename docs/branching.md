@@ -54,20 +54,27 @@ main   # after poc-discover-log merge (current main)
         └── log1      # LogPort + records (no sqlite in server)
               └── log2  # WAL repository crate
                     └── log3  # Facades, bridges, eprintln death
-                          └── log4  # Wire serve/install + docs lock (stack complete; do not open log5)
+                          └── log4  # Wire serve/install + docs lock (SIGNED OFF; parent of log5)
+                                └── log5  # remaining-coverage docs ingest
+                                      └── log6  # supervisor + ScriptHost lifecycle emits
+                                            └── log7  # protocol + control socket + install hash
+                                                  └── log8  # T3 skip + session completeness
+                                                        └── log9  # durable WAL fallback
+                                                              └── log10 # child capture (FakeChildStderr; ready when spawn exists)
+                                                                    └── log11 # operational Err hygiene gate
 ```
 
-Logging stack is **complete at `log4`**. Do not open `log5`.
+LOG-0–LOG-5 are **signed off**. Do not reopen them. Remaining operational coverage is `log6`–`log11`. Parent of `log5` is `log4`. **Supersedes** “stack complete at `log4` / do not open `log5`.”
 
 ## Rules
 
 1. **Scope:** a branch contains that milestone’s work packages only ([implementation-plan.md](implementation-plan.md)). No extra language packs on `m1`.
 2. **Sign-off before stacking the next branch:** [milestones.md](milestones.md) exit **and** [testing.md](testing.md) hygiene (95% on crates that exist; 80% mutants on listed crates for that milestone; no `sleep` in the **unit** suite; `check-static` if a bin changed). Integration tests ([../integration/README.md](../integration/README.md)) are a separate harness (containers/deadlines allowed there only).
 3. **Tests are not deferred to `m6`.** Write them on the milestone branch.
-4. **Merge to `main`:** sequential (`docs-0`, then `m0`, …) or rebase the stack. Either way **do not open `mN+1` / `pdN+1` / `ideN+1` / `logN+1` until the previous is signed off**.
+4. **Merge to `main`:** sequential (`docs-0`, then `m0`, …) or rebase the stack. Either way **do not open `mN+1` / `pdN+1` / `ideN+1` / `logN+1` until the previous is signed off**. `log5` may start only after `log4` is signed off (it is).
 5. **Spikes:** `spike/*` or notes. A spike that ships `DT_NEEDED` does not merge. Hygiene applies on merge to a milestone branch.
 6. **Docs drift:** if implementation must change a locked decision, update `docs/` on the same branch and keep the set internally consistent.
 
 ## Suggested branch names
 
-`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` stacked on **current `main`**, not `poc-no-console`. **Stack complete at `log4`.** Do not open `log5`. Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.
+`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` signed off; `log5`–`log11` stacked on `log4` (current `main`, not `poc-no-console`). Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.

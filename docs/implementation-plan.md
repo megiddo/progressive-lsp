@@ -48,7 +48,14 @@ main   # after poc-discover-log merge (current main)
         └── log1   # LogPort + records (no sqlite in server)
               └── log2   # WAL repository crate
                     └── log3   # Facades, bridges, eprintln death
-                          └── log4   # Wire serve/install + docs lock
+                          └── log4   # Wire serve/install + docs lock (SIGNED OFF)
+                                └── log5   # remaining-coverage docs ingest
+                                      └── log6   # supervisor + ScriptHost lifecycle
+                                            └── log7   # protocol + control + install hash
+                                                  └── log8   # T3 skip + session completeness
+                                                        └── log9   # durable WAL fallback
+                                                              └── log10  # child capture (FakeChildStderr)
+                                                                    └── log11  # operational Err hygiene
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -364,7 +371,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-4 (`log4` branch)
 
-**Status: SIGNED OFF** on `log4`. Last LOG WP. Stack complete. Do not open `log5`.
+**Status: SIGNED OFF** on `log4`. Parent of `log5`. Do not reopen LOG-0–LOG-4. Remaining coverage is LOG-5+.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
@@ -381,6 +388,144 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 - [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
 - [x] [design-patterns.md](design-patterns.md) names every type (no new types; existing rows updated)
 - [x] Docs in this tree updated if a locked decision was refined
+
+## LOG-5 (`log5` branch)
+
+**Status: SIGNED OFF** on `log5`. Parent is `log4`. Documentation ingest for remaining operational coverage. No crates. No Rust. Tests / 95% llvm-cov / 80% mutants / `sleep` / `check-static` are **N/A**. Do not open `log6` from this branch.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-5.1 | Ingest coverage matrix + LOG-6–LOG-11 mutation; pattern rows; stack | LOG-4 | **SIGNED OFF.** Docs only. Files: [logging.md](logging.md), [logging-plan.md](logging-plan.md), [logging/agent-context.md](logging/agent-context.md), milestones, this file, [branching.md](branching.md), [design-patterns.md](design-patterns.md), [user/README.md](user/README.md). **Do not** start supervisor `with_log`. **Do not** start `LogOpenPlan` in Rust. **Do not** implement `Command` spawn. |
+
+**Sign-off checklist (LOG-5)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — **N/A** (docs only)
+- [x] 95% llvm-cov on crates that exist — **N/A**
+- [x] 80% mutants on listed crates that exist — **N/A**
+- [x] No `sleep` — **N/A**
+- [x] `check-static` if ELF changed — **N/A**
+- [x] [design-patterns.md](design-patterns.md) names `LogOpenPlan` (draft; Rust is LOG-9)
+- [x] Docs in this tree updated if a locked decision was refined (LOG-0–LOG-5 stay signed off; `log5`–`log11` on `log4`)
+
+## LOG-6 (`log6` branch)
+
+**Status: not started.** Do not open `log7` until this table is signed off. No `Command` spawn. No ChildIo readers. No protocol/control emits. No `LogOpenPlan`.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-6.1 | `EngineSupervisor::with_log`; emit `try_spawn` / `note_crash` / Hash / stub refuse / backoff | LOG-5 | FakeLog: `operation=spawn`, `component=engine`. Serve **holds** supervisor and `try_spawn`s. **Do not** start `std::process::Command`. |
+| LOG-6.2 | `ScriptHost::with_log`; bootstrap Abort, spawn Skip, pre_index skip, discover drop, install-verify Abort | LOG-6.1 | FakeLog: `operation=initialize`/`spawn`/`index`/`install`/`script`. **Do not** start `EngineResolver` (LOG-8). |
+
+**Sign-off checklist (LOG-6)**
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed — engine, script
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) names every new type (prefer `with_log`; no new Facade)
+- [ ] Docs in this tree updated if a locked decision was refined
+
+## LOG-7 (`log7` branch)
+
+**Status: not started.** Do not open `log8` until this table is signed off. No LSP bodies. No `LogOpenPlan`. No child capture.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-7.1 | `LspFacade::with_log`; parse / Content-Length / method-not-found / mux | LOG-6 | FakeLog `operation=protocol`. **Never** log payload bytes. |
+| LOG-7.2 | Control bind/accept/`PayloadTooLarge`/unknown method/`Status::error`; `--control-fd` warn | LOG-7.1 | FakeLog `operation=control`. **Do not** implement `--control-fd`. |
+| LOG-7.3 | `InstallError::Hash` + verify refuse emit before `remove_or_emit` | LOG-6 | FakeLog `operation=install`; expected/actual hex. **Do not** start durable fallback. |
+
+**Sign-off checklist (LOG-7)**
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed — protocol, control, install
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) updated
+- [ ] Docs in this tree updated if a locked decision was refined
+
+## LOG-8 (`log8` branch)
+
+**Status: not started.** Do not open `log9` until this table is signed off. Do not fail the user on T3 skip. No `Command` spawn.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-8.1 | `EngineResolver` first in session chain when supervisor attached; once-per `(language, package)` skip | LOG-7 | FakeLog `operation=resolve` `info`. Second definition does not duplicate. |
+| LOG-8.2 | initialize success/fail; `didClose` debug; `shutdown` debug; FilesSince truncated; unknown language | LOG-8.1 | FakeLog. **Do not** emit every `didChange`. |
+
+**Sign-off checklist (LOG-8)**
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) updated
+- [ ] Docs in this tree updated if a locked decision was refined
+
+## LOG-9 (`log9` branch)
+
+**Status: not started.** Do not open `log10` until this table is signed off. No syslog / JSON / OTel.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-9.1 | `LogOpenPlan` + `ServeLogPath::fallback` / `in_temp`; `wire_process_log` uses it | LOG-8 | tempfile: primary fail → fallback WAL has warn + replay. **Do not** start child capture. |
+| LOG-9.2 | User troubleshooting for missing primary sqlite | LOG-9.1 | `serve-fallback-*.sqlite` then temp WAL |
+
+**Sign-off checklist (LOG-9)**
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch — `cargo test -p progressive-lsp-log` and bin tests `--test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed — `progressive-lsp-log`
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) names `LogOpenPlan`
+- [ ] Docs in this tree updated if a locked decision was refined
+
+## LOG-10 (`log10` branch)
+
+**Status: not started.** Do not open `log11` until this table is signed off. Ready when spawn exists. **Do not** implement `PackAdapter` `Command`.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-10.1 | Attach `ChildStderrAdapter` when a stderr `Read` exists; tests `FakeChildStderr` | LOG-9 | stdout never attached; `NullStderrAdapter` forbidden on prod spawn |
+| LOG-10.2 | `LogFileTailAdapter` / `LspLogMessageAdapter` only when a tail path / proxied logMessage exists | LOG-10.1 | tempfile / FakeLog. **Do not** enable `-rpc.trace`. |
+
+**Sign-off checklist (LOG-10)**
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants on listed crates that changed — log, engine
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
+- [ ] [design-patterns.md](design-patterns.md) — reuse existing Adapters; no new type unless a Port is required
+- [ ] Docs in this tree updated if a locked decision was refined
+
+## LOG-11 (`log11` branch)
+
+**Status: not started.** Last LOG WP of this stack. No new Adapters.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LOG-11.1 | Hygiene gate: every operational `Err` emits or is listed client-visible-only | LOG-10 | `tests/log_hygiene.rs` + [logging.md](logging.md) matrix. **Do not** reopen LOG-0–LOG-10 types. |
+
+**Sign-off checklist (LOG-11)**
+
+- [ ] Exit criteria for this WP met
+- [ ] Tests on this branch — hygiene test + `cargo test --workspace -- --test-threads=1`
+- [ ] 95% llvm-cov on crates that exist
+- [ ] 80% mutants — **N/A** if no listed crate logic change
+- [ ] No `sleep`
+- [ ] `check-static` if ELF changed — **N/A** unless ELF changed
+- [ ] Docs in this tree updated if a locked decision was refined
 
 ## Spikes (do not skip hygiene on merge)
 
@@ -400,4 +545,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 4. Do not add Node/JVM/CPython, `$/` FilesSince, or SSH in the install crate.
 5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off; `logN+1` until `logN` signed off).
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
-7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`.
+7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.

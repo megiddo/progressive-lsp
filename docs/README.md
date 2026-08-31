@@ -14,7 +14,7 @@ This directory is the **source of truth** for the product. Implement from these 
 | Types, traits, errors | [detailed-design.md](detailed-design.md) |
 | Pattern map (mandatory) | [design-patterns.md](design-patterns.md) |
 | Coverage, mutants, alloc matrix | [testing.md](testing.md) |
-| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-4 | [milestones.md](milestones.md) |
+| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-11 | [milestones.md](milestones.md) |
 | Global logging (`LogPort`, sqlite WAL) | [logging.md](logging.md), [plan](logging-plan.md), [agent context](logging/agent-context.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |

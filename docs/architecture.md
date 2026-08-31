@@ -63,7 +63,7 @@ progressive-lsp/                 bin: serve + install, register_builtins
   progressive-lsp-lang-*         one crate per language, LanguageFactory
 ```
 
-`progressive-lsp-core` stays sqlite-free. The bin is the only place that constructs `SqliteLogRepository`. Product logs are one WAL file per `serve`/`install` process under `$PREFIX/log/` ([logging.md](logging.md)). poc-ide `RunLog` is a **separate** schema.
+`progressive-lsp-core` stays sqlite-free. The bin is the only place that constructs `SqliteLogRepository`. Product logs are one WAL file per `serve`/`install` process under `$PREFIX/log/` ([logging.md](logging.md)). If that file cannot open, LOG-9 retries `serve-fallback-<unix_ms>-<pid>.sqlite` then a temp-dir WAL. poc-ide `RunLog` is a **separate** schema.
 
 **Dependency rule:** stock editors depend on nothing from this repo. Progressive consumers may depend on `progressive-lsp-install` and `progressive-lsp-control`. `progressive-lsp-plugin` is for people compiling *this* binary.
 
@@ -76,7 +76,7 @@ $HOME/.progressivelsp/                 # default prefix; never a git tree
   bin/progressive-lsp
   engines/
   cache/                               # index; content-addressed
-  log/                                 # serve-<unix_ms>-<pid>.sqlite WAL (LOG-2+); never share one file across two serve processes
+  log/                                 # serve-<unix_ms>-<pid>.sqlite WAL (LOG-2+); serve-fallback-* then temp WAL if primary open fails (LOG-9); never share one file across two serve processes
   run/control.sock                     # protobuf control (optional)
   config.toml                          # user global
   scripts/                             # user Rhai
