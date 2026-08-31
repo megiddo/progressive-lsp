@@ -462,8 +462,8 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 - [x] Exit criteria for this WP met
 - [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [x] 95% llvm-cov on crates that exist — **96.00%** lines
-- [x] 80% mutants on listed crates that changed — engine **151 caught / 172 scored (87.8%)**, 67 unviable, 21 missed; protocol **109 caught / 130 scored (83.8%)**, 18 unviable, 21 missed, 3 timeouts; plugin **7 caught / 8 scored (87.5%)**, 4 unviable, 1 missed; resolve **108 caught / 130 scored (83.1%)**, 38 unviable, 22 missed, 1 timeout; combined **375 caught / 440 scored (85.2%)**, 127 unviable, 65 missed, 4 timeouts
+- [x] 95% llvm-cov on crates that exist — **96.01%** lines
+- [x] 80% mutants on listed crates that changed — engine **154 caught / 172 scored (89.5%)**; resolve **113 caught / 131 scored (86.3%)**; combined **267 caught / 303 scored (88.1%)**
 - [x] No `sleep`
 - [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
 - [x] [design-patterns.md](design-patterns.md) updated (`EngineResolver` skip-once invariant; `ServeHost` FilesSince emit)

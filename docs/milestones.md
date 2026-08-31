@@ -730,8 +730,8 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 - [x] Exit criteria met
 - [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
-- [x] 80% mutants on listed crates that changed (engine resolve, session) — engine **151 caught / 172 scored (87.8%)**, 67 unviable, 21 missed; protocol **109 caught / 130 scored (83.8%)**, 18 unviable, 21 missed, 3 timeouts; plugin **7 caught / 8 scored (87.5%)**, 4 unviable, 1 missed; resolve **108 caught / 130 scored (83.1%)**, 38 unviable, 22 missed, 1 timeout; combined **375 caught / 440 scored (85.2%)**, 127 unviable, 65 missed, 4 timeouts
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.01%** lines
+- [x] 80% mutants on listed crates that changed (engine resolve, resolve chain) — engine **154 caught / 172 scored (89.5%)**, 67 unviable, 18 missed; resolve **113 caught / 131 scored (86.3%)**, 38 unviable, 18 missed; combined **267 caught / 303 scored (88.1%)**, 105 unviable, 36 missed, 0 timeouts
 - [x] No `sleep`
 - [x] `check-static` — fixture `libdl` fail-closed. Darwin: do not fake musl greens
 - [x] Pattern table updated (`EngineResolver` skip-once invariant)
