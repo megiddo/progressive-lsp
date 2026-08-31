@@ -24,7 +24,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `Manifest`, `ManifestArtifact` | Schema / DTO | Relative `rel_path` only; sha256 is 32 bytes |
 | `ExplicitPacks`, `CensusSelector` | Strategy (`PackSelector`) | Explicit CSV vs census; Java census selects no T3 pack |
 | Frame codec (`encode_frame` / `decode_frame`) | Adapter | `u32be` length; payload > 16 MiB fails; no silent truncate |
-| Typed errors (`UnsupportedLanguage`, `EngineNotReady`, `InstallError`, `StaticLinkError`, `ScriptAbort`, `ScriptSandbox`, `ConfigError`, `WatchOverflow`, `InitializeFailed`, `EngineError`) | Domain Result | User paths never `unwrap`; T3 `EngineNotReady` falls back, does not panic |
+| Typed errors (`UnsupportedLanguage`, `EngineNotReady`, `InstallError`, `StaticLinkError`, `ScriptAbort`, `ScriptSandbox`, `ConfigError`, `WatchOverflow`, `InitializeFailed`, `EngineError`) | Domain Result | User paths never `unwrap`; T3 `EngineNotReady` falls back, does not panic; LOG-11: operational `Err` emits or is client-visible-only (`tests/log_hygiene.rs`) |
 | `Resolver` chain (`TreeSitterResolver` → `HeuristicResolver` / `StackGraphResolver` → T3 adapter) | Chain of Responsibility | First capable handler wins; T3 `NotReady` does not drop T2 |
 | `HeuristicResolver` vs `StackGraphResolver` | Strategy | Same `Resolver` trait; pick is config/eval, not a fork of definition; heuristics are the default |
 | `T2Backend` | Value object | `heuristic` (default) or `stack-graphs`; omit = heuristic; unknown backend warns |

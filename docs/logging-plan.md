@@ -2,7 +2,7 @@
 
 Agents implement from this file plus [logging.md](logging.md), [design-patterns.md](design-patterns.md), and the LOG WPs in [implementation-plan.md](implementation-plan.md). Do not start LOG-N+1 until LOG-N is signed off. Branch stack: [branching.md](branching.md) (`log0`–`log11`; `log0`–`log5` **signed off**; `log0`–`log4` on **current `main`**, not `poc-no-console`; parent of `log5` is `log4`). Pointer payload: [logging/agent-context.md](logging/agent-context.md).
 
-LOG-0–LOG-10 are **signed off**. Do not reopen them. LOG-11 closes remaining silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
+LOG-0–LOG-11 are **signed off**. Stack complete at `log11`. Do not reopen them. `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?” for every operational class in the coverage matrix.
 
 ## Current vs target
 
@@ -186,9 +186,11 @@ Docs only. Coverage matrix, LOG-6–LOG-11 mutation, pattern rows, and stack. No
 
 ### LOG-11 — Operational Err hygiene gate
 
+**SIGNED OFF** on `log11`. Last LOG branch. No next branch.
+
 | File | Change |
 |---|---|
-| `tests/log_hygiene.rs` (or `progressive-lsp-log` test) | Every operational `Err` in `src/` + `progressive-lsp-{engine,script,protocol,control,install,index,watch,resolve}` either has a `LogPort` emit on that path **or** is listed in [logging.md](logging.md) “client-visible only” with a reason |
+| `tests/log_hygiene.rs` | Every operational `Err` in `src/` + `progressive-lsp-{engine,script,protocol,control,install,index,watch,resolve}` either has a `LogPort` emit on that path **or** is listed in [logging.md](logging.md) “client-visible only” with a reason |
 | [logging.md](logging.md) matrix | Last pass: no silent class remains |
 | Docs | Sign-off: stack complete at `log11` |
 

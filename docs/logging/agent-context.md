@@ -1,6 +1,6 @@
 # Agent context policy (LOG stack)
 
-**Pointer-based context.** Every orchestrator, implementer, hygiene agent, and sub-orchestrator on `log0`–`log11` receives the **same** payload. Do not paste this tree or the pattern table into prompts. Do not grow context “because the parent had it.”
+**Pointer-based context.** Every orchestrator, implementer, hygiene agent, and sub-orchestrator on `log0`–`log11` receives the **same** payload. Do not paste this tree or the pattern table into prompts. Do not grow context “because the parent had it.” Stack complete at `log11`. There is no `log12`.
 
 ## Payload to pass (copy this block)
 

@@ -511,21 +511,22 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-11 (`log11` branch)
 
-**Status: not started.** Last LOG WP of this stack. No new Adapters.
+**Status: SIGNED OFF** on `log11`. Parent is `log10`. Last LOG WP of this stack. No new Adapters. There is no `log12`.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-11.1 | Hygiene gate: every operational `Err` emits or is listed client-visible-only | LOG-10 | `tests/log_hygiene.rs` + [logging.md](logging.md) matrix. **Do not** reopen LOG-0–LOG-10 types. |
+| LOG-11.1 | Hygiene gate: every operational `Err` emits or is listed client-visible-only | LOG-10 | **SIGNED OFF.** `tests/log_hygiene.rs` + [logging.md](logging.md) matrix. **Do not** reopen LOG-0–LOG-10 types. |
 
 **Sign-off checklist (LOG-11)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch — hygiene test + `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants — **N/A** if no listed crate logic change
-- [ ] No `sleep`
-- [ ] `check-static` if ELF changed — **N/A** unless ELF changed
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — hygiene test + `cargo test --workspace -- --test-threads=1` (hygiene 6; composition-root 59; log 56; engine 38)
+- [x] 95% llvm-cov on crates that exist — **96.07%** lines
+- [x] 80% mutants — **N/A** (hygiene test + docs only; no listed crate logic change)
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — **N/A** (ELF unchanged)
+- [x] Docs in this tree updated if a locked decision was refined
+- [x] [design-patterns.md](design-patterns.md) — no new type; Domain Result row names the hygiene gate
 
 ## Spikes (do not skip hygiene on merge)
 

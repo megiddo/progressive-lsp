@@ -795,23 +795,28 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-11 — Operational Err hygiene gate
 
-**Status: not started.** Parent is `log10`. Last LOG branch of this stack. No new Adapters. poc-ide `RunLog` unchanged.
+**Status: SIGNED OFF** on `log11`. Parent is `log10`. Last LOG branch of this stack. No new Adapters. poc-ide `RunLog` unchanged. There is no `log12`.
 
 - Grep/allowlist: every operational `Err` on `serve`/`install` emits or is listed as client-visible only with a reason in [logging.md](logging.md).
 
 **Exit**
 
-- [ ] Hygiene test green; coverage matrix has no silent class; stack complete at `log11`.
+- [x] Hygiene test green; coverage matrix has no silent class; stack complete at `log11`.
 
 **Sign-off checklist (LOG-11)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch — hygiene test + `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants — **N/A** if no listed crate logic change (hygiene test only)
-- [ ] No `sleep`
-- [ ] `check-static` — **N/A** unless ELF changed. Darwin: do not fake musl greens
-- [ ] Docs in this tree updated
+- [x] Exit criteria met
+- [x] Tests on this branch — hygiene test + `cargo test --workspace -- --test-threads=1` (hygiene 6; composition-root 59; log 56; engine 38)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.07%** lines
+- [x] 80% mutants — **N/A** (hygiene test + docs only; no listed crate logic change)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the LOG-11 gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 

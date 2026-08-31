@@ -4,7 +4,7 @@ First-class observability for `progressive-lsp serve` / `install` and for every 
 
 This file is the **source of truth** for the logging stack. `poc-ide` `RunLog` is a **consumer-sample** sqlite debug file ([poc-ide/architecture.md](poc-ide/architecture.md)); it does not satisfy this spec. Do not merge the two schemas in LOG-1–LOG-11.
 
-**LOG-0–LOG-10 are signed off.** Do not reopen them. Remaining operational silent paths are LOG-11 ([coverage matrix](#coverage-matrix-zero-blind-spots)). After LOG-11, a silent operational class in that matrix is a defect.
+**LOG-0–LOG-11 are signed off.** Stack complete at `log11`. Do not reopen them. A silent operational class in the [coverage matrix](#coverage-matrix-zero-blind-spots) is a defect.
 
 ## Locked decisions
 
@@ -33,9 +33,9 @@ This file is the **source of truth** for the logging stack. `poc-ide` `RunLog` i
 - Spawn allowlist already names `RUST_LOG` / `RA_LOG` / `TY_LOG` and argv `--log-level` / `--log-file` (`progressive-lsp-script`). Capture is not implemented. Gaps: clangd `--log=`, gopls `-logfile`.
 - No `log` / `tracing` subscriber in **our** crates. Transitive `log` 0.4.34 / `tracing` 0.1.44 in `Cargo.lock` are unused by default server features. Optional `t2-stack-graphs` pulls `tree-sitter-graph` which **does** use `log`. Tree-sitter T1 stays silent.
 
-## Remaining problem (after LOG-4)
+## Remaining problem (after LOG-4; historical)
 
-LOG-4 wired the WAL, Facades, and a subset of silent failures. An operator querying `$PREFIX/log/serve-*.sqlite` still cannot answer “why isn’t this working?” for the paths below. Verified against code on this tree (not only the ingest list).
+LOG-6–LOG-11 closed the rows below. This table is the LOG-4 ingest list, not current coverage. After `log11`, a silent operational class is a defect in the [coverage matrix](#coverage-matrix-zero-blind-spots).
 
 Covered today at default **info**: config unknown keys, watch overflow, index-cache IO, watch/ghost-disk `read_to_string` fail, install `remove_file` fail, CLI usage/help, process fatals after Facade exists. `didOpen` / `didChange` / `definition` are **debug**.
 
@@ -408,7 +408,11 @@ Insert `EngineResolver` as the first `ResolverChain` step when a supervisor is a
 
 ### LOG-11 — Operational Err hygiene
 
-Every product `Err` on `serve` / `install` either emits or is listed as **client-visible only** with a reason. Gate: `tests/log_hygiene.rs` (or equivalent in a listed crate) plus the table below. Not a new runtime type.
+Every product `Err` on `serve` / `install` either emits or is listed as **client-visible only** with a reason. Gate: `tests/log_hygiene.rs` plus the table below. Not a new runtime type. **SIGNED OFF** on `log11`. No silent class remains.
+
+| Event | Crate / type | Level | `operation` | Origin | Lands | Test double |
+|---|---|---|---|---|---|---|
+| Hygiene scan of operational `Err` constructors | `tests/log_hygiene.rs` | — | — | first-party | LOG-11 | source walk + logging.md allowlist |
 
 ### Explicit non-goals (not blind spots)
 
@@ -421,6 +425,8 @@ Every product `Err` on `serve` / `install` either emits or is listed as **client
 | xtask / `plsp-it1` / Java `bakeoff.rs` | Operator CLIs (IT-1.7 family) |
 | Blocked `-rpc.trace` / `RA_LOG_FILE` / `TY_LOG_PROFILE` | Capture via adapters; do not enable dumps |
 | Tree-sitter silence | No first-party `log` emitters; optional `t2-stack-graphs` goes through `LogCrateBridge` |
+| Optional T2 stack-graph fetch (`stack_graph.rs` `load_error`) | Default T2 is heuristic; git clone/fetch is PD4 bake-off, not serve/install ops |
+| `CodecError::Incomplete` / `MuxError::Incomplete` | Need-more-bytes, not a failure |
 | Empty definition locations | Valid miss, not an operational failure |
 | All three WAL opens fail | Unwritable prefix **and** temp dir; syslog is forbidden |
 | `PackAdapter` real `Command` on Darwin | Linux CI / Docker; LOG the refuse |
@@ -428,12 +434,13 @@ Every product `Err` on `serve` / `install` either emits or is listed as **client
 
 ### Client-visible only (after emit also exists)
 
-These stay on the protocol / CLI **and** get a sqlite row from LOG-7/LOG-8. They are not “sqlite instead of the client.”
+These stay on the protocol / CLI **and** get a sqlite row. They are not “sqlite instead of the client.” Reason: the editor or operator CLI must still see the error; sqlite is the ops copy.
 
-| Path | Client sees | Sqlite (after LOG-N) |
-|---|---|---|
-| JSON-RPC error (`-32700` / `-32600` / `-32601` / `-32002`) | editor | LOG-7 / LOG-8 `warn`/`info` `operation=protocol` or `initialize` |
-| Envelope `Status.code != 0` | progressive client | LOG-7 `warn` `operation=control` |
-| `InstallError` from CLI | stderr via `StderrEmitAdapter` + process exit | LOG-7 hash/refuse `warn`; LOG-4 `remove_file` |
-| `FramingError` tearing down `serve` | process exit | LOG-7 then `Flush` |
-| `--help` / usage | stderr (IT-1.7) | LOG-3 `operation=cli` |
+| Path | Client sees | Sqlite (after LOG-N) | Why (reason) |
+|---|---|---|---|
+| JSON-RPC error (`-32700` / `-32600` / `-32601` / `-32002`) including `InitializeFailed` | editor | LOG-7 / LOG-8 `warn`/`info` `operation=protocol` or `initialize` | Protocol response must reach the editor; Facade also emits |
+| Envelope `Status.code != 0` | progressive client | LOG-7 `warn` `operation=control` | Control reply stays on the socket; `ServeHost` also emits |
+| `CodecError::PayloadTooLarge` (control) | connection drop | LOG-7 `warn` `operation=control` | Envelope framing; emit at `drain_frames`, not a substitute for the drop |
+| `InstallError` from CLI (`Hash` / `Refused` / `Manifest` / `Transport` / `Io`) | stderr via `StderrEmitAdapter` + process exit | LOG-7 hash/refuse `warn`; LOG-4 `remove_file`; Manifest/Transport/Io via `StderrEmitAdapter` | CLI operators keep stderr (IT-1.7 family); sqlite is the durable copy |
+| `FramingError` / `MuxError` tearing down `serve` | process exit (editor disconnect) | LOG-7 then `Flush` | Serve cannot continue; Facade emits then the process ends |
+| `--help` / usage / `CliError::Usage` | stderr (IT-1.7) | LOG-3 `operation=cli` | Usage is the one product stderr exception; also `CliUsageAdapter` |
