@@ -660,30 +660,31 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## LOG-6 — Supervisor + ScriptHost lifecycle emits
 
-**Status: not started.** Parent is `log5`. No `Command` spawn. No ChildIo pipe readers. No protocol/control emits. No `LogOpenPlan`. poc-ide `RunLog` unchanged.
+**Status: SIGNED OFF** on branch `log6`. Parent is `log5`. No `Command` spawn. No ChildIo pipe readers. No protocol/control emits. No `LogOpenPlan`. poc-ide `RunLog` unchanged.
 
 - `EngineSupervisor::with_log` / `ScriptHost::with_log`. Emit `try_spawn` (NotDiscovered, Hash, Aborted, Backoff, stub/reserved Spawn), `note_crash`, bootstrap Abort, engine-spawn Skip, pre_index skip.
 - Composition root **holds** the supervisor (do not `let _supervisor = supervisor`) and `try_spawn`s after initialize has a workspace root so the refuse is a sqlite row.
 
 **Exit**
 
-- [ ] FakeLog asserts on `warn`/`info`, `operation=spawn`/`initialize`/`index`, `component=engine`/`script`. No sleep. Stub refuse is visible without real `Command`.
+- [x] FakeLog asserts on `warn`/`info`, `operation=spawn`/`initialize`/`index`, `component=engine`/`script`. No sleep. Stub refuse is visible without real `Command`.
 
 **Sign-off checklist (LOG-6)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist (same ignores)
-- [ ] 80% mutants on listed crates that changed (engine, script)
-- [ ] No `sleep`
-- [ ] `check-static` — fixture `libdl` fail-closed. Darwin: do not fake musl greens
-- [ ] [design-patterns.md](design-patterns.md) rows updated (`EngineSupervisor` / `ScriptHost` take `LogPort`)
-- [ ] Docs in this tree updated
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.90%** lines
+- [x] 80% mutants on listed crates that changed (engine, script) — engine **134 caught / 156 scored (85.9%)**, 63 unviable, 22 missed; script **64 caught / 76 scored (84.2%)**, 4 unviable, 12 missed; combined **198 caught / 232 scored (85.3%)**, 67 unviable, 34 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` — fixture `libdl` fail-closed. Darwin: do not fake musl greens
+- [x] [design-patterns.md](design-patterns.md) rows updated (`EngineSupervisor` / `ScriptHost` take `LogPort`)
+- [x] Docs in this tree updated
 
 **Darwin / CI notes**
 
 - Native `cargo test -- --test-threads=1` is the LOG-6 gate on macOS.
 - `PackAdapter::spawn` still refuses exec. Tests assert the **warn** row, not a live child.
+- This host cannot produce a musl `progressive-lsp` ELF. Linux CI must `check-static` the rusqlite-linked ELF. Do not run `check-static` on a Darwin Mach-O and call it green.
 
 ## LOG-7 — Protocol + control socket + install hash
 

@@ -2,7 +2,7 @@
 
 Agents implement from this file plus [logging.md](logging.md), [design-patterns.md](design-patterns.md), and the LOG WPs in [implementation-plan.md](implementation-plan.md). Do not start LOG-N+1 until LOG-N is signed off. Branch stack: [branching.md](branching.md) (`log0`–`log11`; `log0`–`log5` **signed off**; `log0`–`log4` on **current `main`**, not `poc-no-console`; parent of `log5` is `log4`). Pointer payload: [logging/agent-context.md](logging/agent-context.md).
 
-LOG-0–LOG-5 are **signed off**. Do not reopen them. LOG-6–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
+LOG-0–LOG-6 are **signed off**. Do not reopen them. LOG-7–LOG-11 close silent paths so `$PREFIX/log/serve-*.sqlite` answers “why isn’t this working?”
 
 ## Current vs target
 
@@ -110,7 +110,7 @@ Docs only. Coverage matrix, LOG-6–LOG-11 mutation, pattern rows, and stack. No
 
 ### LOG-6 — Supervisor + ScriptHost lifecycle
 
-Inject `Arc<dyn LogPort>` like `ClockPort`. Emit spawn/crash/backoff/abort at **warn** (failures) or **info** (skip/backoff/success). Serve must **hold** the supervisor and `try_spawn` so stub refuse is a row.
+**SIGNED OFF** on `log6`. Inject `Arc<dyn LogPort>` like `ClockPort`. Emit spawn/crash/backoff/abort at **warn** (failures) or **info** (skip/backoff/success). Serve must **hold** the supervisor and `try_spawn` so stub refuse is a row.
 
 | File | Change |
 |---|---|

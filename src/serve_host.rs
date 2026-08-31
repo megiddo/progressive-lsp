@@ -14,9 +14,9 @@ use progressive_lsp_control::{
 };
 use progressive_lsp_core::{
     apply_worktree_excludes, Config, ConfigError, ConfigLoad, ConfigOverlay, FakeClock,
-    InitializeFailed, LogPort, LogScope, NullLog, PrefixLayout, OVERLAY_DIR_NAME,
+    InitializeFailed, LogPort, LogScope, NullLog, PackageId, PrefixLayout, OVERLAY_DIR_NAME,
 };
-use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes};
+use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes, EngineSupervisor};
 use progressive_lsp_install::{hex_encode, sha256, Installer, LocalFs, Manifest, ManifestArtifact};
 use progressive_lsp_log::ConfigWarnAdapter;
 use progressive_lsp_protocol::LspIntelligence;
@@ -61,6 +61,7 @@ pub struct ServeHost {
     snapshot: Mutex<HashMap<PathBuf, u64>>,
     pending_tier: Mutex<Vec<TierReady>>,
     log: Arc<dyn LogPort>,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 
 impl ServeHost {
@@ -87,7 +88,14 @@ impl ServeHost {
             snapshot: Mutex::new(HashMap::new()),
             pending_tier: Mutex::new(Vec::new()),
             log,
+            supervisor: None,
         })
+    }
+
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.session.attach_supervisor(Arc::clone(&supervisor));
+        self.supervisor = Some(supervisor);
+        self
     }
 
     fn emit_config_warnings(&self, warnings: &[String]) {
@@ -125,7 +133,8 @@ impl ServeHost {
         let mut host = ScriptHost::new(
             Box::new(RhaiEngineFactory),
             Arc::new(FakeClock::at_unix_ms(1)),
-        );
+        )
+        .with_log(Arc::clone(&self.log));
         paths.sort();
         paths.dedup();
         for path in &paths {
@@ -315,6 +324,15 @@ impl LspIntelligence for ServeHost {
         self.session.on_initialize(params)?;
         if let Some(root) = root_from_params(params) {
             self.session.discover(&root);
+            if let Some(sup) = &self.supervisor {
+                let pkg = self
+                    .session
+                    .package_ids()
+                    .first()
+                    .map(|s| PackageId::new(s.as_str()))
+                    .unwrap_or_else(|| PackageId::new("pkg"));
+                let _ = sup.try_spawn_registered(&root, &pkg);
+            }
             for id in self.session.package_ids() {
                 self.note_tier_ready(&id, "syntax");
             }
@@ -1044,12 +1062,23 @@ mod tests {
         )
         .unwrap();
         std::fs::write(layout.config_path(), "scripts = [\"abort.rhai\"]\n").unwrap();
-        let host = ServeHost::new(layout).unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
         let err = host.on_initialize(&serde_json::json!({
             "rootPath": workspace.path().to_string_lossy()
         }));
         assert!(err.is_err(), "{err:?}");
         assert!(err.unwrap_err().0.contains("nope"));
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("script")
+                    && r.message.contains("on_bootstrap abort")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[test]
@@ -1063,6 +1092,37 @@ mod tests {
         assert_eq!(
             mtime_stamp(&std::fs::metadata(prefix.path()).unwrap()) > 0 || true,
             true
+        );
+    }
+
+    #[test]
+    fn initialize_holds_supervisor_and_try_spawns_stub_refuse() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("App.java"), "class App {}\n").unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        install_pack_from_inbox_or_stub(&layout, "python").unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let mut sup = EngineSupervisor::new(Arc::new(FakeClock::at_unix_ms(1)), layout.clone())
+            .with_log(Arc::new(log.clone()));
+        sup.register(Box::new(progressive_lsp_engine::PackAdapter::python()));
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone()))
+            .unwrap()
+            .with_supervisor(Arc::new(sup));
+        host.on_initialize(&serde_json::json!({
+            "rootPath": workspace.path().to_string_lossy()
+        }))
+        .unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("spawn")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("engine")
+                    && r.message.contains("stub pack")),
+            "{:?}",
+            log.records()
         );
     }
 }

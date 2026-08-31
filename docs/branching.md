@@ -64,7 +64,7 @@ main   # after poc-discover-log merge (current main)
                                                                     └── log11 # operational Err hygiene gate
 ```
 
-LOG-0–LOG-5 are **signed off**. Do not reopen them. Remaining operational coverage is `log6`–`log11`. Parent of `log5` is `log4`. **Supersedes** “stack complete at `log4` / do not open `log5`.”
+LOG-0–LOG-6 are **signed off**. Do not reopen them. Remaining operational coverage is `log7`–`log11`. Parent of `log6` is `log5`. **Supersedes** “stack complete at `log4` / do not open `log5`.”
 
 ## Rules
 

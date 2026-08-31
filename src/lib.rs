@@ -308,7 +308,8 @@ where
     let layout = PrefixLayout::resolve(opts.prefix.as_deref())?;
     layout.ensure_dirs()?;
     let _registry = build_registry();
-    let mut supervisor = EngineSupervisor::new(Arc::new(SystemClock), layout.clone());
+    let mut supervisor =
+        EngineSupervisor::new(Arc::new(SystemClock), layout.clone()).with_log(Arc::clone(&log));
     supervisor.register(Box::new(PackAdapter::python()));
     supervisor.register(Box::new(PackAdapter::rust()));
     supervisor.register(Box::new(PackAdapter::clangd()));
@@ -318,8 +319,9 @@ where
     supervisor.register(Box::new(PackAdapter::biome()));
     supervisor.register(Box::new(PackAdapter::gopls()));
     supervisor.register(Box::new(PackAdapter::zls()));
-    let _supervisor = supervisor;
-    let host = Arc::new(ServeHost::new_with_log(layout, log)?);
+    let supervisor = Arc::new(supervisor);
+    let host =
+        Arc::new(ServeHost::new_with_log(layout, Arc::clone(&log))?.with_supervisor(supervisor));
     let advertised = opts.control_socket.as_ref().map(|p| {
         control_socket::advertised_socket_path(p)
             .display()
@@ -944,6 +946,11 @@ mod tests {
         assert!(
             msgs.iter().any(|m| m.contains("future")),
             "Flush must persist config warn: {msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("not discovered") || m.contains("stub pack")),
+            "held supervisor must try_spawn after workspace root: {msgs:?}"
         );
     }
 

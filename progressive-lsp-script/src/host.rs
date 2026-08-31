@@ -3,7 +3,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use progressive_lsp_core::{ClockPort, InitializeFailed, ScriptAbort, ScriptSandbox};
+use progressive_lsp_core::{
+    ClockPort, InitializeFailed, LogComponent, LogLevel, LogPort, LogScope, NullLog, ScriptAbort,
+    ScriptSandbox,
+};
 
 use crate::engine::{ScriptEngine, ScriptEngineFactory};
 
@@ -86,6 +89,7 @@ pub struct ScriptHost {
     factory: Box<dyn ScriptEngineFactory>,
     clock: Arc<dyn ClockPort>,
     engines: Vec<Box<dyn ScriptEngine>>,
+    log: Arc<dyn LogPort>,
     pub allow_shell: bool,
     pub ops_limit: u64,
     pub string_cap: usize,
@@ -97,9 +101,30 @@ impl ScriptHost {
             factory,
             clock,
             engines: Vec::new(),
+            log: Arc::new(NullLog),
             allow_shell: false,
             ops_limit: DEFAULT_OPS_LIMIT,
             string_cap: DEFAULT_STRING_CAP,
+        }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
+    }
+
+    fn emit_op(&self, level: LogLevel, operation: &str, message: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation(operation)
+                .component(LogComponent::script()),
+        );
+        match level {
+            LogLevel::Error => self.log.error(message),
+            LogLevel::Warn => self.log.warn(message),
+            LogLevel::Info => self.log.info(message),
+            LogLevel::Debug => self.log.debug(message),
+            LogLevel::Trace => self.log.trace(message),
         }
     }
 
@@ -133,17 +158,25 @@ impl ScriptHost {
         let mut denied = Vec::new();
         let mut tweak = SpawnTweak::default();
         for engine in &mut self.engines {
-            match engine.eval_hook(hook, ctx)? {
-                ScriptDecision::Continue => {}
-                ScriptDecision::Abort(msg) => return Ok(ScriptDecision::Abort(msg)),
-                ScriptDecision::DenyPaths(paths) => denied.extend(paths),
-                ScriptDecision::SkipPackage => return Ok(ScriptDecision::SkipPackage),
-                ScriptDecision::TweakSpawn(t) => {
+            match engine.eval_hook(hook, ctx) {
+                Ok(ScriptDecision::Continue) => {}
+                Ok(ScriptDecision::Abort(msg)) => return Ok(ScriptDecision::Abort(msg)),
+                Ok(ScriptDecision::DenyPaths(paths)) => denied.extend(paths),
+                Ok(ScriptDecision::SkipPackage) => return Ok(ScriptDecision::SkipPackage),
+                Ok(ScriptDecision::TweakSpawn(t)) => {
                     tweak.argv.extend(t.argv);
                     if t.cwd.is_some() {
                         tweak.cwd = t.cwd;
                     }
                     tweak.env.extend(t.env);
+                }
+                Err(e) => {
+                    self.emit_op(
+                        LogLevel::Warn,
+                        "script",
+                        &format!("{} sandbox: {e}", hook.as_str()),
+                    );
+                    return Err(e);
                 }
             }
         }
@@ -158,9 +191,23 @@ impl ScriptHost {
 
     pub fn on_bootstrap(&mut self, ctx: &ScriptContext) -> Result<(), InitializeFailed> {
         match self.run(HookName::OnBootstrap, ctx) {
-            Ok(ScriptDecision::Abort(msg)) => Err(InitializeFailed(msg)),
+            Ok(ScriptDecision::Abort(msg)) => {
+                self.emit_op(
+                    LogLevel::Warn,
+                    "initialize",
+                    &format!("on_bootstrap abort: {msg}"),
+                );
+                Err(InitializeFailed(msg))
+            }
             Ok(_) => Ok(()),
-            Err(e) => Err(InitializeFailed(e.0)),
+            Err(e) => {
+                self.emit_op(
+                    LogLevel::Warn,
+                    "initialize",
+                    &format!("on_bootstrap sandbox: {e}"),
+                );
+                Err(InitializeFailed(e.0))
+            }
         }
     }
 
@@ -177,12 +224,22 @@ impl ScriptHost {
                 ..ScriptContext::default()
             };
             match self.run(HookName::OnWorkspaceDiscover, &ctx) {
-                Ok(ScriptDecision::Abort(_)) | Ok(ScriptDecision::SkipPackage) => {}
+                Ok(ScriptDecision::Abort(_)) | Ok(ScriptDecision::SkipPackage) => {
+                    self.emit_op(
+                        LogLevel::Info,
+                        "index",
+                        &format!("on_workspace_discover dropped {}", root.display()),
+                    );
+                }
                 Ok(ScriptDecision::DenyPaths(paths)) => {
                     if paths.iter().any(|p| {
                         root.to_string_lossy().contains(p) || p == root.to_string_lossy().as_ref()
                     }) {
-                        // skip this root
+                        self.emit_op(
+                            LogLevel::Info,
+                            "index",
+                            &format!("on_workspace_discover dropped {}", root.display()),
+                        );
                     } else {
                         keep.push(root.clone());
                     }
@@ -202,7 +259,14 @@ impl ScriptHost {
             ..ScriptContext::default()
         };
         match self.run(HookName::OnPreIndex, &ctx)? {
-            ScriptDecision::Abort(_) | ScriptDecision::SkipPackage => Ok(false),
+            ScriptDecision::Abort(_) | ScriptDecision::SkipPackage => {
+                self.emit_op(
+                    LogLevel::Info,
+                    "index",
+                    &format!("on_pre_index skipped {package}"),
+                );
+                Ok(false)
+            }
             _ => Ok(true),
         }
     }
@@ -228,8 +292,22 @@ impl ScriptHost {
             ..ScriptContext::default()
         };
         match self.run(HookName::OnEngineSpawn, &ctx)? {
-            ScriptDecision::Abort(msg) => Ok(SpawnDecision::Skip(msg)),
-            ScriptDecision::SkipPackage => Ok(SpawnDecision::Skip("skip_package".into())),
+            ScriptDecision::Abort(msg) => {
+                self.emit_op(
+                    LogLevel::Info,
+                    "spawn",
+                    &format!("on_engine_spawn skipped {pack}: {msg}"),
+                );
+                Ok(SpawnDecision::Skip(msg))
+            }
+            ScriptDecision::SkipPackage => {
+                self.emit_op(
+                    LogLevel::Info,
+                    "spawn",
+                    &format!("on_engine_spawn skipped {pack}: skip_package"),
+                );
+                Ok(SpawnDecision::Skip("skip_package".into()))
+            }
             ScriptDecision::TweakSpawn(tweak) => Ok(SpawnDecision::Proceed(filter_spawn_tweaks(
                 &tweak, workspace,
             ))),
@@ -245,7 +323,14 @@ impl ScriptHost {
             ..ScriptContext::default()
         };
         match self.run(HookName::OnInstallVerify, &ctx) {
-            Ok(ScriptDecision::Abort(msg)) => Err(ScriptAbort(msg)),
+            Ok(ScriptDecision::Abort(msg)) => {
+                self.emit_op(
+                    LogLevel::Warn,
+                    "install",
+                    &format!("on_install_verify abort: {msg}"),
+                );
+                Err(ScriptAbort(msg))
+            }
             Ok(_) => Ok(()),
             Err(e) => Err(ScriptAbort(e.0)),
         }
@@ -272,10 +357,22 @@ impl ScriptHost {
                 ..ScriptContext::default()
             };
             match self.run(HookName::OnWatch, &ctx)? {
-                ScriptDecision::Abort(_) | ScriptDecision::SkipPackage => {}
+                ScriptDecision::Abort(_) | ScriptDecision::SkipPackage => {
+                    self.emit_op(
+                        LogLevel::Debug,
+                        "watch",
+                        &format!("on_watch dropped {path}"),
+                    );
+                }
                 ScriptDecision::DenyPaths(denied) => {
                     if !denied.iter().any(|d| path.contains(d) || d == path) {
                         keep.push(path.clone());
+                    } else {
+                        self.emit_op(
+                            LogLevel::Debug,
+                            "watch",
+                            &format!("on_watch dropped {path}"),
+                        );
                     }
                 }
                 ScriptDecision::Continue | ScriptDecision::TweakSpawn(_) => keep.push(path.clone()),
@@ -343,16 +440,21 @@ fn cwd_allowed(cwd: &str, workspace: &str) -> bool {
 mod tests {
     use super::*;
     use crate::engine::{FakeEngineFactory, RhaiEngineFactory};
-    use progressive_lsp_core::FakeClock;
+    use progressive_lsp_core::{FakeClock, FakeLog, LogLevel};
 
     fn host_with(decision: ScriptDecision) -> ScriptHost {
+        host_with_log(decision, FakeLog::new())
+    }
+
+    fn host_with_log(decision: ScriptDecision, log: FakeLog) -> ScriptHost {
         let mut h = ScriptHost::new(
             Box::new(FakeEngineFactory {
                 decision,
                 fail_create: None,
             }),
             Arc::new(FakeClock::at_unix_ms(9)),
-        );
+        )
+        .with_log(Arc::new(log));
         h.load("ok", "fake").unwrap();
         h
     }
@@ -808,6 +910,112 @@ mod tests {
             host.run(HookName::OnPostIndex, &ScriptContext::default())
                 .unwrap(),
             ScriptDecision::Continue
+        );
+    }
+
+    fn recs_op<'a>(log: &'a FakeLog, op: &str) -> Vec<progressive_lsp_core::LogRecord> {
+        log.records()
+            .into_iter()
+            .filter(|r| r.operation.as_deref() == Some(op))
+            .collect()
+    }
+
+    #[test]
+    fn script_host_emits_log_port_interpreter_sandbox() {
+        let boot = FakeLog::new();
+        let mut h = host_with_log(ScriptDecision::Abort("denied".into()), boot.clone());
+        assert!(h.on_bootstrap(&ScriptContext::default()).is_err());
+        assert!(
+            recs_op(&boot, "initialize")
+                .iter()
+                .any(|r| r.level == LogLevel::Warn
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("script")
+                    && r.message.contains("on_bootstrap abort")),
+            "{:?}",
+            boot.records()
+        );
+
+        let skip = FakeLog::new();
+        let mut h = host_with_log(ScriptDecision::Abort("skip-ty".into()), skip.clone());
+        match h.on_engine_spawn("python", "/ws").unwrap() {
+            SpawnDecision::Skip(msg) => assert!(msg.contains("skip-ty")),
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            recs_op(&skip, "spawn").iter().any(|r| r.level == LogLevel::Info
+                && r.message.contains("on_engine_spawn skipped")),
+            "{:?}",
+            skip.records()
+        );
+
+        let idx = FakeLog::new();
+        let mut h = host_with_log(ScriptDecision::SkipPackage, idx.clone());
+        assert!(!h.on_pre_index("pkg").unwrap());
+        assert!(
+            recs_op(&idx, "index")
+                .iter()
+                .any(|r| r.level == LogLevel::Info && r.message.contains("on_pre_index skipped")),
+            "{:?}",
+            idx.records()
+        );
+        assert!(h
+            .on_workspace_discover(&[PathBuf::from("/a")])
+            .unwrap()
+            .is_empty());
+        assert!(
+            recs_op(&idx, "index")
+                .iter()
+                .any(|r| r.message.contains("on_workspace_discover dropped")),
+            "{:?}",
+            idx.records()
+        );
+
+        let inst = FakeLog::new();
+        let mut h = host_with_log(ScriptDecision::Abort("bad-elf".into()), inst.clone());
+        assert!(h.on_install_verify("/p/ty", "python").is_err());
+        assert!(
+            recs_op(&inst, "install").iter().any(|r| r.level
+                == LogLevel::Warn
+                && r.message.contains("on_install_verify abort")),
+            "{:?}",
+            inst.records()
+        );
+
+        let watch = FakeLog::new();
+        let mut h = host_with_log(ScriptDecision::SkipPackage, watch.clone());
+        assert!(h.on_watch(&["x.rs".into()]).unwrap().is_empty());
+        assert!(
+            recs_op(&watch, "watch")
+                .iter()
+                .any(|r| r.level == LogLevel::Debug && r.message.contains("on_watch dropped")),
+            "{:?}",
+            watch.records()
+        );
+
+        let sand = FakeLog::new();
+        let mut tiny = ScriptHost::new(
+            Box::new(RhaiEngineFactory),
+            Arc::new(FakeClock::at_unix_ms(1)),
+        )
+        .with_log(Arc::new(sand.clone()));
+        tiny.ops_limit = 5;
+        tiny.load(
+            r#"
+            fn on_watch() {
+                let s = 0;
+                while s < 100000 { s += 1; }
+            }
+            "#,
+            "ops.rhai",
+        )
+        .unwrap();
+        assert!(tiny.on_watch(&["a".into()]).is_err());
+        assert!(
+            recs_op(&sand, "script")
+                .iter()
+                .any(|r| r.level == LogLevel::Warn && r.message.contains("sandbox")),
+            "{:?}",
+            sand.records()
         );
     }
 }

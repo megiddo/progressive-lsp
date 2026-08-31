@@ -410,23 +410,23 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## LOG-6 (`log6` branch)
 
-**Status: not started.** Do not open `log7` until this table is signed off. No `Command` spawn. No ChildIo readers. No protocol/control emits. No `LogOpenPlan`.
+**Status: SIGNED OFF** on `log6`. Parent is `log5`. Do not open `log7` until this table is signed off (it is). No `Command` spawn. No ChildIo readers. No protocol/control emits. No `LogOpenPlan`.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| LOG-6.1 | `EngineSupervisor::with_log`; emit `try_spawn` / `note_crash` / Hash / stub refuse / backoff | LOG-5 | FakeLog: `operation=spawn`, `component=engine`. Serve **holds** supervisor and `try_spawn`s. **Do not** start `std::process::Command`. |
-| LOG-6.2 | `ScriptHost::with_log`; bootstrap Abort, spawn Skip, pre_index skip, discover drop, install-verify Abort | LOG-6.1 | FakeLog: `operation=initialize`/`spawn`/`index`/`install`/`script`. **Do not** start `EngineResolver` (LOG-8). |
+| LOG-6.1 | `EngineSupervisor::with_log`; emit `try_spawn` / `note_crash` / Hash / stub refuse / backoff | LOG-5 | **SIGNED OFF.** FakeLog: `operation=spawn`, `component=engine`. Serve **holds** supervisor and `try_spawn`s. **Do not** start `std::process::Command`. |
+| LOG-6.2 | `ScriptHost::with_log`; bootstrap Abort, spawn Skip, pre_index skip, discover drop, install-verify Abort | LOG-6.1 | **SIGNED OFF.** FakeLog: `operation=initialize`/`spawn`/`index`/`install`/`script`. **Do not** start `EngineResolver` (LOG-8). |
 
 **Sign-off checklist (LOG-6)**
 
-- [ ] Exit criteria for this WP met
-- [ ] Tests on this branch — `cargo test --workspace -- --test-threads=1`
-- [ ] 95% llvm-cov on crates that exist
-- [ ] 80% mutants on listed crates that changed — engine, script
-- [ ] No `sleep`
-- [ ] `check-static` if ELF changed — Darwin: do not fake musl greens
-- [ ] [design-patterns.md](design-patterns.md) names every new type (prefer `with_log`; no new Facade)
-- [ ] Docs in this tree updated if a locked decision was refined
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test --workspace -- --test-threads=1`
+- [x] 95% llvm-cov on crates that exist — **95.90%** lines
+- [x] 80% mutants on listed crates that changed — engine **134 caught / 156 scored (85.9%)**, 63 unviable, 22 missed; script **64 caught / 76 scored (84.2%)**, 4 unviable, 12 missed; combined **198 caught / 232 scored (85.3%)**, 67 unviable, 34 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` if ELF changed — fixture `libdl` fail-closed; Darwin: do not fake musl greens (no musl ELF on this host; Linux CI checks the rusqlite-linked ELF)
+- [x] [design-patterns.md](design-patterns.md) names every new type (prefer `with_log`; no new Facade)
+- [x] Docs in this tree updated if a locked decision was refined
 
 ## LOG-7 (`log7` branch)
 

@@ -5,12 +5,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use progressive_lsp_core::{ClockPort, EngineError, FileId, LanguageId, PackageId, PrefixLayout};
+use progressive_lsp_core::{
+    ClockPort, EngineError, FileId, LanguageId, LogComponent, LogLevel, LogPort, LogScope, NullLog,
+    PackageId, PrefixLayout,
+};
 use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery};
 
 use crate::adapter::{ChildHandle, EngineAdapter, ReadyKind, SpawnCtx};
 use crate::backoff::{can_respawn, BackoffPolicy};
 use crate::capabilities::EngineCapabilities;
+use crate::discovery::discover_pack;
 use crate::hooks::{apply_tweaks, EngineHooks, NoopHooks, SpawnHookResult};
 
 struct SupervisedChild {
@@ -54,6 +58,7 @@ pub struct EngineSupervisor {
     adapters: Vec<Box<dyn EngineAdapter>>,
     hooks: Arc<dyn EngineHooks>,
     policy: BackoffPolicy,
+    log: Arc<dyn LogPort>,
     inner: Mutex<SupervisorState>,
 }
 
@@ -65,8 +70,14 @@ impl EngineSupervisor {
             adapters: Vec::new(),
             hooks: Arc::new(NoopHooks),
             policy: BackoffPolicy::DEFAULT,
+            log: Arc::new(NullLog),
             inner: Mutex::new(SupervisorState::new()),
         }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
     }
 
     pub fn with_hooks(mut self, hooks: Arc<dyn EngineHooks>) -> Self {
@@ -77,6 +88,21 @@ impl EngineSupervisor {
     pub fn with_policy(mut self, policy: BackoffPolicy) -> Self {
         self.policy = policy;
         self
+    }
+
+    fn emit_spawn(&self, level: LogLevel, message: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("spawn")
+                .component(LogComponent::engine()),
+        );
+        match level {
+            LogLevel::Error => self.log.error(message),
+            LogLevel::Warn => self.log.warn(message),
+            LogLevel::Info => self.log.info(message),
+            LogLevel::Debug => self.log.debug(message),
+            LogLevel::Trace => self.log.trace(message),
+        }
     }
 
     pub fn register(&mut self, adapter: Box<dyn EngineAdapter>) {
@@ -137,6 +163,22 @@ impl EngineSupervisor {
             .cloned()
     }
 
+    /// Spawn every registered pack. Serve calls this after initialize has a workspace root.
+    pub fn try_spawn_registered(
+        &self,
+        workspace: &Path,
+        package: &PackageId,
+    ) -> Vec<Result<bool, EngineError>> {
+        let jobs: Vec<(String, LanguageId)> = self
+            .adapters
+            .iter()
+            .map(|a| (a.pack_name().to_string(), a.language_id()))
+            .collect();
+        jobs.into_iter()
+            .map(|(pack, lang)| self.try_spawn(&pack, &lang, package, workspace))
+            .collect()
+    }
+
     pub fn try_spawn(
         &self,
         pack: &str,
@@ -150,26 +192,47 @@ impl EngineSupervisor {
             let st = self.inner.lock().expect("sup");
             if let Some(&until) = st.backoff_until.get(pack) {
                 if !can_respawn(now, until) {
-                    return Err(EngineError::Backoff {
+                    let err = EngineError::Backoff {
                         next_unix_ms: until,
-                    });
+                    };
+                    drop(st);
+                    self.emit_spawn(LogLevel::Info, &format!("engine {pack}: {err}"));
+                    return Err(err);
                 }
             }
         }
-        let idx = self
-            .adapters
-            .iter()
-            .position(|a| a.pack_name() == pack)
-            .ok_or_else(|| EngineError::NotDiscovered(pack.into()))?;
+        let idx = match self.adapters.iter().position(|a| a.pack_name() == pack) {
+            Some(i) => i,
+            None => {
+                let err = EngineError::NotDiscovered(pack.into());
+                self.emit_spawn(LogLevel::Warn, &format!("engine {pack}: {err}"));
+                return Err(err);
+            }
+        };
         let adapter = &self.adapters[idx];
-        let Some(binary) = adapter.discover(&self.prefix) else {
-            let err = EngineError::NotDiscovered(pack.into());
-            self.inner
-                .lock()
-                .expect("sup")
-                .last_error
-                .insert(pack.into(), err.clone());
-            return Ok(false);
+        let binary = match adapter.discover(&self.prefix) {
+            Some(b) => b,
+            None => match discover_pack(&self.prefix, pack) {
+                Ok(b) => b,
+                Err(e @ EngineError::Hash { .. }) => {
+                    self.inner
+                        .lock()
+                        .expect("sup")
+                        .last_error
+                        .insert(pack.into(), e.clone());
+                    self.emit_spawn(LogLevel::Warn, &format!("engine {pack}: {e}"));
+                    return Err(e);
+                }
+                Err(e) => {
+                    self.inner
+                        .lock()
+                        .expect("sup")
+                        .last_error
+                        .insert(pack.into(), e.clone());
+                    self.emit_spawn(LogLevel::Warn, &format!("engine {pack}: {e}"));
+                    return Ok(false);
+                }
+            },
         };
         let ctx = SpawnCtx {
             workspace: workspace.to_path_buf(),
@@ -188,6 +251,7 @@ impl EngineSupervisor {
                     .expect("sup")
                     .last_error
                     .insert(pack.into(), err.clone());
+                self.emit_spawn(LogLevel::Warn, &format!("engine {pack}: {err}"));
                 return Err(err);
             }
             SpawnHookResult::Proceed(tweak) => {
@@ -197,6 +261,7 @@ impl EngineSupervisor {
                         self.mark_ready(adapter.as_ref(), handle, language, package);
                         self.hooks
                             .notify_tier_ready(language.as_str(), package.as_str());
+                        self.emit_spawn(LogLevel::Info, &format!("engine {pack} spawned"));
                         Ok(true)
                     }
                     Err(e) => {
@@ -267,29 +332,32 @@ impl EngineSupervisor {
 
     fn note_crash_err(&self, pack: &str, err: EngineError) {
         let now = self.clock.unix_ms();
-        let mut st = self.inner.lock().expect("sup");
-        if let Some(child) = st.children.get(pack) {
-            child.handle.mark_dead();
-            let lang = child.language.as_str().to_string();
-            st.ready.retain(|(l, _)| l != &lang);
-            st.ready_languages.remove(&lang);
-        }
-        st.children.remove(pack);
-        st.stderr_attached.remove(pack);
-        let n = st.crash_count.entry(pack.into()).or_insert(0);
-        *n = n.saturating_add(1);
-        let until = self.policy.next_attempt_ms(now, *n);
-        st.backoff_until.insert(pack.into(), until);
-        st.last_error.insert(pack.into(), err);
-        st.progress_notes
-            .push(format!("engine {pack} crashed; backing off until {until}"));
-        let mut caps = EngineCapabilities::empty();
-        for child in st.children.values() {
-            if child.handle.is_alive() {
-                caps = caps.merge(child.handle.capabilities);
+        {
+            let mut st = self.inner.lock().expect("sup");
+            if let Some(child) = st.children.get(pack) {
+                child.handle.mark_dead();
+                let lang = child.language.as_str().to_string();
+                st.ready.retain(|(l, _)| l != &lang);
+                st.ready_languages.remove(&lang);
             }
+            st.children.remove(pack);
+            st.stderr_attached.remove(pack);
+            let n = st.crash_count.entry(pack.into()).or_insert(0);
+            *n = n.saturating_add(1);
+            let until = self.policy.next_attempt_ms(now, *n);
+            st.backoff_until.insert(pack.into(), until);
+            st.last_error.insert(pack.into(), err.clone());
+            st.progress_notes
+                .push(format!("engine {pack} crashed; backing off until {until}"));
+            let mut caps = EngineCapabilities::empty();
+            for child in st.children.values() {
+                if child.handle.is_alive() {
+                    caps = caps.merge(child.handle.capabilities);
+                }
+            }
+            st.capabilities = caps;
         }
-        st.capabilities = caps;
+        self.emit_spawn(LogLevel::Warn, &format!("engine {pack}: {err}"));
     }
 
     pub fn poll_health(&self) {
@@ -415,10 +483,13 @@ impl EngineSupervisor {
 mod tests {
     use super::*;
     use crate::adapter::{EngineBinary, ReadyKind};
+    use crate::discovery::{hex_of, stub_pack_bytes, TY_BINARY};
     use crate::fake::{FakeAnswers, FakeEngineAdapter};
     use crate::hooks::AbortSpawnHooks;
+    use crate::pack::PackAdapter;
     use progressive_lsp_core::Tier;
-    use progressive_lsp_core::{FakeClock, FileId};
+    use progressive_lsp_core::{FakeClock, FakeLog, FileId, LogLevel};
+    use progressive_lsp_install::{hex_encode, sha256, Manifest, ManifestArtifact};
     use progressive_lsp_resolve::{LspLocation, Position, QueryKind, Range};
     use std::path::PathBuf;
 
@@ -733,5 +804,234 @@ mod tests {
         assert!(sup
             .resolve(&LanguageId::new("cpp"), &PackageId::new("pkg"), &q)
             .is_ready());
+    }
+
+    fn write_pack(prefix: &PrefixLayout, pack: &str, binary: &str, bytes: &[u8], sha: &str) {
+        let dir = prefix.engines_dir().join(pack);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(binary), bytes).unwrap();
+        let m = Manifest {
+            version: "1".into(),
+            artifacts: vec![ManifestArtifact {
+                name: binary.into(),
+                rel_path: binary.into(),
+                sha256: sha.to_string(),
+                executable: true,
+            }],
+        };
+        std::fs::write(dir.join("manifest.json"), m.to_json().unwrap()).unwrap();
+    }
+
+    fn spawn_records(log: &FakeLog) -> Vec<progressive_lsp_core::LogRecord> {
+        log.records()
+            .into_iter()
+            .filter(|r| r.operation.as_deref() == Some("spawn"))
+            .collect()
+    }
+
+    #[test]
+    fn try_spawn_emits_log_port_supervisor_pattern() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let mut sup =
+            EngineSupervisor::new(clock.clone(), prefix.clone()).with_log(Arc::new(log.clone()));
+        sup.register(Box::new(FakeEngineAdapter::ty()));
+        assert!(!sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap());
+        let recs = spawn_records(&log);
+        assert!(
+            recs.iter().any(|r| r.level == LogLevel::Warn
+                && r.component.as_ref().map(|c| c.as_str()) == Some("engine")
+                && r.message.contains("not discovered")),
+            "{recs:?}"
+        );
+        let none = sup.try_spawn_registered(Path::new("/ws"), &PackageId::new("pkg"));
+        assert_eq!(none.len(), 1);
+        assert_eq!(none[0].as_ref().unwrap(), &false);
+
+        let err = EngineSupervisor::new(clock.clone(), prefix.clone())
+            .with_log(Arc::new(log.clone()))
+            .try_spawn(
+                "missing",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::NotDiscovered(_)));
+
+        let bytes = stub_pack_bytes("python", TY_BINARY);
+        write_pack(
+            &prefix,
+            "python",
+            TY_BINARY,
+            &bytes,
+            &hex_encode(&sha256(b"not-the-bytes")),
+        );
+        let mut hashed =
+            EngineSupervisor::new(clock.clone(), prefix.clone()).with_log(Arc::new(log.clone()));
+        hashed.register(Box::new(PackAdapter::python()));
+        let err = hashed
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Hash { .. }), "{err:?}");
+        assert!(
+            spawn_records(&log)
+                .iter()
+                .any(|r| r.level == LogLevel::Warn && r.message.contains("hash mismatch")),
+            "{:?}",
+            spawn_records(&log)
+        );
+    }
+
+    #[test]
+    fn stub_refuse_and_abort_and_ok_emit_supervisor() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, prefix) = prefix();
+        let bytes = stub_pack_bytes("python", TY_BINARY);
+        write_pack(&prefix, "python", TY_BINARY, &bytes, &hex_of(&bytes));
+        let log = FakeLog::new();
+        let mut stub =
+            EngineSupervisor::new(clock.clone(), prefix.clone()).with_log(Arc::new(log.clone()));
+        stub.register(Box::new(PackAdapter::python()));
+        let err = stub
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("stub pack"), "{err}");
+        assert!(
+            spawn_records(&log).iter().any(|r| r.level == LogLevel::Warn
+                && r.component.as_ref().map(|c| c.as_str()) == Some("engine")
+                && r.message.contains("stub pack")),
+            "{:?}",
+            spawn_records(&log)
+        );
+
+        let fake = FakeEngineAdapter::ty().with_binary(EngineBinary {
+            pack_name: "python".into(),
+            path: PathBuf::from("/p/ty"),
+            sha256: [0; 32],
+        });
+        let abort_log = FakeLog::new();
+        let mut abort = EngineSupervisor::new(clock.clone(), prefix.clone())
+            .with_log(Arc::new(abort_log.clone()))
+            .with_hooks(Arc::new(AbortSpawnHooks {
+                message: "skip-ty".into(),
+            }));
+        abort.register(Box::new(fake));
+        let err = abort
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Aborted(m) if m.contains("skip-ty")));
+        assert!(
+            spawn_records(&abort_log)
+                .iter()
+                .any(|r| r.level == LogLevel::Warn && r.message.contains("skip-ty")),
+            "{:?}",
+            spawn_records(&abort_log)
+        );
+
+        let ok_log = FakeLog::new();
+        let fake = FakeEngineAdapter::ty().with_binary(EngineBinary {
+            pack_name: "python".into(),
+            path: PathBuf::from("/p/ty"),
+            sha256: [0; 32],
+        });
+        let mut ok = EngineSupervisor::new(
+            Arc::new(FakeClock::at_unix_ms(2)),
+            PrefixLayout::from_path("/p"),
+        )
+        .with_log(Arc::new(ok_log.clone()));
+        ok.register(Box::new(fake));
+        assert!(ok
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap());
+        assert!(
+            spawn_records(&ok_log)
+                .iter()
+                .any(|r| r.level == LogLevel::Info
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("engine")
+                    && r.message.contains("spawned")),
+            "{:?}",
+            spawn_records(&ok_log)
+        );
+        let results = ok.try_spawn_registered(Path::new("/ws"), &PackageId::new("pkg"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].as_ref().unwrap(), &true);
+    }
+
+    #[test]
+    fn backoff_and_note_crash_emit_info_and_warn() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1_000));
+        let (_dir, prefix) = prefix();
+        let log = FakeLog::new();
+        let fake = FakeEngineAdapter::ty();
+        fake.set_answers(FakeEngineAdapter::typed_fixture("greet", "file:///a.py"));
+        fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
+        let fake = fake.with_binary(EngineBinary {
+            pack_name: "python".into(),
+            path: prefix.engines_dir().join("python/ty"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock.clone(), prefix).with_log(Arc::new(log.clone()));
+        sup.register(Box::new(fake));
+        assert!(sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap());
+        sup.note_crash("python");
+        assert!(
+            spawn_records(&log)
+                .iter()
+                .any(|r| r.level == LogLevel::Warn && r.message.contains("crashed")),
+            "{:?}",
+            spawn_records(&log)
+        );
+        let err = sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Backoff { .. }));
+        assert!(
+            spawn_records(&log).iter().any(|r| r.level == LogLevel::Info
+                && r.operation.as_deref() == Some("spawn")
+                && r.message.contains("backoff")),
+            "{:?}",
+            spawn_records(&log)
+        );
     }
 }

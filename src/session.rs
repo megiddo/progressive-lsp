@@ -84,6 +84,10 @@ impl WorkspaceSession {
         self
     }
 
+    pub fn attach_supervisor(&mut self, supervisor: Arc<EngineSupervisor>) {
+        self.supervisor = Some(supervisor);
+    }
+
     pub fn with_scripts(self, host: ScriptHost) -> Self {
         *self.scripts.lock().expect("scripts") = Some(host);
         self
@@ -650,7 +654,8 @@ impl LspIntelligence for WorkspaceSession {
         let mut host = ScriptHost::new(
             Box::new(RhaiEngineFactory),
             Arc::new(FakeClock::at_unix_ms(1)),
-        );
+        )
+        .with_log(Arc::clone(&self.log));
         for s in scripts {
             if let Some(path) = s.as_str() {
                 host.load_path(Path::new(path))
@@ -872,12 +877,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("deny.rhai");
         std::fs::write(&script, "fn on_bootstrap() { abort(\"denied-path\"); }\n").unwrap();
-        let session = WorkspaceSession::java_default();
+        let log = progressive_lsp_core::FakeLog::new();
+        let session = WorkspaceSession::java_default().with_log(Arc::new(log.clone()));
         let params = serde_json::json!({
             "initializationOptions": { "scripts": [script.to_string_lossy()] }
         });
         let err = session.on_initialize(&params).unwrap_err();
         assert!(err.0.contains("denied-path"), "{err}");
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.message.contains("on_bootstrap abort")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[cfg(feature = "lang-python")]
