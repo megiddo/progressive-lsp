@@ -2,29 +2,29 @@
 
 **Rule:** every component and major type maps to a named pattern in this file. Ad-hoc “manager” / “helper” / “util” layers that hide a missing pattern are a defect. Tests should be able to name the invariant.
 
-Every type named in [detailed-design.md](detailed-design.md) appears in this table. Plugin traits from [plugin-sdk.md](plugin-sdk.md) that are not a `Resolver` step are here too.
+Every type named in [detailed-design.md](detailed-design.md) appears in this table. Plugin traits from [plugin-sdk.md](plugin-sdk.md) that are not a `Resolver` step are here too. Types from [logging.md](logging.md) are in the Global logging section (locked on LOG-0; Rust lands LOG-1+).
 
-Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md).
+Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md), [logging.md](logging.md).
 
 ## Pattern map
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
 | `progressive-lsp` bin | Composition root | Only the bin wires the graph; libs take traits |
-| `PluginRegistry` | Factory / Registry | Lookup by `LanguageId` / pack name is deterministic; unknown → `UnsupportedLanguage`, no panic |
+| `PluginRegistry` | Factory / Registry | Lookup by `LanguageId` / pack name is deterministic; unknown → `UnsupportedLanguage`, no panic; `with_log` emits `info` `operation=resolve` on `get` fail (LOG-8) |
 | `LanguageFactory` | Abstract Factory | Produces grammar id + resolver chain for one language |
 | `ScriptEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai; watch tests do not hard-code Rhai |
 | `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
-| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language |
+| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info` |
 | `apply_worktree_excludes` / `GitExcludeReport` | Command | Writes `.git/info/exclude` + overlay belt `.gitignore`; never edits the project’s committed `.gitignore` |
 | `ProgressiveLspCap` | Value object / DTO | `version` is `v1`; `socket` may be null; stock clients ignore it |
 | `InstallPlan` | Command | `apply` hashes tmp before rename; mismatch deletes tmp |
 | `Manifest`, `ManifestArtifact` | Schema / DTO | Relative `rel_path` only; sha256 is 32 bytes |
 | `ExplicitPacks`, `CensusSelector` | Strategy (`PackSelector`) | Explicit CSV vs census; Java census selects no T3 pack |
 | Frame codec (`encode_frame` / `decode_frame`) | Adapter | `u32be` length; payload > 16 MiB fails; no silent truncate |
-| Typed errors (`UnsupportedLanguage`, `EngineNotReady`, `InstallError`, `StaticLinkError`, `ScriptAbort`, `ScriptSandbox`, `ConfigError`, `WatchOverflow`, `InitializeFailed`, `EngineError`) | Domain Result | User paths never `unwrap`; T3 `EngineNotReady` falls back, does not panic |
+| Typed errors (`UnsupportedLanguage`, `EngineNotReady`, `InstallError`, `StaticLinkError`, `ScriptAbort`, `ScriptSandbox`, `ConfigError`, `WatchOverflow`, `InitializeFailed`, `EngineError`) | Domain Result | User paths never `unwrap`; T3 `EngineNotReady` falls back, does not panic; LOG-11: operational `Err` emits or is client-visible-only (`tests/log_hygiene.rs`) |
 | `Resolver` chain (`TreeSitterResolver` → `HeuristicResolver` / `StackGraphResolver` → T3 adapter) | Chain of Responsibility | First capable handler wins; T3 `NotReady` does not drop T2 |
 | `HeuristicResolver` vs `StackGraphResolver` | Strategy | Same `Resolver` trait; pick is config/eval, not a fork of definition; heuristics are the default |
 | `T2Backend` | Value object | `heuristic` (default) or `stack-graphs`; omit = heuristic; unknown backend warns |
@@ -37,40 +37,40 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WorkspaceModel` | Domain model / DTO | Roots and classpath-like entries **exist on disk**; scripts cannot invent jars |
 | `EngineAdapter` | Adapter | Child argv/stdio/ready → supervisor API |
 | `EngineBinary`, `SpawnCtx`, `ChildHandle`, `ReadyKind` | Value objects for Adapter | Discover/spawn/ready go through `EngineAdapter`; supervisor does not parse pack layouts ad hoc |
-| `EngineSupervisor` | Supervisor | Crash → backoff; core stays up; T2 remains |
-| `LspFacade` | Facade | JSON-RPC in; domain queries out; no watch internals leak |
-| `ControlServer` | Facade | Proto RPCs; same domain services as LSP, different encoding |
+| `EngineSupervisor` | Supervisor | Crash → backoff; core stays up; T2 remains. Takes `Arc<dyn LogPort>` like `ClockPort` (LOG-6); `try_spawn` / `note_crash` emit; `last_error` is still queryable. Serve must not drop the supervisor. LOG-10: `attach_if_stderr_pipe` + `FakeChildStderr` drain; `LogFileTailAdapter` / `LspLogMessageAdapter` only when a tail path / proxied logMessage exists; never attach to engine stdout |
+| `LspFacade` | Facade | JSON-RPC in; domain queries out; no watch internals leak. Takes `Arc<dyn LogPort>` (LOG-7); parse / method-not-found / framing / mux emit **without** message bodies; `InitializeFailed` warn `operation=initialize` with JSON-RPC `-32002` (LOG-8); `shutdown` debug (LOG-8) |
+| `ControlServer` | Facade | Proto RPCs; same domain services as LSP, different encoding; takes `Arc<dyn LogPort>` (LOG-7) or emit from `ServeHost` plane; unknown method / `Status::error` without logging body bytes |
 | `IndexService` | Facade | Owns `DirtySet` + `PriorityIndex` + `IndexCache`; not a god server |
-| `WatchCoalescer` | Observer + Scheduler | N events in window → 1 batch; FakeClock advances window |
+| `WatchCoalescer` | Observer + Scheduler | N events in window → 1 batch; FakeClock advances window; overflow drop emits `LogPort` warn via `LogScope` (`operation=watch`) |
 | `WatchBackend` | Port / Adapter | Prod uses `notify`; tests use `FakeWatcher`; coalescer does not call OS APIs directly |
 | `WatchBatch` | Event / DTO | Overflow / `need_rescan` set; never silently drop FilesSince rows without `truncated` |
 | `WatchFilter` / `on_watch` | Decorator / Filter | Dropped paths never enter `DirtySet` |
 | `IdentityWatchFilter` | Decorator / Filter | Pass-through; identity is a valid v1 filter |
 | `DefaultIgnoreFilter` | Decorator / Filter | Drops ignore globs; manifests still pass |
 | `DenyListFilter` | Decorator / Filter | Explicit drops never enter `DirtySet` |
-| `FilesSinceJournal` / `FilesSinceAnswer` | Repository + DTO | Overflow or generation gap ⇒ `truncated`; never silent drop |
+| `FilesSinceJournal` / `FilesSinceAnswer` | Repository + DTO | Overflow or generation gap ⇒ `truncated`; never silent drop; `ServeHost::files_since` emits `LogPort` info `operation=filesSince` when truncated (LOG-8; one place, not journal+host) |
 | `FilesSincePort` / `SharedCoalescer` | Port / Adapter | Control proto calls the journal; no `$/` JSON-RPC |
 | `NotifyWatcher` | Adapter | Maps notify-style kinds; coalescer never calls OS APIs |
 | `SharedIndex` | Adapter | `IndexService` behind a mutex is a `SymbolIndex` |
 | `LanguageIndexer` / `JavaIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `JavaLanguageFactory` | Abstract Factory | `language_id` = java; T2 Strategy from config (`heuristic` default) then T1 |
-| `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues |
+| `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues; `prepend` puts T3 `EngineResolver` first (LOG-8) |
 | `NotReadyResolver` | Test double | T3 skip; must not drop a later T2 `FakeResolver` |
 | `DirectoryAdapter` / `MavenAdapter` / `GradleAdapter` / `EclipseAdapter` | Adapter | Detect from files only; no host JDK |
-| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer` |
+| `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer`; `LogScope` around didOpen/didChange/definition (Context Object); `didClose` debug (LOG-8); `indexer_for` None → once-per-id `info` `operation=resolve`; holds `EngineSupervisor` when serve attaches it (LOG-6); `attach_supervisor` prepends `EngineResolver` (skip-once, never fail the user) |
 | `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
-| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only |
+| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`) |
 | `CacheKey` | Value object / identity | Path is `sanitize(grammar)/sanitize(lang)/hex(hash)`; `.`/`..` cannot escape the prefix |
 | `IndexedFile.has_error` / `unparsed_note` | Value object | ERROR/MISSING nodes ⇒ note; server stays up, no panic |
 | `sample_rss_bytes` / `rss_sample_label` | Value object | Darwin/Linux host sample; not an allocator-matrix CI-arch winner |
 | `Config` merge | Chain / Builder | Later file wins for keys it sets; unset key falls through |
-| `Installer` | Builder (plan) + Command (apply) | Hash fail → no rename to final path |
+| `Installer` | Builder (plan) + Command (apply) | Hash fail → no rename to final path; hash/verify refuse emits `LogPort` warn via `LogScope` (`operation=install`) **before** cleanup `remove_file` (LOG-7); cleanup miss still emits (LOG-4) |
 | `ArtifactTransport` | Strategy | `LocalFs` vs consumer SSH; install crate has no SSH types |
 | `LocalFs` | Concrete Strategy | In-tree transport; no network |
 | `HostProbe`, `BuildCensus`, `PackId` | Value objects | Census → packs is `PackSelector`, not a hardcoded match in the bin |
 | `PackSelector` | Strategy | Explicit list vs census |
-| `ScriptHost` | Interpreter + Sandbox (Proxy) | Ops cap exceeded → error, no I/O; Abort skips documented side effect |
+| `ScriptHost` | Interpreter + Sandbox (Proxy) | Ops cap exceeded → error, no I/O; Abort skips documented side effect. Takes `Arc<dyn LogPort>` (LOG-6); bootstrap Abort / spawn Skip / pre_index skip emit; never `OnceLock` |
 | `ClockPort` | Dependency injection / Port | Tests never call `thread::sleep` |
 | `FakeClock`, `FakeWatcher`, `FakeTransport`, `FakeResolver` | Test double | Same traits as prod |
 | Tree-sitter CST walk | Visitor | Query/highlight via named visitors, not ad-hoc recursion in protocol |
@@ -91,12 +91,12 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `ControlServer::push_tier_ready` | Observer | Push only when progressive connected; stock clients get `workDoneProgress` only |
 | `FakeEngineAdapter` | Test double | Same `EngineAdapter` trait as prod; crash/backoff tests never `thread::sleep` |
 | `EngineCapabilities` | Value object | Merge is OR; empty has no methods |
-| `EngineResolver` | Adapter / Chain step | `NotReady` unless supervisor is ready for `(language, package)` |
+| `EngineResolver` | Adapter / Chain step | `NotReady` unless supervisor is ready for `(language, package)`; `with_log` + skip-once `HashSet` invariant: second `definition` for the same pair does not duplicate `info` `operation=resolve` “pack skipped” (LOG-8); `with_file_language` for the session chain; never fail the user; never emit every `definition` |
 | `discover_pack` / `EngineBinary` | Repository + Value object | Missing pack or hash mismatch → no spawn; path is `$PREFIX/engines/<pack>/` |
 | `BackoffPolicy` | Strategy | Delay doubles then caps; `can_respawn` uses `ClockPort.unix_ms` |
 | `SpawnTweak` / `SpawnDecision` | Command / DTO | Only allowlisted argv/cwd/env apply; Abort spawn skips the engine |
 | `EngineHooks` / `ScriptHookBridge` / `NoopHooks` | Port / Adapter | Supervisor does not hard-code Rhai; tests inject Abort/Noop |
-| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec (CI/Docker builds real musl ELFs) |
+| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec (CI/Docker builds real musl ELFs); `EngineError::Spawn` refuse is logged by the supervisor (LOG-6); do not implement `Command` on the logging stack |
 | `EngineMessage` | Event / DTO | Forwarded didChange/watch recorded on `ChildHandle` inbox |
 | `PythonLanguageFactory` / `RustLanguageFactory` | Abstract Factory | `language_id` is stable; T3 only when supervisor ready (Rust also requires sysroot) |
 | `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
@@ -109,7 +109,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
 | `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
-| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail |
+| `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail; `ConfigWarnAdapter` emits; `LogScope` around didOpen/didChange/definition; initialize success `info` `operation=initialize`; truncated FilesSince `info` `operation=filesSince` (LOG-8) |
 | `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
 | `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
 | `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |
@@ -120,9 +120,46 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `Envelope` | DTO / public dispatch | `method` + `request_id` + `body`; replies echo id; pushes use `request_id == 0`; never `$/` |
 | `ControlPlane` | Port | Proto RPCs call the composition-root host; control crate does not own config/watch/install internals |
 | `ControlServer::dispatch_envelope` | Command | Case-sensitive method names match the API RPC table; unknown method → non-zero `Status` |
-| `bind_control_socket` / `spawn_control_accept` | Adapter | Unix socket beside stdio LSP; length-prefixed Envelope; stock serve without `--control-socket` still works |
+| `bind_control_socket` / `spawn_control_accept` | Adapter | Unix socket beside stdio LSP; length-prefixed Envelope; stock serve without `--control-socket` still works; bind/accept/`PayloadTooLarge` emit `operation=control` (LOG-7) without payload bytes |
 | `It3ProgressiveDriver` (`plsp-it1 progressive`) | Adapter | LSP stdio + Envelope socket; IT-3.1–3.7; `--mux` is `pending_mux` (do not silently retest socket) |
 | `It3ReportRow` | DTO | `backend`, `rpc`, `result`, `notes`; T3 stub → `skip_pack_missing`; mux → `pending_mux` |
+
+## Global logging (LOG-1+)
+
+Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles in `progressive-lsp-core`. LOG-2 landed sqlite Actor types in `progressive-lsp-log`. LOG-3 landed capture Adapters + `ChildIo`. LOG-4 wired serve/install bootstrap. LOG-6 landed supervisor/`ScriptHost` `LogPort`. LOG-9 landed `LogOpenPlan` (Command). poc-ide `RunLog` stays a separate schema ([POC IDE](#poc-ide-consumer-sample)); do not merge rows or columns.
+
+| Component / type | Pattern | Invariant (testable) |
+|---|---|---|
+| `LogPort` | Dependency injection / Port | `fn emit(&self, record: LogRecord)` returns `()`; no `Result`; same injection rule as `ClockPort`; libs take `Arc<dyn LogPort>`; process-wide `OnceLock<LogPort>` is forbidden |
+| `LogFacade` | Facade | Wraps `LogSink` + `ReentrancyGuard` + min-level filter; records below configured min level are dropped **here**; never logs onto stdout |
+| `LogRecord` | DTO | Construction never fails; omit unknown fields (sqlite NULL); `message` truncates at 64 KiB, lossy UTF-8; `sanitize_extras` drops `text` / `content` / `body` / `clipboard` / `password` / `secret` / `token`; indexes `(ts_unix_ms)`, `(level)`, `(component)`, `(content_path)`, `(source_repo)` |
+| `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail) |
+| `LogOrigin` | Value object | `FirstParty` (`progressive-lsp`) vs `ThirdParty`; `source_repo` is one of those two strings |
+| `LogComponent` | Value object | Stable strings only: `core`, `protocol`, `control`, `engine`, `index`, `watch`, `install`, `script`, `lang-<id>`, pack name, `xtask` (only if a lib path logs) |
+| `LogScope` / `LogScopeGuard` | Context Object | Task-local / thread-local: `content_path`, `content_line`, `operation`, `component`; `emit` copies scope fields when the caller left them unset; Drop of `LogScopeGuard` restores the previous scope (stack) |
+| `LogSink` | Port | Durable append; prod `SqliteLogRepository`; tests `FakeLog` (mutex `Vec` for assertions) |
+| `NeverFailLog` | Decorator | Wraps a `LogSink` that may return `Result`; swallows errors so a full disk cannot panic `serve`; `emit` still returns `()` |
+| `FakeLog` | Test double | Same `LogPort` / `LogSink`; records into a mutex `Vec`; tests never open `$HOME` |
+| `MemoryLog` | Test double / bootstrap ring | Cap 4096; used before prefix exists and when **all** `LogOpenPlan` WAL opens fail (LOG-9); replay into the WAL that opened is best-effort |
+| `NullLog` | Test double | Never-fail no-op; `emit` is a no-op and does not panic |
+| `SqliteLogRepository` | Adapter / Repository | One WAL file per serve/install process; `Drop` sends `Shutdown` and joins the Actor without `thread::sleep` (`BATCH_MAX=1` so join is immediate); composition root `Flush` before process end |
+| `WriterActor` | Actor | Owns the `rusqlite::Connection`; receives `LogRecord` / `Flush` / `Shutdown` on mpsc; `check_same_thread` stays true; the writer thread **never** calls `LogPort` |
+| `CrashSafeBatch` | Unit of Work | Commit when `len >= BATCH_MAX` (default 32) **or** `ClockPort` elapsed ≥ `BATCH_MS` (default 50; production only) **or** incoming `level == Error` (including that record) **or** `Flush` / `Shutdown` / `Drop`; each commit is `BEGIN IMMEDIATE` … `COMMIT`; tests set `BATCH_MAX = 1` or call `Flush` — never `thread::sleep`; COMMIT failure keeps a retry `Vec` (cap 1024), overflow drops oldest, increments `dropped_count`, inserts one `warn` meta row (`operation = "log"`) on the next successful commit; pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `wal_autocheckpoint=1000` |
+| `ServeLogPath` | Value object | `{log_dir}/serve-{unix_ms}-{pid}.sqlite`; `fallback` is `{log_dir}/serve-fallback-{unix_ms}-{pid}.sqlite`; `in_temp` is `{temp_dir}/progressive-lsp-serve-{unix_ms}-{pid}.sqlite` (LOG-9); tests inject `:memory:` (shared-cache URI) or a tempfile; empty / unset `PROGRESSIVE_LSP_LOG` / `[log].path` → primary default; never `$HOME` |
+| `LogOpenPlan` | Command | Ordered WAL open: primary `ServeLogPath` → same-dir `fallback` → `in_temp`; first success wins; emit `warn` `operation=log` naming the path and the prior failure; all three fail → keep `MemoryLog`; `emit` still returns `()`; tests inject both directories — no `thread::sleep` |
+| `ReentrancyGuard` | Proxy / Guard | Thread-local `IN_EMIT`; if `emit` is already on the stack, enqueue on the Actor channel without taking Facade locks that could deadlock |
+| `StderrEmitAdapter` | Adapter | Former diagnostic `eprintln!` sites; after LOG-3, grep of diagnostic `eprintln!` in `src/` and `progressive-lsp-*` is empty except tests and the CLI usage exception |
+| `LogCrateBridge` | Adapter | `log::Log::log`; origin is third-party unless target starts with `progressive_lsp`; installed once in the composition root |
+| `TracingBridge` | Adapter | `tracing` `Event`s; same origin rule as `LogCrateBridge`; server default features have no tracing emitters |
+| `ChildStderrAdapter` | Observer + Adapter | Line-delimited stderr of a pack; origin third-party; stdout of the child is **never** this Adapter; bounded drain so stderr cannot stall LSP; invalid UTF-8 → lossy; no regex panic; `attach_if_stderr_read` is `Some` only when a stderr pipe **and** a `Read`/`FakeChildStderr` exist (LOG-10) |
+| `LogFileTailAdapter` | Adapter | Engine log **file**; origin third-party; prefer `$PREFIX/log/<pack>/`; do not parse LSP from the file; `attach_if_tail_path` is `Some` only when a tail path exists (LOG-10) |
+| `LspLogMessageAdapter` | Adapter | `window/logMessage` / `window/showMessage` / `$/logTrace`; origin third-party; secondary — never a substitute for crash/panic on stderr; `attach_if_proxied` is `Some` only for those methods (LOG-10) |
+| `ConfigWarnAdapter` | Adapter | `ConfigLoad.warnings`; first-party; unknown keys emit `warn` + `operation=config` |
+| `CliUsageAdapter` | Adapter | `--help` / usage; first-party; **also** writes stderr (IT-1.7); `LogPort::warn` with `operation=cli` |
+| `NullStderrAdapter` | Adapter | `stderr(Stdio::null())`; **Forbidden** on production pack spawn |
+| `InheritStderrAdapter` | Adapter | `stderr(Stdio::inherit())`; operator/CI harness bins only — never `serve` |
+| `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter`; LOG-10 attaches `ChildStderrAdapter` when a `Read` exists (tests: `FakeChildStderr`); `ChildHandle` may still lack live OS pipes until `PackAdapter` `Command` lands |
+| `FakeChildStderr` | Test double | Bounded line source (`STDERR_DRAIN_CAP`) for `ChildStderrAdapter`; overflow drops oldest so stderr cannot stall LSP |
 
 ## Patterns we do not use (v1)
 
@@ -130,6 +167,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 |---|---|
 | Plugin `dlopen` | Fights musl-static |
 | Singleton global `REGISTRY` without injection | Untestable; use composition root |
+| Process-wide `OnceLock<LogPort>` | Untestable; the bin injects `Arc<dyn LogPort>` |
 | God `LspServer` that owns watches, engines, and Rhai | Split Facades + Supervisor |
 | Scripts as Strategy for `textDocument/definition` | Forbidden; tests assert |
 | Ad-hoc manager / helper / util crates | Missing pattern; add a row here instead |

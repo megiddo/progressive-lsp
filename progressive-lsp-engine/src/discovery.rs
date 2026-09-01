@@ -52,10 +52,7 @@ pub fn full_pack_names() -> &'static [&'static str] {
 }
 
 pub fn is_heavy_pack(pack_name: &str) -> bool {
-    matches!(
-        pack_name,
-        CLANGD_PACK | TSGO_PACK | GOPLS_PACK | ZLS_PACK
-    )
+    matches!(pack_name, CLANGD_PACK | TSGO_PACK | GOPLS_PACK | ZLS_PACK)
 }
 
 pub fn pack_dir(prefix: &PrefixLayout, pack_name: &str) -> std::path::PathBuf {
@@ -78,6 +75,7 @@ pub fn binary_name_for_pack(pack_name: &str) -> Option<&'static str> {
 }
 
 /// Discover `<engines>/<pack>/<binary>` + `manifest.json` and verify sha256.
+/// Call this (not only [`discover_pack_opt`]) so `EngineError::Hash` is not swallowed.
 pub fn discover_pack(prefix: &PrefixLayout, pack_name: &str) -> Result<EngineBinary, EngineError> {
     let binary_name = binary_name_for_pack(pack_name)
         .ok_or_else(|| EngineError::NotDiscovered(pack_name.into()))?;
@@ -91,13 +89,15 @@ pub fn discover_pack(prefix: &PrefixLayout, pack_name: &str) -> Result<EngineBin
     }
     let json = std::fs::read_to_string(&manifest_path)
         .map_err(|e| EngineError::NotDiscovered(format!("read manifest: {e}")))?;
-    let manifest = Manifest::parse(&json)
-        .map_err(|e| EngineError::NotDiscovered(format!("manifest: {e}")))?;
+    let manifest =
+        Manifest::parse(&json).map_err(|e| EngineError::NotDiscovered(format!("manifest: {e}")))?;
     let art = manifest
         .artifacts
         .iter()
         .find(|a| a.name == binary_name || a.rel_path == binary_name)
-        .ok_or_else(|| EngineError::NotDiscovered(format!("{pack_name}: no {binary_name} artifact")))?;
+        .ok_or_else(|| {
+            EngineError::NotDiscovered(format!("{pack_name}: no {binary_name} artifact"))
+        })?;
     let path = dir.join(&art.rel_path);
     if !path.is_file() {
         return Err(EngineError::NotDiscovered(format!(
@@ -119,6 +119,8 @@ pub fn discover_pack(prefix: &PrefixLayout, pack_name: &str) -> Result<EngineBin
     })
 }
 
+/// Option form for Adapter `discover`. Hash mismatch is `None` here; the supervisor
+/// calls [`discover_pack`] so `EngineError::Hash` is emitted rather than swallowed.
 pub fn discover_pack_opt(prefix: &PrefixLayout, pack_name: &str) -> Option<EngineBinary> {
     discover_pack(prefix, pack_name).ok()
 }
@@ -180,7 +182,10 @@ mod tests {
         assert_eq!(binary_name_for_pack(GOPLS_PACK), Some(GOPLS_BINARY));
         assert_eq!(binary_name_for_pack(ZLS_PACK), Some(ZLS_BINARY));
         assert!(binary_name_for_pack("csharp-ls").is_none());
-        assert_eq!(pack_dir(&prefix, "python"), prefix.engines_dir().join("python"));
+        assert_eq!(
+            pack_dir(&prefix, "python"),
+            prefix.engines_dir().join("python")
+        );
         assert!(slim_pack_names().contains(&PYTHON_PACK));
         assert!(!slim_pack_names().contains(&CLANGD_PACK));
         assert!(full_pack_names().contains(&CLANGD_PACK));

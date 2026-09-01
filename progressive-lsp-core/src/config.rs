@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::ConfigError;
+use crate::log::LogLevel;
 
 /// Written when [`crate::PrefixLayout::ensure_dirs`] creates a missing file.
 pub const EMPTY_CONFIG_TOML: &str = "# progressive-lsp config stub (M0)\n# All keys optional. Empty file is valid.\n# [t2] java = \"heuristic\"  # default; stack-graphs is opt-in\n";
@@ -58,6 +59,8 @@ pub struct Config {
     pub scripts: Vec<String>,
     pub prefix: Option<String>,
     pub t2: T2Table,
+    pub log_level: LogLevel,
+    pub log_path: Option<String>,
 }
 
 impl Config {
@@ -67,6 +70,8 @@ impl Config {
             scripts: Vec::new(),
             prefix: None,
             t2: T2Table::default(),
+            log_level: LogLevel::Info,
+            log_path: None,
         }
     }
 
@@ -117,6 +122,18 @@ impl Config {
                 ));
             }
         }
+        if self.log_level != LogLevel::Info || self.log_path.is_some() {
+            out.push_str("[log]\n");
+            if self.log_level != LogLevel::Info {
+                out.push_str(&format!(
+                    "level = \"{}\"\n",
+                    escape_toml_string(self.log_level.as_str())
+                ));
+            }
+            if let Some(path) = &self.log_path {
+                out.push_str(&format!("path = \"{}\"\n", escape_toml_string(path)));
+            }
+        }
         out
     }
 
@@ -133,11 +150,21 @@ impl Config {
             }
             None => self.t2.clone(),
         };
+        let log_path = match &overlay.log_path {
+            Some(p) if p.is_empty() => None,
+            Some(p) => Some(p.clone()),
+            None => self.log_path.clone(),
+        };
         Self {
             packs: overlay.packs.clone().unwrap_or_else(|| self.packs.clone()),
-            scripts: overlay.scripts.clone().unwrap_or_else(|| self.scripts.clone()),
+            scripts: overlay
+                .scripts
+                .clone()
+                .unwrap_or_else(|| self.scripts.clone()),
             prefix: overlay.prefix.clone().or_else(|| self.prefix.clone()),
             t2,
+            log_level: overlay.log_level.unwrap_or(self.log_level),
+            log_path,
         }
     }
 }
@@ -155,6 +182,8 @@ pub struct ConfigOverlay {
     pub scripts: Option<Vec<String>>,
     pub prefix: Option<String>,
     pub t2: Option<T2Table>,
+    pub log_level: Option<LogLevel>,
+    pub log_path: Option<String>,
     pub warnings: Vec<String>,
 }
 
@@ -181,6 +210,9 @@ impl ConfigOverlay {
                 "t2" => {
                     overlay.t2 = Some(parse_t2_table(value, &mut overlay.warnings)?);
                 }
+                "log" => {
+                    parse_log_table(value, &mut overlay)?;
+                }
                 other => overlay
                     .warnings
                     .push(format!("unknown config key ignored: {other}")),
@@ -188,6 +220,37 @@ impl ConfigOverlay {
         }
         Ok(overlay)
     }
+}
+
+fn parse_log_table(value: &toml::Value, overlay: &mut ConfigOverlay) -> Result<(), ConfigError> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| ConfigError::Toml("log must be a table with level and path".into()))?;
+    for (key, val) in table {
+        match key.as_str() {
+            "level" => {
+                let raw = val
+                    .as_str()
+                    .ok_or_else(|| ConfigError::Toml("log.level must be a string".into()))?;
+                match LogLevel::parse_known(raw) {
+                    Some(level) => overlay.log_level = Some(level),
+                    None => {
+                        overlay.log_level = Some(LogLevel::Info);
+                        overlay.warnings.push(format!(
+                            "invalid log.level ignored, defaulting to info: {raw}"
+                        ));
+                    }
+                }
+            }
+            "path" => {
+                overlay.log_path = Some(string_value(val, "log.path")?);
+            }
+            other => overlay
+                .warnings
+                .push(format!("unknown config key ignored: log.{other}")),
+        }
+    }
+    Ok(())
 }
 
 fn parse_t2_table(value: &toml::Value, warnings: &mut Vec<String>) -> Result<T2Table, ConfigError> {
@@ -215,9 +278,9 @@ fn string_array(value: &toml::Value, key: &str) -> Result<Vec<String>, ConfigErr
         .ok_or_else(|| ConfigError::Toml(format!("{key} must be an array of strings")))?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let s = item.as_str().ok_or_else(|| {
-            ConfigError::Toml(format!("{key} must be an array of strings"))
-        })?;
+        let s = item
+            .as_str()
+            .ok_or_else(|| ConfigError::Toml(format!("{key} must be an array of strings")))?;
         out.push(s.to_string());
     }
     Ok(out)
@@ -271,7 +334,10 @@ prefix = "/tmp/x"
         assert_eq!(T2Backend::Heuristic.as_str(), "heuristic");
         assert_eq!(T2Backend::StackGraphs.as_str(), "stack-graphs");
         assert_eq!(T2Backend::parse("heuristic"), Some(T2Backend::Heuristic));
-        assert_eq!(T2Backend::parse("stack-graphs"), Some(T2Backend::StackGraphs));
+        assert_eq!(
+            T2Backend::parse("stack-graphs"),
+            Some(T2Backend::StackGraphs)
+        );
         assert_eq!(T2Backend::parse("oxc"), None);
         let omitted = Config::from_toml("[t2]\n").unwrap();
         assert_eq!(omitted.config.t2_for("java"), T2Backend::Heuristic);
@@ -299,10 +365,7 @@ php = "heuristic"
     fn unknown_t2_backend_warns_and_stays_heuristic() {
         let load = Config::from_toml("[t2]\njava = \"magic\"\n").unwrap();
         assert_eq!(load.config.t2_for("java"), T2Backend::Heuristic);
-        assert_eq!(
-            load.warnings,
-            ["unknown t2 backend ignored: java=magic"]
-        );
+        assert_eq!(load.warnings, ["unknown t2 backend ignored: java=magic"]);
     }
 
     #[test]
@@ -321,12 +384,16 @@ php = "heuristic"
             t2: T2Table {
                 picks: BTreeMap::from([("java".into(), T2Backend::Heuristic)]),
             },
+            log_level: LogLevel::Info,
+            log_path: None,
         };
         let overlay = ConfigOverlay {
             packs: Some(vec!["python".into()]),
             scripts: None,
             prefix: None,
             t2: None,
+            log_level: None,
+            log_path: None,
             warnings: vec![],
         };
         let merged = base.merge(&overlay);
@@ -343,12 +410,16 @@ php = "heuristic"
             scripts: vec![],
             prefix: None,
             t2: T2Table::default(),
+            log_level: LogLevel::Info,
+            log_path: None,
         };
         let overlay = ConfigOverlay {
             packs: Some(vec![]),
             scripts: None,
             prefix: Some("/n".into()),
             t2: None,
+            log_level: None,
+            log_path: None,
             warnings: vec![],
         };
         let merged = base.merge(&overlay);
@@ -368,6 +439,8 @@ php = "heuristic"
             t2: Some(T2Table {
                 picks: BTreeMap::from([("java".into(), T2Backend::StackGraphs)]),
             }),
+            log_level: None,
+            log_path: None,
             warnings: vec![],
         };
         let merged = base.merge(&overlay);
@@ -384,6 +457,8 @@ php = "heuristic"
             t2: T2Table {
                 picks: BTreeMap::from([("java".into(), T2Backend::Heuristic)]),
             },
+            log_level: LogLevel::Info,
+            log_path: None,
         };
         let snap = cfg.to_toml();
         assert!(snap.contains("\"deny.rhai\", \"watch.rhai\""));
@@ -396,6 +471,8 @@ php = "heuristic"
             scripts: vec![],
             prefix: None,
             t2: T2Table::default(),
+            log_level: LogLevel::Info,
+            log_path: None,
         };
         assert!(quote.to_toml().contains("\\\""));
     }
@@ -430,5 +507,177 @@ php = "heuristic"
             ConfigOverlay::parse("[t2]\njava = 1\n"),
             Err(ConfigError::Toml(_))
         ));
+        assert!(matches!(
+            ConfigOverlay::parse("log = 1"),
+            Err(ConfigError::Toml(_))
+        ));
+        assert!(matches!(
+            ConfigOverlay::parse("[log]\nlevel = 1\n"),
+            Err(ConfigError::Toml(_))
+        ));
+        assert!(matches!(
+            ConfigOverlay::parse("[log]\npath = 1\n"),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    #[test]
+    fn log_section_parses_level_and_path() {
+        let load = Config::from_toml(
+            r#"
+[log]
+level = "debug"
+path = "/tmp/serve.sqlite"
+"#,
+        )
+        .unwrap();
+        assert_eq!(load.config.log_level, LogLevel::Debug);
+        assert_eq!(load.config.log_path.as_deref(), Some("/tmp/serve.sqlite"));
+        assert!(load.warnings.is_empty());
+        let snap = load.config.to_toml();
+        assert!(snap.contains("[log]"));
+        assert!(snap.contains("level = \"debug\""));
+        assert!(snap.contains("path = \"/tmp/serve.sqlite\""));
+        let round = Config::from_toml(&snap).unwrap();
+        assert_eq!(round.config.log_level, LogLevel::Debug);
+        assert_eq!(round.config.log_path, load.config.log_path);
+    }
+
+    #[test]
+    fn log_level_each_known_value_parses() {
+        for (raw, want) in [
+            ("error", LogLevel::Error),
+            ("warn", LogLevel::Warn),
+            ("info", LogLevel::Info),
+            ("debug", LogLevel::Debug),
+            ("trace", LogLevel::Trace),
+        ] {
+            let load = Config::from_toml(&format!("[log]\nlevel = \"{raw}\"\n")).unwrap();
+            assert_eq!(load.config.log_level, want, "level={raw}");
+            assert!(load.warnings.is_empty());
+        }
+    }
+
+    #[test]
+    fn invalid_log_level_warns_and_defaults_to_info() {
+        let load = Config::from_toml("[log]\nlevel = \"verbose\"\n").unwrap();
+        assert_eq!(load.config.log_level, LogLevel::Info);
+        assert_eq!(
+            load.warnings,
+            ["invalid log.level ignored, defaulting to info: verbose"]
+        );
+        let base = Config {
+            packs: vec![],
+            scripts: vec![],
+            prefix: None,
+            t2: T2Table::default(),
+            log_level: LogLevel::Debug,
+            log_path: None,
+        };
+        let overlay = ConfigOverlay::parse("[log]\nlevel = \"VERBOSE\"\n").unwrap();
+        let merged = base.merge(&overlay);
+        assert_eq!(merged.log_level, LogLevel::Info);
+        assert_eq!(
+            overlay.warnings,
+            ["invalid log.level ignored, defaulting to info: VERBOSE"]
+        );
+    }
+
+    #[test]
+    fn log_section_unknown_key_still_warns() {
+        let load = Config::from_toml("[log]\nlevel = \"debug\"\nextra = true\n").unwrap();
+        assert_eq!(load.config.log_level, LogLevel::Debug);
+        assert_eq!(load.warnings, ["unknown config key ignored: log.extra"]);
+        let load = Config::from_toml("future = 1\n[log]\nlevel = \"warn\"\n").unwrap();
+        assert_eq!(load.config.packs, [] as [String; 0]);
+        assert_eq!(load.config.log_level, LogLevel::Warn);
+        assert_eq!(load.warnings, ["unknown config key ignored: future"]);
+        let load = Config::from_toml("future = 1\npacks = [\"go\"]\n").unwrap();
+        assert_eq!(load.config.packs, ["go"]);
+        assert_eq!(load.warnings, ["unknown config key ignored: future"]);
+    }
+
+    #[test]
+    fn merge_log_keys_independently_and_empty_path_clears() {
+        let base = Config {
+            packs: vec![],
+            scripts: vec![],
+            prefix: None,
+            t2: T2Table::default(),
+            log_level: LogLevel::Debug,
+            log_path: Some("/old.sqlite".into()),
+        };
+        let level_only = ConfigOverlay {
+            packs: None,
+            scripts: None,
+            prefix: None,
+            t2: None,
+            log_level: Some(LogLevel::Trace),
+            log_path: None,
+            warnings: vec![],
+        };
+        let merged = base.merge(&level_only);
+        assert_eq!(merged.log_level, LogLevel::Trace);
+        assert_eq!(merged.log_path.as_deref(), Some("/old.sqlite"));
+        let path_only = ConfigOverlay {
+            packs: None,
+            scripts: None,
+            prefix: None,
+            t2: None,
+            log_level: None,
+            log_path: Some("/new.sqlite".into()),
+            warnings: vec![],
+        };
+        let merged = base.merge(&path_only);
+        assert_eq!(merged.log_level, LogLevel::Debug);
+        assert_eq!(merged.log_path.as_deref(), Some("/new.sqlite"));
+        let clear = ConfigOverlay {
+            packs: None,
+            scripts: None,
+            prefix: None,
+            t2: None,
+            log_level: None,
+            log_path: Some(String::new()),
+            warnings: vec![],
+        };
+        let merged = base.merge(&clear);
+        assert!(merged.log_path.is_none());
+        assert_eq!(merged.log_level, LogLevel::Debug);
+        let empty_table = Config::from_toml("[log]\n").unwrap();
+        assert_eq!(empty_table.config.log_level, LogLevel::Info);
+        assert!(empty_table.config.log_path.is_none());
+        assert!(empty_table.warnings.is_empty());
+        let empty_path = Config::from_toml("[log]\npath = \"\"\n").unwrap();
+        assert!(empty_path.config.log_path.is_none());
+        let omitted = Config::from_toml("packs = [\"go\"]\n").unwrap();
+        assert_eq!(omitted.config.log_level, LogLevel::Info);
+        assert!(omitted.config.log_path.is_none());
+    }
+
+    #[test]
+    fn to_toml_writes_log_path_without_default_level() {
+        let cfg = Config {
+            packs: vec![],
+            scripts: vec![],
+            prefix: None,
+            t2: T2Table::default(),
+            log_level: LogLevel::Info,
+            log_path: Some("/abs/log.sqlite".into()),
+        };
+        let snap = cfg.to_toml();
+        assert!(snap.contains("[log]"));
+        assert!(snap.contains("path = \"/abs/log.sqlite\""));
+        assert!(!snap.contains("level"));
+        let round = Config::from_toml(&snap).unwrap();
+        assert_eq!(round.config, cfg);
+        let quoted = Config {
+            packs: vec![],
+            scripts: vec![],
+            prefix: None,
+            t2: T2Table::default(),
+            log_level: LogLevel::Warn,
+            log_path: Some("a\"b".into()),
+        };
+        assert!(quoted.to_toml().contains("\\\""));
     }
 }

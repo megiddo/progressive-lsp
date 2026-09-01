@@ -245,6 +245,7 @@ impl StdioLsp {
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            // LOG-3: leave discarded. Do not inherit engine stderr into the IDE process.
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| {

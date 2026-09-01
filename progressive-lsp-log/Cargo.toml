@@ -1,0 +1,48 @@
+[package]
+name = "progressive-lsp-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "SqliteLogRepository, WriterActor, CrashSafeBatch, ServeLogPath, LogOpenPlan (WAL)"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Test-only readers and production recv_timeout predicates. Invariants live on
+# CrashSafeBatch / emit / Flush / Drop — not rusqlite C (docs/testing.md).
+[package.metadata.mutants]
+exclude_re = [
+    "compile_options_contain_omit_load_extension",
+    "load_extension_sql_is_omitted",
+    "fn journal_mode",
+    "fn read_messages",
+    "fn read_levels",
+    "fn read_operations",
+    "fn index_names",
+    "fn row_count",
+    "Mailbox::recv_timeout",
+    "replace && with \\|\\| in run_loop",
+    "replace > with == in run_loop",
+    "replace > with < in run_loop",
+    "replace > with >= in run_loop",
+    "delete ! in run_loop",
+    "replace && with \\|\\| in open_and_init",
+    "replace \\|\\| with && in open_and_init",
+    "try_install",
+    "eprint_usage",
+    "fn record_debug",
+    "fn record_f64",
+    "fn record_i64",
+    "fn record_u64",
+    "fn record_bool",
+    "fn record_error",
+]

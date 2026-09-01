@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
-use progressive_lsp_core::{FileId, LanguageId, PackageId, PrefixLayout, Tier};
+use progressive_lsp_core::{FileId, LanguageId, LogPort, NullLog, PackageId, PrefixLayout, Tier};
 use progressive_lsp_resolve::{
     CallSite, GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, TypeEdge,
 };
@@ -173,8 +174,11 @@ impl IndexService {
 
     /// Disk cache under `$PREFIX/cache/`. Tests inject [`PrefixLayout`].
     pub fn with_prefix(layout: &PrefixLayout) -> Self {
-        let _ = std::fs::create_dir_all(layout.cache_dir());
-        Self::with_cache(IndexCache::open(layout.cache_dir()))
+        Self::with_prefix_and_log(layout, Arc::new(NullLog))
+    }
+
+    pub fn with_prefix_and_log(layout: &PrefixLayout, log: Arc<dyn LogPort>) -> Self {
+        Self::with_cache(IndexCache::open_with_log(layout.cache_dir(), log))
     }
 
     pub fn generation(&self) -> u64 {
@@ -234,9 +238,15 @@ impl IndexService {
         let ordered = self.priority.order(paths);
         let mut n = 0usize;
         for path in ordered {
-            if let Some(src) = std::fs::read_to_string(&path).ok() {
-                self.index_text(&path, &src, indexer, false);
-                n += 1;
+            match std::fs::read_to_string(&path) {
+                Ok(src) => {
+                    self.index_text(&path, &src, indexer, false);
+                    n += 1;
+                }
+                Err(e) => {
+                    self.cache
+                        .emit_io_warn(&format!("read_to_string {}: {e}", path.display()));
+                }
             }
             self.dirty.take(&path);
         }
@@ -388,10 +398,16 @@ impl IndexService {
     ) -> IngestReport {
         let mut n = 0usize;
         for path in &job.files {
-            if let Ok(src) = std::fs::read_to_string(path) {
-                self.bind_file_package(path, job.package.clone());
-                self.index_text(path, &src, indexer, false);
-                n += 1;
+            match std::fs::read_to_string(path) {
+                Ok(src) => {
+                    self.bind_file_package(path, job.package.clone());
+                    self.index_text(path, &src, indexer, false);
+                    n += 1;
+                }
+                Err(e) => {
+                    self.cache
+                        .emit_io_warn(&format!("read_to_string {}: {e}", path.display()));
+                }
             }
         }
         self.package_tiers.insert(job.package.clone(), Tier::Graph);
@@ -549,7 +565,13 @@ mod tests {
         fn tree_sitter_language(&self) -> tree_sitter::Language {
             LANGUAGE.into()
         }
-        fn extract(&self, file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
+        fn extract(
+            &self,
+            file: &FileId,
+            uri: &str,
+            source: &str,
+            tree: &Tree,
+        ) -> Vec<IndexedSymbol> {
             let mut out = Vec::new();
             walk(tree.root_node(), source.as_bytes(), file, uri, &mut out);
             out
@@ -660,7 +682,10 @@ mod tests {
             inc < 10_000,
             "incremental parse {inc}µs exceeds ~10ms class (first={first}µs)"
         );
-        assert_eq!(svc.last_parse_us(path), Some(svc.indexed(path).unwrap().last_parse_us));
+        assert_eq!(
+            svc.last_parse_us(path),
+            Some(svc.indexed(path).unwrap().last_parse_us)
+        );
         svc.close_buffer(path);
         assert!(!svc.is_open(path));
     }
@@ -707,6 +732,25 @@ mod tests {
     }
 
     #[test]
+    fn reindex_dirty_read_failure_emits_log_scope_context_object() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let mut svc =
+            IndexService::with_cache(IndexCache::new().with_log(std::sync::Arc::new(log.clone())));
+        svc.dirty
+            .mark(Path::new("/no-such-progressive-lsp-index.java"), 1);
+        assert_eq!(svc.reindex_dirty(&JavaIndexer), 0);
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("index")
+                    && r.message.contains("read_to_string")),
+            "{:?}",
+            log.records()
+        );
+    }
+
+    #[test]
     fn ingest_marks_graph_and_does_not_run_inside_apply_change() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Pkg.java");
@@ -714,7 +758,8 @@ mod tests {
         let mut svc = IndexService::new();
         let open = Path::new("Open.java");
         svc.index_text(open, "class Open { int x = 1; }", &JavaIndexer, false);
-        let change = InputChange::replace_all("class Open { int x = 1; }", "class Open { int x = 2; }");
+        let change =
+            InputChange::replace_all("class Open { int x = 1; }", "class Open { int x = 2; }");
         let _ = svc.apply_change(open, &change, &JavaIndexer);
         assert!(svc.source(open).unwrap().contains("x = 2"));
         assert!(svc.package_tier(&PackageId::new("lib")).is_none());
@@ -730,7 +775,10 @@ mod tests {
         assert_eq!(ready[0].1, Tier::Graph);
         assert!(svc.drain_tier_ready().is_empty());
         svc.mark_package_tier(PackageId::new("other"), Tier::Syntax);
-        assert_eq!(svc.package_tier(&PackageId::new("other")), Some(Tier::Syntax));
+        assert_eq!(
+            svc.package_tier(&PackageId::new("other")),
+            Some(Tier::Syntax)
+        );
         let file = FileId::new(path.to_string_lossy().as_ref());
         let _ = GraphIndex::imports_in(&svc, &file);
         let _ = GraphIndex::parents_of(&svc, "Pkg");
@@ -760,7 +808,10 @@ mod tests {
         let rec = cold.indexed(path).unwrap();
         assert_eq!(rec.last_parse_us, 0);
         assert_eq!(rec.source, src);
-        assert!(skipped < 5_000, "cache hit should skip Tree-sitter ({skipped}µs)");
+        assert!(
+            skipped < 5_000,
+            "cache hit should skip Tree-sitter ({skipped}µs)"
+        );
         let miss = IndexService::with_cache(IndexCache::new());
         assert!(miss.cache.disk_dir().is_none());
     }
@@ -805,12 +856,18 @@ mod tests {
         let clean = "class Ok {}";
         svc.index_text(Path::new("Ok.java"), clean, &JavaIndexer, false);
         assert!(!svc.indexed(Path::new("Ok.java")).unwrap().has_error);
-        assert!(svc.indexed(Path::new("Ok.java")).unwrap().unparsed_note.is_none());
+        assert!(svc
+            .indexed(Path::new("Ok.java"))
+            .unwrap()
+            .unparsed_note
+            .is_none());
     }
 
     #[test]
     fn definition_p99_after_index_is_under_50ms() {
-        use progressive_lsp_resolve::{Position, QueryKind, ResolveQuery, Resolver, TreeSitterResolver};
+        use progressive_lsp_resolve::{
+            Position, QueryKind, ResolveQuery, Resolver, TreeSitterResolver,
+        };
         let mut svc = IndexService::new();
         let path = Path::new("Def.java");
         let src = "class Def { void target() {} void caller() { target(); } }\n";

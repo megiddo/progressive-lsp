@@ -40,6 +40,21 @@ assert_layout() {
     [ -f "$prefix_host/installed-packs.toml" ] || { echo "missing installed-packs.toml" >&2; return 1; }
 }
 
+# Linux CI / Docker matrix only. Do not call from Darwin host_smoke.
+assert_serve_wal() {
+    prefix_host=$1
+    n=0
+    for f in "$prefix_host/log"/serve-*-*.sqlite; do
+        [ -f "$f" ] || continue
+        n=$((n + 1))
+    done
+    [ "$n" -ge 1 ] || {
+        echo "IT-1.1 missing serve-*-*.sqlite under $prefix_host/log" >&2
+        ls -la "$prefix_host/log" >&2 || true
+        return 1
+    }
+}
+
 handshake() {
     home=$1
     envhome=$2
@@ -107,6 +122,8 @@ case_it11() {
         run_bin "$home_s" "-" sh -c 'command -v node && exit 1; command -v java && exit 1; command -v python3 && exit 1; command -v php && exit 1; exit 0'
     fi
     handshake "$home_s" "$home_s/.progressivelsp" "$home_s/empty"
+    # Optional LOG-4 handshake WAL. it11 is Docker/Linux CI only — not host_smoke.
+    assert_serve_wal "$home_h/.progressivelsp"
 }
 
 case_it12() {
@@ -176,19 +193,40 @@ case_it16() {
     handshake "$(ws home)" "-" ""
 }
 
+# LOG-4 did not move usage off stderr. Capture both streams; usage must be on stderr.
+assert_usage_stderr() {
+    label=$1
+    shift
+    out=$(mktemp)
+    err=$(mktemp)
+    set +e
+    run_bin "$(ws home)" "-" "$@" >"$out" 2>"$err"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+        echo "IT-1.7 $label must be non-zero" >&2
+        rm -f "$out" "$err"
+        return 1
+    fi
+    if grep -q 'progressive-lsp serve\|unknown serve flag\|unknown command' "$out"; then
+        echo "IT-1.7 $label usage leaked to stdout" >&2
+        rm -f "$out" "$err"
+        return 1
+    fi
+    if ! grep -q 'progressive-lsp serve\|unknown serve flag\|unknown command' "$err"; then
+        echo "IT-1.7 $label usage not on stderr" >&2
+        cat "$err" >&2 || true
+        rm -f "$out" "$err"
+        return 1
+    fi
+    rm -f "$out" "$err"
+}
+
 case_it17() {
-    if run_bin "$(ws home)" "-" "$PLSP"; then
-        echo "IT-1.7 bare binary must be non-zero" >&2
-        return 1
-    fi
-    if run_bin "$(ws home)" "-" "$PLSP" help; then
-        echo "IT-1.7 help must be non-zero" >&2
-        return 1
-    fi
-    if run_bin "$(ws home)" "-" "$PLSP" serve --nope; then
-        echo "IT-1.7 serve --nope must be non-zero" >&2
-        return 1
-    fi
+    # LOG-4: CliUsageAdapter still writes --help / usage to stderr. stdout stays JSON-RPC.
+    assert_usage_stderr "bare binary" "$PLSP"
+    assert_usage_stderr "help" "$PLSP" help
+    assert_usage_stderr "serve --nope" "$PLSP" serve --nope
 }
 
 case_host_handshake() {

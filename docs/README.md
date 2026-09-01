@@ -14,7 +14,8 @@ This directory is the **source of truth** for the product. Implement from these 
 | Types, traits, errors | [detailed-design.md](detailed-design.md) |
 | Pattern map (mandatory) | [design-patterns.md](design-patterns.md) |
 | Coverage, mutants, alloc matrix | [testing.md](testing.md) |
-| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5 | [milestones.md](milestones.md) |
+| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-11 | [milestones.md](milestones.md) |
+| Global logging (`LogPort`, sqlite WAL) | [logging.md](logging.md), [plan](logging-plan.md), [agent context](logging/agent-context.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |
 
@@ -37,8 +38,9 @@ This directory is the **source of truth** for the product. Implement from these 
 
 ## Agent rules
 
-1. Do not start milestone `mN+1` / `pdN+1` / `ideN+1` until the previous is signed off ([branching.md](branching.md), [implementation-plan.md](implementation-plan.md)).
+1. Do not start milestone `mN+1` / `pdN+1` / `ideN+1` / `logN+1` until the previous is signed off ([branching.md](branching.md), [implementation-plan.md](implementation-plan.md)).
 2. Every new type maps to a named pattern in [design-patterns.md](design-patterns.md). Ad-hoc layers are a defect.
 3. 95% line coverage and 80% mutation kill rate on listed crates from the first library that lands ([testing.md](testing.md)).
 4. Shipped ELFs: no dynamic interpreter, no `DT_NEEDED` ([host-deps.md](host-deps.md)).
 5. Stock LSP clients must work with stdio only. Do not put FilesSince on `$/` methods in v1 ([lsp-contract.md](lsp-contract.md)).
+6. LOG orchestrators pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. poc-ide `RunLog` is a separate schema.

@@ -113,8 +113,19 @@ skip_matrix_rows() {
     echo "$rows"
 }
 
+# Linux ELF only. Never pass a Darwin Mach-O (check-static refuses it; do not fake a green).
+check_static_linux_elf() {
+    elf=$1
+    if ! is_linux_elf "$elf"; then
+        echo "check-static: not a Linux ELF (refusing Mach-O / missing file): $elf" >&2
+        return 1
+    fi
+    (cd "$ROOT" && cargo xtask check-static "$elf")
+}
+
 run_docker_matrix() {
     elf=$1
+    check_static_linux_elf "$elf"
     work=$(mktemp -d "${TMPDIR:-/tmp}/plsp-it1-work.XXXXXX")
     export PLSP_ELF=$elf
     export IT1_WORK=$work

@@ -38,7 +38,7 @@ poc-ide/                     workspace member; not a musl artifact
 
 **Dependency rule:** the lib does not import `egui` / `eframe` / `egui_dock` / `rfd`. Those belong in `main.rs`. Tests never open a window.
 
-Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thiserror`, `progressive-lsp-control`, `rusqlite` (`bundled`, poc-ide only — never the musl server crates), `notify` only behind `WatchPort` (prod adapter in lib or thin `notify` adapter; tests inject `FakeWatch`).
+Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thiserror`, `progressive-lsp-control`, `rusqlite` (`bundled`; share **0.40.2** with `progressive-lsp-log`; poc-ide `RunLog` schema stays separate — never merge with the server WAL), `notify` only behind `WatchPort` (prod adapter in lib or thin `notify` adapter; tests inject `FakeWatch`).
 
 ## Data flow
 

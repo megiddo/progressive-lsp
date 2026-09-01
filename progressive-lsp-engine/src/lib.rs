@@ -11,7 +11,7 @@ pub mod resolve;
 pub mod supervisor;
 
 pub use adapter::{
-    ChildHandle, EngineAdapter, EngineBinary, EngineMessage, ReadyKind, SpawnCtx,
+    ChildHandle, ChildIo, EngineAdapter, EngineBinary, EngineMessage, ReadyKind, SpawnCtx,
 };
 pub use backoff::{can_respawn, BackoffPolicy};
 pub use capabilities::EngineCapabilities;
@@ -66,6 +66,7 @@ mod tests {
         let _ = ZLS_BINARY;
         let _ = PackAdapter::python();
         let _ = PackAdapter::clangd();
+        let _ = ChildIo::lsp_with_stderr_pipe();
         let _ = FakeEngineAdapter::ty();
         let _ = FakeEngineAdapter::clangd();
         assert!(slim_pack_names().len() < full_pack_names().len());

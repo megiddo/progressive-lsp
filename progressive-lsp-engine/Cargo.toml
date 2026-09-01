@@ -9,6 +9,7 @@ description = "EngineAdapter, EngineSupervisor, pack discovery"
 [dependencies]
 progressive-lsp-core.workspace = true
 progressive-lsp-install.workspace = true
+progressive-lsp-log.workspace = true
 progressive-lsp-resolve.workspace = true
 progressive-lsp-script.workspace = true
 

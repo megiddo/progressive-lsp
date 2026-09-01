@@ -15,11 +15,14 @@ Empty Factory slots still count: tests that they return `UnsupportedLanguage` wi
 
 `poc-ide` is a workspace member. Its **library** is in the 95% denominator. eframe/`rfd` stay in `main.rs` (already ignored) or `poc-ide/src/ui.rs`. Do not put egui types in the lib.
 
+`progressive-lsp-log` is on the 95% llvm-cov denominator and the 80% mutants list **once it exists** (LOG-2+). Tests: `FakeLog` / `MemoryLog`; sqlite tests use tempfile or shared-cache memory URI. No `$HOME`. No `thread::sleep`. `BATCH_MAX=1` or explicit `Flush`.
+
 ## Mutation — 80% kill rate
 
 `cargo-mutants` on crates that **exist** in the milestone:
 
 - Always when present: `progressive-lsp-core`, `-control`, `-install`, `-watch`, `-index`, `-resolve`, `-script`, `-workspace`
+- `progressive-lsp-log` once the crate exists (LOG-2+): `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, capture Adapters — not rusqlite C
 - Language crates once they have real resolvers (not empty slots)
 - `progressive-lsp-engine`: supervisor crash/backoff/hash/discovery only
 - `poc-ide` once the crate exists (IDE-1+): Ports, Commands, Facades — not eframe
@@ -51,7 +54,7 @@ musl default malloc is **unacceptable**. Go/Zig/C# keep their own heaps (not in 
 
 ## Static check
 
-`xtask check-static` fails if a shipped ELF has a dynamic interpreter **or** any `DT_NEEDED`. Same bar for musl and glibc-static. Go packs: `CGO_ENABLED=0`.
+`xtask check-static` fails if a shipped ELF has a dynamic interpreter **or** any `DT_NEEDED`. Same bar for musl and glibc-static. Go packs: `CGO_ENABLED=0`. After rusqlite is linked (LOG-2+), fail closed if sqlite pulls `libdl` as `DT_NEEDED`.
 
 ## Performance budgets (publish numbers in M5 benches)
 
@@ -89,7 +92,7 @@ Separate from this unit/mutation gate. Spec: [../integration/README.md](../integ
 - May use containers, real engines, and a **deadline** wait on `workDoneProgress` / `TierReady` (poll protocol, not `sleep(5)`).
 - Must not weaken the crate suite: still no `thread::sleep` in `crates/` tests.
 - Nightly / release, not every library PR.
-- Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate.
+- Darwin: do not treat missing musl ELFs as a green IT-1. `integration/harness/run-it1.sh` host_smoke is not IT-1.1; Linux CI + `compose.yaml` is the distro gate. After rusqlite is linked into the core ELF (LOG-4), Linux CI must `check-static` that ELF; do not run `check-static` on a Darwin Mach-O. Optional IT-1.1 WAL file after `serve` handshake is Linux CI / Docker only.
 - IT-2 may wait on `workDoneProgress` with a deadline (poll protocol, not `sleep(5)`). T3 rows are `skip_pack_missing` when packs are Darwin stubs — not typed-hover greens.
 - IT-3 may deadline-poll the control socket for `WatchBatch` / `TierReady`. `--mux` is `pending_mux` if unimplemented. T3 types rows stay `skip_pack_missing` on Darwin stubs.
 - PD4 T2 bake-off may fetch the stack-graphs pin and junit4 at SHA (cache under `target/`). Default T2 stays heuristic unless the winner rule fires. Do not treat Darwin RSS as a musl green.
@@ -114,4 +117,4 @@ Separate from the server’s musl bar. Spec: [poc-ide/README.md](poc-ide/README.
 - [ ] pattern table updated if a type was added
 - [ ] exit row in [milestones.md](milestones.md)
 
-**Docs-0:** tests, llvm-cov, mutants, `sleep`, and `check-static` are **N/A** (no crates). Do not invent tests to fill this checklist.
+**Docs-0 / LOG-0 / LOG-5:** tests, llvm-cov, mutants, `sleep`, and `check-static` are **N/A** (no crates). Do not invent tests to fill this checklist.

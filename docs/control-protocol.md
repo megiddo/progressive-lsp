@@ -14,7 +14,7 @@ Length-prefixed:
 u32be payload_length | protobuf bytes
 ```
 
-Max payload: implement a documented cap (suggest 16 MiB) and fail the request if exceeded. Do not silently truncate FilesSince without setting `truncated`.
+Max payload: implement a documented cap (suggest 16 MiB) and fail the request if exceeded. Do not silently truncate FilesSince without setting `truncated`. Bind/accept/`PayloadTooLarge`/unknown method emit `LogPort` (`operation=control`) without logging Envelope **bodies** (LOG-7).
 
 `--mux`: outer mux frame is `u8 channel | u32be length | payload` (16 MiB cap). Channel `0` = LSP JSON-RPC. Channel `1` = control; inner payload is the same length-prefixed proto (`u32be | protobuf`).
 
@@ -43,7 +43,7 @@ Unknown experimental capabilities are ignored by stock clients.
 | Mode | Behavior |
 |---|---|
 | `progressive-lsp serve` (default) | LSP on stdio. Server-side `notify` on. Control **off**. |
-| `--control-socket PATH` / `--control-fd N` | Protobuf beside LSP |
+| `--control-socket PATH` / `--control-fd N` | Protobuf beside LSP. `--control-fd` is parsed but unused (`pending`); LOG-7 emits one `warn` so the drop is not silent. |
 | `--mux` | One stdio stream: `lsp` + `control` channels |
 
 Library: `progressive-lsp-control` (consumers may depend).

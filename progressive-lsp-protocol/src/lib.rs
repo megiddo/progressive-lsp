@@ -9,7 +9,7 @@ pub mod rpc;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 
-use progressive_lsp_core::InitializeFailed;
+use progressive_lsp_core::{InitializeFailed, LogComponent, LogPort, LogScope, NullLog};
 use progressive_lsp_resolve::{QueryKind, ResolveQuery};
 use serde_json::{json, Value};
 
@@ -62,6 +62,7 @@ impl ProgressiveLspCap {
 pub struct LspFacade {
     cap: ProgressiveLspCap,
     intelligence: Option<Arc<dyn LspIntelligence>>,
+    log: Arc<dyn LogPort>,
 }
 
 impl std::fmt::Debug for LspFacade {
@@ -78,12 +79,36 @@ impl LspFacade {
         Self {
             cap: ProgressiveLspCap::new(socket, mux),
             intelligence: None,
+            log: Arc::new(NullLog),
         }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
     }
 
     pub fn with_intelligence(mut self, intel: Arc<dyn LspIntelligence>) -> Self {
         self.intelligence = Some(intel);
         self
+    }
+
+    fn emit_protocol_warn(&self, message: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("protocol")
+                .component(LogComponent::protocol()),
+        );
+        self.log.warn(message);
+    }
+
+    fn emit_protocol_info(&self, message: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("protocol")
+                .component(LogComponent::protocol()),
+        );
+        self.log.info(message);
     }
 
     pub fn cap(&self) -> &ProgressiveLspCap {
@@ -124,6 +149,12 @@ impl LspFacade {
             "initialize" => {
                 if let Some(intel) = &self.intelligence {
                     if let Err(e) = intel.on_initialize(&req.params) {
+                        let _g = LogScope::enter(
+                            LogScope::new()
+                                .operation("initialize")
+                                .component(LogComponent::protocol()),
+                        );
+                        self.log.warn(&format!("InitializeFailed: {e}"));
                         return Some(rpc::failure(
                             req.id.clone(),
                             JsonRpcError {
@@ -135,7 +166,15 @@ impl LspFacade {
                 }
                 Some(rpc::success(req.id.clone(), self.initialize_result()))
             }
-            "shutdown" => Some(rpc::success(req.id.clone(), Value::Null)),
+            "shutdown" => {
+                let _g = LogScope::enter(
+                    LogScope::new()
+                        .operation("shutdown")
+                        .component(LogComponent::protocol()),
+                );
+                self.log.debug("shutdown");
+                Some(rpc::success(req.id.clone(), Value::Null))
+            }
             "exit" | "initialized" => None,
             "textDocument/didOpen" => {
                 if let Some(intel) = &self.intelligence {
@@ -174,13 +213,17 @@ impl LspFacade {
             | "textDocument/typeDefinition"
             | "textDocument/implementation"
             | "workspace/symbol"
-            | "textDocument/semanticTokens/full" => {
-                Some(rpc::success(req.id.clone(), self.dispatch_intelligence(req)))
-            }
-            other if req.id.is_some() => Some(rpc::failure(
+            | "textDocument/semanticTokens/full" => Some(rpc::success(
                 req.id.clone(),
-                JsonRpcError::method_not_found(other),
+                self.dispatch_intelligence(req),
             )),
+            other if req.id.is_some() => {
+                self.emit_protocol_info(&format!("method not found: {other}"));
+                Some(rpc::failure(
+                    req.id.clone(),
+                    JsonRpcError::method_not_found(other),
+                ))
+            }
             _ => None,
         }
     }
@@ -234,7 +277,11 @@ impl LspFacade {
         W: Write,
     {
         if self.cap.mux {
-            return self.serve_mux(&mut reader, &mut writer, None::<fn(&[u8]) -> Option<Vec<u8>>>);
+            return self.serve_mux(
+                &mut reader,
+                &mut writer,
+                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+            );
         }
         self.serve_lsp(&mut reader, &mut writer)
     }
@@ -248,7 +295,10 @@ impl LspFacade {
             let payload = match read_message(reader) {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => return Ok(()),
-                Err(e) => return Err(InitializeFailed(e.to_string())),
+                Err(e) => {
+                    self.emit_protocol_warn(&format!("framing: {e}"));
+                    return Err(InitializeFailed(e.to_string()));
+                }
             };
             if self.dispatch_json_rpc(&payload, writer)? {
                 return Ok(());
@@ -272,18 +322,21 @@ impl LspFacade {
             let frame = match crate::mux::read_mux_frame(reader) {
                 Ok(Some(f)) => f,
                 Ok(None) => return Ok(()),
-                Err(e) => return Err(InitializeFailed(e.to_string())),
+                Err(e) => {
+                    self.emit_protocol_warn(&format!("mux: {e}"));
+                    return Err(InitializeFailed(e.to_string()));
+                }
             };
             if frame.is_control() {
                 if let Some(cb) = on_control.as_mut() {
                     if let Some(resp) = cb(&frame.payload) {
-                        crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_CONTROL, &resp)
-                            .map_err(|e| InitializeFailed(e.to_string()))?;
+                        self.write_mux(writer, crate::mux::CHANNEL_CONTROL, &resp)?;
                     }
                 }
                 continue;
             }
             if !frame.is_lsp() {
+                self.emit_protocol_warn(&format!("mux: unknown mux channel {}", frame.channel));
                 return Err(InitializeFailed(format!(
                     "unknown mux channel {}",
                     frame.channel
@@ -303,6 +356,7 @@ impl LspFacade {
         let req = match rpc::parse_request(payload) {
             Ok(req) => req,
             Err(e) => {
+                self.emit_protocol_warn(&format!("JSON-RPC parse failed code={}", e.code));
                 let resp = rpc::failure(None, e);
                 Self::write_json(writer, &resp)?;
                 return Ok(false);
@@ -330,10 +384,11 @@ impl LspFacade {
         let req = match rpc::parse_request(payload) {
             Ok(req) => req,
             Err(e) => {
+                self.emit_protocol_warn(&format!("JSON-RPC parse failed code={}", e.code));
                 let resp = rpc::failure(None, e);
-                let body = serde_json::to_vec(&resp).map_err(|e| InitializeFailed(e.to_string()))?;
-                crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_LSP, &body)
-                    .map_err(|e| InitializeFailed(e.to_string()))?;
+                let body =
+                    serde_json::to_vec(&resp).map_err(|e| InitializeFailed(e.to_string()))?;
+                self.write_mux(writer, crate::mux::CHANNEL_LSP, &body)?;
                 return Ok(false);
             }
         };
@@ -342,18 +397,28 @@ impl LspFacade {
         }
         if let Some(resp) = self.handle_request(&req) {
             let body = serde_json::to_vec(&resp).map_err(|e| InitializeFailed(e.to_string()))?;
-            crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_LSP, &body)
-                .map_err(|e| InitializeFailed(e.to_string()))?;
+            self.write_mux(writer, crate::mux::CHANNEL_LSP, &body)?;
         }
         if let Some(intel) = &self.intelligence {
             for ev in intel.drain_progress() {
                 let body = serde_json::to_vec(&ev.to_notification())
                     .map_err(|e| InitializeFailed(e.to_string()))?;
-                crate::mux::write_mux_frame(writer, crate::mux::CHANNEL_LSP, &body)
-                    .map_err(|e| InitializeFailed(e.to_string()))?;
+                self.write_mux(writer, crate::mux::CHANNEL_LSP, &body)?;
             }
         }
         Ok(false)
+    }
+
+    fn write_mux<W: Write>(
+        &self,
+        writer: &mut W,
+        channel: u8,
+        payload: &[u8],
+    ) -> Result<(), InitializeFailed> {
+        crate::mux::write_mux_frame(writer, channel, payload).map_err(|e| {
+            self.emit_protocol_warn(&format!("mux: {e}"));
+            InitializeFailed(e.to_string())
+        })
     }
 }
 
@@ -375,8 +440,8 @@ mod tests {
     #[test]
     fn initialize_advertises_experimental_with_null_socket() {
         let facade = LspFacade::new(None, false);
-        let cap = facade.initialize_result()["capabilities"]["experimental"]["progressiveLsp"]
-            .clone();
+        let cap =
+            facade.initialize_result()["capabilities"]["experimental"]["progressiveLsp"].clone();
         assert_eq!(cap["version"], "v1");
         assert!(cap["socket"].is_null());
         assert_eq!(cap["mux"], false);
@@ -393,7 +458,10 @@ mod tests {
         let cap = facade.cap().to_json();
         assert_eq!(cap["socket"], "/tmp/control.sock");
         assert_eq!(cap["mux"], true);
-        assert_eq!(facade.initialize_result()["serverInfo"]["name"], SERVER_NAME);
+        assert_eq!(
+            facade.initialize_result()["serverInfo"]["name"],
+            SERVER_NAME
+        );
         assert_eq!(
             facade.initialize_result()["serverInfo"]["version"],
             SERVER_VERSION
@@ -416,8 +484,7 @@ mod tests {
         );
         let shutdown = rpc(2, "shutdown", Value::Null);
         let exit = framing::encode_message(
-            serde_json::to_vec(&json!({"jsonrpc": "2.0", "method": "exit"}))
-                .unwrap(),
+            serde_json::to_vec(&json!({"jsonrpc": "2.0", "method": "exit"})).unwrap(),
         );
         let mut stdin = Vec::new();
         stdin.extend_from_slice(&init);
@@ -427,9 +494,7 @@ mod tests {
 
         let facade = LspFacade::new(None, false);
         let mut out = Vec::new();
-        facade
-            .serve(Cursor::new(stdin), &mut out)
-            .unwrap();
+        facade.serve(Cursor::new(stdin), &mut out).unwrap();
 
         let texts = framing::decode_all(&out).unwrap();
         assert_eq!(texts.len(), 2);
@@ -543,9 +608,7 @@ mod tests {
             .serve(Cursor::new(b"not-lsp"), Vec::new())
             .unwrap_err();
         assert!(
-            err.0.contains("Content-Length")
-                || err.0.contains("header")
-                || err.0.contains("eof")
+            err.0.contains("Content-Length") || err.0.contains("header") || err.0.contains("eof")
         );
     }
 
@@ -564,7 +627,10 @@ mod tests {
     struct StubIntel;
 
     impl LspIntelligence for StubIntel {
-        fn resolve(&self, q: &progressive_lsp_resolve::ResolveQuery) -> progressive_lsp_resolve::ResolveResult {
+        fn resolve(
+            &self,
+            q: &progressive_lsp_resolve::ResolveQuery,
+        ) -> progressive_lsp_resolve::ResolveResult {
             use progressive_lsp_core::Tier;
             use progressive_lsp_resolve::{LspLocation, Range, ResolveResult};
             if q.kind == progressive_lsp_resolve::QueryKind::Hover {
@@ -578,7 +644,11 @@ mod tests {
             }
             ResolveResult::locations(
                 Tier::Syntax,
-                vec![LspLocation::new("file:///z", Range::default(), Tier::Syntax)],
+                vec![LspLocation::new(
+                    "file:///z",
+                    Range::default(),
+                    Tier::Syntax,
+                )],
             )
         }
         fn did_open(&self, _uri: &str, _language_id: &str, _text: &str) {}
@@ -698,9 +768,7 @@ mod tests {
         let facade = LspFacade::new(None, true);
         assert!(facade.cap().mux);
         let mut out = Vec::new();
-        facade
-            .serve(Cursor::new(stdin), &mut out)
-            .unwrap();
+        facade.serve(Cursor::new(stdin), &mut out).unwrap();
         let (frame, _) = crate::mux::decode_mux_frame(&out).unwrap().unwrap();
         assert!(frame.is_lsp());
         let resp: Value = serde_json::from_slice(&frame.payload).unwrap();
@@ -708,7 +776,9 @@ mod tests {
             resp["result"]["capabilities"]["experimental"]["progressiveLsp"]["mux"],
             true
         );
-        assert!(resp["result"]["capabilities"]["experimental"]["progressiveLsp"]["socket"].is_null());
+        assert!(
+            resp["result"]["capabilities"]["experimental"]["progressiveLsp"]["socket"].is_null()
+        );
     }
 
     #[test]
@@ -729,10 +799,14 @@ mod tests {
         let mut out = Vec::new();
         let mut seen = false;
         facade
-            .serve_mux(&mut Cursor::new(stdin), &mut out, Some(|p: &[u8]| {
-                seen = p == inner;
-                Some(b"ack".to_vec())
-            }))
+            .serve_mux(
+                &mut Cursor::new(stdin),
+                &mut out,
+                Some(|p: &[u8]| {
+                    seen = p == inner;
+                    Some(b"ack".to_vec())
+                }),
+            )
             .unwrap();
         assert!(seen);
         let (ctrl, n) = crate::mux::decode_mux_frame(&out).unwrap().unwrap();
@@ -746,9 +820,284 @@ mod tests {
     #[test]
     fn stock_initialize_has_control_off() {
         let facade = LspFacade::new(None, false);
-        let cap = facade.initialize_result()["capabilities"]["experimental"]["progressiveLsp"].clone();
+        let cap =
+            facade.initialize_result()["capabilities"]["experimental"]["progressiveLsp"].clone();
         assert_eq!(cap["version"], "v1");
         assert!(cap["socket"].is_null());
         assert_eq!(cap["mux"], false);
+    }
+
+    const LEAK: &str = "LEAK_BODY_XYZ";
+
+    fn assert_no_payload_leak(log: &progressive_lsp_core::FakeLog) {
+        for r in log.records() {
+            assert!(
+                !r.message.contains(LEAK),
+                "payload leaked in message: {}",
+                r.message
+            );
+            if let Some(ex) = &r.extras {
+                for v in ex.values() {
+                    assert!(!v.contains(LEAK), "payload leaked in extras: {v}");
+                }
+            }
+        }
+    }
+
+    fn protocol_rows(log: &progressive_lsp_core::FakeLog) -> Vec<progressive_lsp_core::LogRecord> {
+        log.records()
+            .into_iter()
+            .filter(|r| r.operation.as_deref() == Some("protocol"))
+            .collect()
+    }
+
+    #[test]
+    fn parse_and_method_not_found_emit_protocol_without_payload() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let facade = LspFacade::new(None, false).with_log(Arc::new(log.clone()));
+        let secret = json!({ "text": LEAK, "body": LEAK });
+        let framed = framing::encode_message(
+            serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "params": secret,
+            }))
+            .unwrap(),
+        );
+        let mut out = Vec::new();
+        facade.serve(Cursor::new(framed), &mut out).unwrap();
+        let parse_rows = protocol_rows(&log);
+        assert!(
+            parse_rows
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("protocol")
+                    && r.message.contains("JSON-RPC parse failed")
+                    && r.message.contains("-32600")),
+            "{parse_rows:?}"
+        );
+        assert_no_payload_leak(&log);
+
+        let log2 = progressive_lsp_core::FakeLog::new();
+        let facade2 = LspFacade::new(None, false).with_log(Arc::new(log2.clone()));
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(3)),
+            method: "textDocument/codeAction".into(),
+            params: json!({ "text": LEAK }),
+        };
+        let resp = facade2.handle_request(&req).unwrap();
+        assert_eq!(resp["error"]["code"], -32601);
+        let rows = protocol_rows(&log2);
+        assert!(
+            rows.iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Info
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("protocol")
+                    && r.message.contains("method not found")
+                    && r.message.contains("textDocument/codeAction")),
+            "{rows:?}"
+        );
+        assert_no_payload_leak(&log2);
+    }
+
+    #[test]
+    fn framing_content_length_emits_protocol_warn() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let facade = LspFacade::new(None, false).with_log(Arc::new(log.clone()));
+        let err = facade
+            .serve(Cursor::new(b"not-lsp"), Vec::new())
+            .unwrap_err();
+        assert!(
+            err.0.contains("Content-Length") || err.0.contains("header") || err.0.contains("eof")
+        );
+        let rows = protocol_rows(&log);
+        assert!(
+            rows.iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("protocol")
+                    && r.message.contains("framing")
+                    && (r.message.contains("Content-Length") || r.message.contains("header"))),
+            "{rows:?}"
+        );
+
+        let log2 = progressive_lsp_core::FakeLog::new();
+        let facade2 = LspFacade::new(None, false).with_log(Arc::new(log2.clone()));
+        let _ = facade2
+            .serve(Cursor::new(b"Content-Length: xyz\r\n\r\n"), Vec::new())
+            .unwrap_err();
+        let rows2 = protocol_rows(&log2);
+        assert!(
+            rows2
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.message.contains("Content-Length")),
+            "{rows2:?}"
+        );
+    }
+
+    #[test]
+    fn mux_errors_emit_protocol_warn_without_payload() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let facade = LspFacade::new(None, true).with_log(Arc::new(log.clone()));
+        let err = facade
+            .serve_mux(
+                &mut Cursor::new(vec![9u8, 0, 0, 0, 0]),
+                &mut Vec::new(),
+                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+            )
+            .unwrap_err();
+        assert!(err.0.contains("unknown mux channel"));
+        let rows = protocol_rows(&log);
+        assert!(
+            rows.iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("protocol")
+                    && r.message.contains("mux")
+                    && r.message.contains("unknown mux channel")),
+            "{rows:?}"
+        );
+
+        let log2 = progressive_lsp_core::FakeLog::new();
+        let facade2 = LspFacade::new(None, true).with_log(Arc::new(log2.clone()));
+        let too = crate::mux::MAX_MUX_PAYLOAD + 1;
+        let mut hdr = vec![crate::mux::CHANNEL_LSP];
+        hdr.extend_from_slice(&too.to_be_bytes());
+        let err = facade2
+            .serve_mux(
+                &mut Cursor::new(hdr),
+                &mut Vec::new(),
+                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+            )
+            .unwrap_err();
+        assert!(err.0.contains("exceeds") || err.0.to_lowercase().contains("payload"));
+        let rows2 = protocol_rows(&log2);
+        assert!(
+            rows2
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.message.contains("mux")
+                    && (r.message.contains("exceeds") || r.message.contains("payload"))),
+            "{rows2:?}"
+        );
+
+        let log3 = progressive_lsp_core::FakeLog::new();
+        let facade3 = LspFacade::new(None, true).with_log(Arc::new(log3.clone()));
+        let mut short = vec![crate::mux::CHANNEL_LSP];
+        short.extend_from_slice(&4u32.to_be_bytes());
+        short.extend_from_slice(LEAK.as_bytes());
+        short.truncate(6);
+        let _ = facade3.serve_mux(
+            &mut Cursor::new(short),
+            &mut Vec::new(),
+            None::<fn(&[u8]) -> Option<Vec<u8>>>,
+        );
+        assert_no_payload_leak(&log3);
+        let rows3 = protocol_rows(&log3);
+        assert!(
+            rows3
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.message.contains("mux")),
+            "{rows3:?}"
+        );
+
+        let log4 = progressive_lsp_core::FakeLog::new();
+        let facade4 = LspFacade::new(None, true).with_log(Arc::new(log4.clone()));
+        let leak_json = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "params": { "text": LEAK }
+        }))
+        .unwrap();
+        let mut stdin = crate::mux::encode_mux_frame(crate::mux::CHANNEL_LSP, &leak_json).unwrap();
+        stdin.extend_from_slice(
+            &crate::mux::encode_mux_frame(
+                crate::mux::CHANNEL_LSP,
+                &serde_json::to_vec(&json!({"jsonrpc":"2.0","method":"exit"})).unwrap(),
+            )
+            .unwrap(),
+        );
+        let mut out = Vec::new();
+        facade4
+            .serve_mux(
+                &mut Cursor::new(stdin),
+                &mut out,
+                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+            )
+            .unwrap();
+        let rows4 = protocol_rows(&log4);
+        assert!(
+            rows4
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.message.contains("JSON-RPC parse failed")),
+            "{rows4:?}"
+        );
+        assert_no_payload_leak(&log4);
+    }
+
+    #[test]
+    fn shutdown_debug_and_initialize_failed_warn_jsonrpc_32002() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let facade = LspFacade::new(None, false).with_log(Arc::new(log.clone()));
+        let shut = facade.handle_request(&JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(2)),
+            method: "shutdown".into(),
+            params: Value::Null,
+        });
+        assert!(shut.unwrap()["result"].is_null());
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Debug
+                    && r.operation.as_deref() == Some("shutdown")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("protocol")
+                    && r.message.contains("shutdown")),
+            "{:?}",
+            log.records()
+        );
+
+        struct FailInit;
+        impl LspIntelligence for FailInit {
+            fn resolve(&self, _q: &ResolveQuery) -> progressive_lsp_resolve::ResolveResult {
+                progressive_lsp_resolve::ResolveResult::empty(progressive_lsp_core::Tier::Syntax)
+            }
+            fn did_open(&self, _uri: &str, _language_id: &str, _text: &str) {}
+            fn did_change(&self, _uri: &str, _text: &str) {}
+            fn did_close(&self, _uri: &str) {}
+            fn semantic_tokens(&self, _uri: &str) -> Vec<u32> {
+                Vec::new()
+            }
+            fn on_initialize(
+                &self,
+                _params: &Value,
+            ) -> Result<(), progressive_lsp_core::InitializeFailed> {
+                Err(progressive_lsp_core::InitializeFailed("nope".into()))
+            }
+        }
+
+        let log2 = progressive_lsp_core::FakeLog::new();
+        let facade2 = LspFacade::new(None, false)
+            .with_log(Arc::new(log2.clone()))
+            .with_intelligence(Arc::new(FailInit));
+        let resp = facade2
+            .handle_request(&JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "initialize".into(),
+                params: json!({}),
+            })
+            .unwrap();
+        assert_eq!(resp["error"]["code"], -32002);
+        assert!(
+            log2.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.message.contains("InitializeFailed")),
+            "{:?}",
+            log2.records()
+        );
     }
 }

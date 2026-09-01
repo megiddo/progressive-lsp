@@ -1,8 +1,11 @@
 //! `PluginRegistry` + `LanguageFactory`. No `dlopen`. No global registry.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use progressive_lsp_core::{LanguageId, UnsupportedLanguage};
+use progressive_lsp_core::{
+    LanguageId, LogComponent, LogPort, LogScope, NullLog, UnsupportedLanguage,
+};
 use progressive_lsp_resolve::ResolverChain;
 
 /// Language ids that have a Factory slot in v1. M0 slots are empty.
@@ -33,16 +36,28 @@ pub trait LanguageFactory: Send + Sync {
 }
 
 /// Composition-time Factory / Registry. Lookup is deterministic.
-#[derive(Default)]
 pub struct PluginRegistry {
     factories: BTreeMap<String, Box<dyn LanguageFactory>>,
+    log: Arc<dyn LogPort>,
+}
+
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             factories: BTreeMap::new(),
+            log: Arc::new(NullLog),
         }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
     }
 
     pub fn register(&mut self, factory: Box<dyn LanguageFactory>) {
@@ -51,10 +66,19 @@ impl PluginRegistry {
     }
 
     pub fn get(&self, id: &LanguageId) -> Result<&dyn LanguageFactory, UnsupportedLanguage> {
-        self.factories
-            .get(id.as_str())
-            .map(|f| f.as_ref())
-            .ok_or_else(|| UnsupportedLanguage::new(id.clone()))
+        match self.factories.get(id.as_str()).map(|f| f.as_ref()) {
+            Some(factory) => Ok(factory),
+            None => {
+                let _g = LogScope::enter(
+                    LogScope::new()
+                        .operation("resolve")
+                        .component(LogComponent::core()),
+                );
+                self.log
+                    .info(&format!("unsupported language: {}", id.as_str()));
+                Err(UnsupportedLanguage::new(id.clone()))
+            }
+        }
     }
 
     pub fn contains(&self, id: &LanguageId) -> bool {
@@ -129,13 +153,26 @@ mod tests {
 
     #[test]
     fn unknown_language_is_also_unsupported() {
-        let registry = PluginRegistry::default();
+        let log = progressive_lsp_core::FakeLog::new();
+        let registry = PluginRegistry::default().with_log(std::sync::Arc::new(log.clone()));
         let id = LanguageId::new("brainfuck");
         let err = match registry.get(&id) {
             Err(e) => e,
             Ok(_) => panic!("unknown language must be unsupported"),
         };
         assert_eq!(err.language.as_str(), "brainfuck");
+        let rows: Vec<_> = log
+            .records()
+            .into_iter()
+            .filter(|r| {
+                r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("resolve")
+                    && r.message.contains("unsupported language")
+                    && r.message.contains("brainfuck")
+            })
+            .collect();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(registry.get(&id).is_err());
     }
 
     #[test]

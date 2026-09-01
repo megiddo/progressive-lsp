@@ -4,8 +4,10 @@ use std::sync::Arc;
 
 use std::sync::Mutex;
 
-use progressive_lsp_control::{FilesSincePort, FilesSinceRequest, FilesSinceResponse, WatchBatch as ProtoBatch};
-use progressive_lsp_core::ClockPort;
+use progressive_lsp_control::{
+    FilesSincePort, FilesSinceRequest, FilesSinceResponse, WatchBatch as ProtoBatch,
+};
+use progressive_lsp_core::{ClockPort, LogComponent, LogPort, LogScope, NullLog};
 
 use crate::backend::{RawWatchEvent, WatchBackend, WatchKind};
 use crate::journal::{FilesSinceAnswer, FilesSinceJournal, FilesSinceQuery};
@@ -28,11 +30,17 @@ pub struct WatchCoalescer {
     generation: u64,
     journal: FilesSinceJournal,
     last_batch: WatchBatch,
+    log: Arc<dyn LogPort>,
 }
 
 impl WatchCoalescer {
     pub fn new(clock: Arc<dyn ClockPort>) -> Self {
-        Self::with_limits(clock, DEFAULT_WINDOW_MS, DEFAULT_OVERFLOW_LIMIT, DEFAULT_FILES_SINCE_LIMIT)
+        Self::with_limits(
+            clock,
+            DEFAULT_WINDOW_MS,
+            DEFAULT_OVERFLOW_LIMIT,
+            DEFAULT_FILES_SINCE_LIMIT,
+        )
     }
 
     pub fn with_limits(
@@ -50,7 +58,13 @@ impl WatchCoalescer {
             generation: 0,
             journal: FilesSinceJournal::new(files_since_limit),
             last_batch: WatchBatch::empty(0),
+            log: Arc::new(NullLog),
         }
+    }
+
+    pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
+        self.log = log;
+        self
     }
 
     pub fn generation(&self) -> u64 {
@@ -75,6 +89,12 @@ impl WatchCoalescer {
                 self.window_opened_at_ms = Some(self.clock.unix_ms());
             }
             if self.pending.len() >= self.overflow_limit {
+                let _g = LogScope::enter(
+                    LogScope::new()
+                        .operation("watch")
+                        .component(LogComponent::watch()),
+                );
+                self.log.warn("watch overflow; dropping events");
                 self.force_overflow();
                 return;
             }
@@ -109,7 +129,9 @@ impl WatchCoalescer {
     }
 
     pub fn files_since(&self, req: &FilesSinceRequest) -> FilesSinceResponse {
-        self.journal.query(FilesSinceQuery::from_request(req)).to_proto()
+        self.journal
+            .query(FilesSinceQuery::from_request(req))
+            .to_proto()
     }
 
     fn force_overflow(&mut self) {
@@ -270,6 +292,28 @@ mod tests {
     }
 
     #[test]
+    fn overflow_emits_log_scope_context_object() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let clock = Arc::new(FakeClock::at_unix_ms(1_000));
+        let mut c = WatchCoalescer::with_limits(clock, 50, 2, 64).with_log(Arc::new(log.clone()));
+        c.ingest([
+            WatchEvent::new("a", WatchKind::Create),
+            WatchEvent::new("b", WatchKind::Modify),
+            WatchEvent::new("c", WatchKind::Delete),
+        ]);
+        assert!(c.last_batch().overflow);
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("watch")
+                    && r.message.contains("overflow")),
+            "{:?}",
+            log.records()
+        );
+    }
+
+    #[test]
     fn files_since_after_successful_batch() {
         let (clock, mut c, _) = setup(5, 100);
         c.ingest([
@@ -348,7 +392,9 @@ mod tests {
         assert!(!batch.overflow);
         assert_eq!(batch.events[0].path, "caught-up.java");
         let after = c.files_since(&FilesSinceRequest {
-            since: Some(files_since_request::Since::SinceGeneration(batch.generation)),
+            since: Some(files_since_request::Since::SinceGeneration(
+                batch.generation,
+            )),
         });
         assert!(!after.truncated);
         assert!(after.paths.is_empty());

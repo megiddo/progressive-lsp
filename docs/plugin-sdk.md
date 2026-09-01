@@ -48,12 +48,12 @@ Scripts live on the `.progressivelsp` merge chain. Sandbox: ops limit, string ca
 
 | Hook | When | Abort means |
 |---|---|---|
-| `on_bootstrap` | After `initialize`, before first index | Fail initialize with a clear message |
+| `on_bootstrap` | After `initialize`, before first index | Fail initialize with a clear message. Also `LogPort` warn `operation=initialize` (LOG-6) |
 | `on_workspace_discover` | After adapters; may add/deny **source roots** | Skip those roots; **cannot invent classpath jars not on disk** |
 | `on_pre_index` | Per package, before index | Skip that package |
 | `on_post_index` | Per package, after | Logging only; cannot unwind intelligence |
 | `on_watch` | Before coalesced batch hits dirty-set | Drop those paths |
-| `on_engine_spawn` | Before spawn | Skip that engine (T2 remains). Allowlisted argv/cwd/env tweaks only — no arbitrary RCE |
+| `on_engine_spawn` | Before spawn | Skip that engine (T2 remains). Allowlisted argv/cwd/env tweaks only — no arbitrary RCE. Skip/Abort also emit `LogPort` `operation=spawn` (LOG-6) |
 | `on_tier_ready` | After package upgrades tier | Cannot Abort intelligence; logging/metrics only |
 | `on_install_verify` | After hash check, before first exec of a new binary | Refuse the new binary |
 

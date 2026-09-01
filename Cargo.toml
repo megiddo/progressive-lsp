@@ -26,6 +26,7 @@ members = [
     "progressive-lsp-lang-c",
     "progressive-lsp-lang-cpp",
     "progressive-lsp-lang-csharp",
+    "progressive-lsp-log",
     "xtask",
     "poc-ide",
 ]
@@ -60,6 +61,11 @@ progressive-lsp-lang-rust = { path = "progressive-lsp-lang-rust" }
 progressive-lsp-lang-c = { path = "progressive-lsp-lang-c" }
 progressive-lsp-lang-cpp = { path = "progressive-lsp-lang-cpp" }
 progressive-lsp-lang-csharp = { path = "progressive-lsp-lang-csharp" }
+progressive-lsp-log = { path = "progressive-lsp-log" }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-c = "0.23"
@@ -115,6 +121,7 @@ progressive-lsp-resolve.workspace = true
 progressive-lsp-script.workspace = true
 progressive-lsp-watch.workspace = true
 progressive-lsp-workspace.workspace = true
+progressive-lsp-log.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true

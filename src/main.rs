@@ -1,6 +1,5 @@
 fn main() {
-    if let Err(e) = progressive_lsp::run(std::env::args_os()) {
-        eprintln!("{e}");
+    if progressive_lsp::run(std::env::args_os()).is_err() {
         std::process::exit(1);
     }
 }

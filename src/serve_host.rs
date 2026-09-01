@@ -13,11 +13,13 @@ use progressive_lsp_control::{
     WatchSubscribeResponse,
 };
 use progressive_lsp_core::{
-    apply_worktree_excludes, Config, ConfigError, ConfigOverlay, FakeClock, InitializeFailed,
-    PrefixLayout, OVERLAY_DIR_NAME,
+    apply_worktree_excludes, Config, ConfigError, ConfigLoad, ConfigOverlay, FakeClock,
+    InitializeFailed, LogComponent, LogPort, LogScope, NullLog, PackageId, PrefixLayout,
+    OVERLAY_DIR_NAME,
 };
-use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes};
+use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes, EngineSupervisor};
 use progressive_lsp_install::{hex_encode, sha256, Installer, LocalFs, Manifest, ManifestArtifact};
+use progressive_lsp_log::ConfigWarnAdapter;
 use progressive_lsp_protocol::LspIntelligence;
 use progressive_lsp_resolve::{ResolveQuery, ResolveResult};
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
@@ -59,15 +61,26 @@ pub struct ServeHost {
     pending_batches: Mutex<Vec<WatchBatch>>,
     snapshot: Mutex<HashMap<PathBuf, u64>>,
     pending_tier: Mutex<Vec<TierReady>>,
+    log: Arc<dyn LogPort>,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 
 impl ServeHost {
     pub fn new(layout: PrefixLayout) -> Result<Self, ConfigError> {
-        let config = load_config_file(&layout.config_path())?;
+        Self::new_with_log(layout, Arc::new(NullLog))
+    }
+
+    pub fn new_with_log(layout: PrefixLayout, log: Arc<dyn LogPort>) -> Result<Self, ConfigError> {
+        let load = load_config_file(&layout.config_path())?;
+        ConfigWarnAdapter::new(Arc::clone(&log)).emit_warnings(&load.warnings);
         Ok(Self {
-            session: WorkspaceSession::with_prefix_and_t2(&layout, config.t2_for("java")),
+            session: WorkspaceSession::with_prefix_and_t2_log(
+                &layout,
+                load.config.t2_for("java"),
+                Arc::clone(&log),
+            ),
             layout,
-            config: Mutex::new(config),
+            config: Mutex::new(load.config),
             disk_watch: ServeDiskWatch::new(),
             workspace: Mutex::new(None),
             journal: Mutex::new(FilesSinceJournal::new(256)),
@@ -75,7 +88,28 @@ impl ServeHost {
             pending_batches: Mutex::new(Vec::new()),
             snapshot: Mutex::new(HashMap::new()),
             pending_tier: Mutex::new(Vec::new()),
+            log,
+            supervisor: None,
         })
+    }
+
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.session.attach_supervisor(Arc::clone(&supervisor));
+        self.supervisor = Some(supervisor);
+        self
+    }
+
+    fn emit_config_warnings(&self, warnings: &[String]) {
+        ConfigWarnAdapter::new(Arc::clone(&self.log)).emit_warnings(warnings);
+    }
+
+    fn emit_control_status_error(&self, method: &str) {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("control")
+                .component(LogComponent::control()),
+        );
+        self.log.warn(&format!("{method} Status::error"));
     }
 
     pub fn layout(&self) -> &PrefixLayout {
@@ -92,6 +126,7 @@ impl ServeHost {
         let overlay = root.join(OVERLAY_DIR_NAME).join("config.toml");
         if overlay.exists() {
             let extra = load_overlay_file(&overlay).map_err(|e| InitializeFailed(e.to_string()))?;
+            self.emit_config_warnings(&extra.warnings);
             let mut cfg = self.config.lock().expect("config");
             *cfg = cfg.merge(&extra);
         }
@@ -108,7 +143,8 @@ impl ServeHost {
         let mut host = ScriptHost::new(
             Box::new(RhaiEngineFactory),
             Arc::new(FakeClock::at_unix_ms(1)),
-        );
+        )
+        .with_log(Arc::clone(&self.log));
         paths.sort();
         paths.dedup();
         for path in &paths {
@@ -228,11 +264,14 @@ impl ServeHost {
     }
 
     fn reread_disk_config(&self) -> Result<Config, String> {
-        let mut cfg = load_config_file(&self.layout.config_path()).map_err(|e| e.to_string())?;
+        let load = load_config_file(&self.layout.config_path()).map_err(|e| e.to_string())?;
+        self.emit_config_warnings(&load.warnings);
+        let mut cfg = load.config;
         if let Some(root) = self.workspace.lock().expect("ws").as_ref() {
             let overlay = root.join(OVERLAY_DIR_NAME).join("config.toml");
             if overlay.exists() {
                 let extra = load_overlay_file(&overlay).map_err(|e| e.to_string())?;
+                self.emit_config_warnings(&extra.warnings);
                 cfg = cfg.merge(&extra);
             }
         }
@@ -249,15 +288,29 @@ impl ServeHost {
 
 impl LspIntelligence for ServeHost {
     fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(q.file.as_str())
+                .line(q.position.line)
+                .operation("textDocument/definition"),
+        );
         self.poll_disk_watch();
         self.session.resolve(q)
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        let _g = LogScope::enter(LogScope::new().path(path).operation("textDocument/didOpen"));
         self.session.did_open(uri, language_id, text);
     }
 
     fn did_change(&self, uri: &str, text: &str) {
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(path)
+                .operation("textDocument/didChange"),
+        );
         self.session.did_change(uri, text);
     }
 
@@ -281,6 +334,15 @@ impl LspIntelligence for ServeHost {
         self.session.on_initialize(params)?;
         if let Some(root) = root_from_params(params) {
             self.session.discover(&root);
+            if let Some(sup) = &self.supervisor {
+                let pkg = self
+                    .session
+                    .package_ids()
+                    .first()
+                    .map(|s| PackageId::new(s.as_str()))
+                    .unwrap_or_else(|| PackageId::new("pkg"));
+                let _ = sup.try_spawn_registered(&root, &pkg);
+            }
             for id in self.session.package_ids() {
                 self.note_tier_ready(&id, "syntax");
             }
@@ -291,6 +353,12 @@ impl LspIntelligence for ServeHost {
             self.disk_watch.snapshot_root(&self.session);
             let _ = self.poll_disk_watch();
         }
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("initialize")
+                .component(LogComponent::core()),
+        );
+        self.log.info("initialize ok");
         Ok(())
     }
 }
@@ -305,14 +373,19 @@ impl ControlPlane for ServeHost {
 
     fn set_config(&self, req: &SetConfigRequest) -> SetConfigResponse {
         let overlay = match ConfigOverlay::parse(&req.patch_toml) {
-            Ok(o) => o,
+            Ok(o) => {
+                self.emit_config_warnings(&o.warnings);
+                o
+            }
             Err(e) => {
+                self.emit_control_status_error("SetConfig");
                 return SetConfigResponse {
                     status: Some(Status::error(1, e.to_string())),
                 };
             }
         };
         if let Err(e) = self.persist_overlay_or_prefix(&overlay) {
+            self.emit_control_status_error("SetConfig");
             return SetConfigResponse {
                 status: Some(Status::error(1, e)),
             };
@@ -332,15 +405,21 @@ impl ControlPlane for ServeHost {
                     status: Some(Status::ok()),
                 }
             }
-            Err(e) => ReloadConfigResponse {
-                status: Some(Status::error(1, e)),
-            },
+            Err(e) => {
+                self.emit_control_status_error("ReloadConfig");
+                ReloadConfigResponse {
+                    status: Some(Status::error(1, e)),
+                }
+            }
         }
     }
 
     fn install_packs(&self, req: &InstallPacksRequest) -> InstallPacksResponse {
         for raw in &req.packs {
-            if let Err(e) = install_pack_from_inbox_or_stub(&self.layout, raw) {
+            if let Err(e) =
+                install_pack_from_inbox_or_stub(&self.layout, raw, Arc::clone(&self.log))
+            {
+                self.emit_control_status_error("InstallPacks");
                 return InstallPacksResponse {
                     status: Some(Status::error(1, e)),
                 };
@@ -381,6 +460,14 @@ impl ControlPlane for ServeHost {
             }
         }
         let _ = files_since_request::Since::SinceGeneration(0);
+        if ans.truncated {
+            let _g = LogScope::enter(
+                LogScope::new()
+                    .operation("filesSince")
+                    .component(LogComponent::watch()),
+            );
+            self.log.info("FilesSince truncated");
+        }
         ans.to_proto()
     }
 
@@ -444,9 +531,12 @@ impl ControlPlane for ServeHost {
             Ok(()) => ReloadScriptsResponse {
                 status: Some(Status::ok()),
             },
-            Err(e) => ReloadScriptsResponse {
-                status: Some(Status::error(1, e.0)),
-            },
+            Err(e) => {
+                self.emit_control_status_error("ReloadScripts");
+                ReloadScriptsResponse {
+                    status: Some(Status::error(1, e.0)),
+                }
+            }
         }
     }
 }
@@ -483,13 +573,16 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-fn load_config_file(path: &Path) -> Result<Config, ConfigError> {
+fn load_config_file(path: &Path) -> Result<ConfigLoad, ConfigError> {
     if !path.exists() {
-        return Ok(Config::empty());
+        return Ok(ConfigLoad {
+            config: Config::empty(),
+            warnings: Vec::new(),
+        });
     }
     let src = std::fs::read_to_string(path)
         .map_err(|e| ConfigError::Io(format!("read {}: {e}", path.display())))?;
-    Ok(Config::from_toml(&src)?.config)
+    Config::from_toml(&src)
 }
 
 fn load_overlay_file(path: &Path) -> Result<ConfigOverlay, ConfigError> {
@@ -506,7 +599,11 @@ fn mtime_stamp(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-fn script_paths_on_chain(layout: &PrefixLayout, workspace: Option<&Path>, cfg: &Config) -> Vec<PathBuf> {
+fn script_paths_on_chain(
+    layout: &PrefixLayout,
+    workspace: Option<&Path>,
+    cfg: &Config,
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut dirs = vec![layout.scripts_dir()];
     if let Some(ws) = workspace {
@@ -565,7 +662,11 @@ fn parse_sha256_hex(hex: &str) -> Result<[u8; 32], String> {
 }
 
 /// Inbox: `$PREFIX/inbox/<pack>/payload` + `expected.sha256`. Else stub bytes (CLI install).
-fn install_pack_from_inbox_or_stub(layout: &PrefixLayout, raw: &str) -> Result<(), String> {
+fn install_pack_from_inbox_or_stub(
+    layout: &PrefixLayout,
+    raw: &str,
+    log: Arc<dyn LogPort>,
+) -> Result<(), String> {
     let pack = canonical_pack(raw);
     let binary = binary_name_for_pack(pack).ok_or_else(|| format!("unknown pack {raw}"))?;
     let inbox_named = layout.root().join("inbox").join(raw);
@@ -577,7 +678,8 @@ fn install_pack_from_inbox_or_stub(layout: &PrefixLayout, raw: &str) -> Result<(
     };
     let (bytes, expected) = if inbox.join("payload").is_file() {
         let bytes = std::fs::read(inbox.join("payload")).map_err(|e| e.to_string())?;
-        let hex = std::fs::read_to_string(inbox.join("expected.sha256")).map_err(|e| e.to_string())?;
+        let hex =
+            std::fs::read_to_string(inbox.join("expected.sha256")).map_err(|e| e.to_string())?;
         (bytes, parse_sha256_hex(&hex)?)
     } else {
         let bytes = stub_pack_bytes(pack, binary);
@@ -587,7 +689,7 @@ fn install_pack_from_inbox_or_stub(layout: &PrefixLayout, raw: &str) -> Result<(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let installer = Installer::new(LocalFs);
+    let installer = Installer::new(LocalFs).with_log(log);
     let plan = installer
         .plan(dest.clone(), bytes, expected, true)
         .map_err(|e| e.to_string())?;
@@ -651,11 +753,11 @@ mod tests {
         );
         assert_eq!(root_from_params(&serde_json::json!({})), None);
         assert_eq!(root_from_params(&serde_json::json!({"rootUri": ""})), None);
-        assert_eq!(root_from_params(&serde_json::json!({"rootUri": "null"})), None);
         assert_eq!(
-            root_from_params(&serde_json::json!({"rootPath": ""})),
+            root_from_params(&serde_json::json!({"rootUri": "null"})),
             None
         );
+        assert_eq!(root_from_params(&serde_json::json!({"rootPath": ""})), None);
         assert_eq!(
             root_from_params(&serde_json::json!({"rootUri": "/plain"})),
             Some(PathBuf::from("/plain"))
@@ -707,6 +809,34 @@ mod tests {
     }
 
     #[test]
+    fn host_did_open_change_definition_log_scope_is_context_object() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        host.did_open("file:///T.java", "java", "class T {}");
+        host.did_change("file:///T.java", "class T { void a() {} }");
+        let q = ResolveQuery::new(
+            progressive_lsp_core::FileId::new("/T.java"),
+            progressive_lsp_resolve::Position::new(0, 1),
+            progressive_lsp_resolve::QueryKind::Definition,
+        );
+        let _ = host.resolve(&q);
+        let ops: Vec<_> = log
+            .records()
+            .iter()
+            .filter_map(|r| r.operation.clone())
+            .collect();
+        assert!(ops.iter().any(|o| o == "textDocument/didOpen"), "{ops:?}");
+        assert!(ops.iter().any(|o| o == "textDocument/didChange"), "{ops:?}");
+        assert!(
+            ops.iter().any(|o| o == "textDocument/definition"),
+            "{ops:?}"
+        );
+    }
+
+    #[test]
     fn initialize_without_root_skips_exclude() {
         let prefix = tempfile::tempdir().unwrap();
         let layout = PrefixLayout::from_path(prefix.path());
@@ -730,6 +860,36 @@ mod tests {
             "rootPath": workspace.path().to_string_lossy()
         }))
         .unwrap();
+    }
+
+    #[test]
+    fn config_load_warnings_emit_via_config_warn_adapter() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(layout.config_path(), "future = 1\n").unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.operation.as_deref() == Some("config") && r.message.contains("future")),
+            "{:?}",
+            log.records()
+        );
+        let overlay_dir = workspace.path().join(OVERLAY_DIR_NAME);
+        std::fs::create_dir_all(&overlay_dir).unwrap();
+        std::fs::write(overlay_dir.join("config.toml"), "extra = 2\n").unwrap();
+        host.on_initialize(&serde_json::json!({
+            "rootPath": workspace.path().to_string_lossy()
+        }))
+        .unwrap();
+        assert!(
+            log.records().iter().any(|r| r.message.contains("extra")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[test]
@@ -782,7 +942,8 @@ mod tests {
         );
         let found = host.resolve(&q);
         assert!(
-            found.locations.iter().any(|l| l.uri.contains("Lib.java")) || !found.locations.is_empty(),
+            found.locations.iter().any(|l| l.uri.contains("Lib.java"))
+                || !found.locations.is_empty(),
             "{found:?}"
         );
         std::fs::write(
@@ -828,20 +989,20 @@ mod tests {
             .unwrap()
             .is_ok());
         let after_t2 = host.get_config(&GetConfigRequest {});
-        assert!(
-            after_t2.toml.contains("stack-graphs"),
-            "{}",
-            after_t2.toml
+        assert!(after_t2.toml.contains("stack-graphs"), "{}", after_t2.toml);
+        assert_eq!(
+            host.merged_config().t2_for("java"),
+            progressive_lsp_core::T2Backend::StackGraphs
         );
-        assert_eq!(host.merged_config().t2_for("java"), progressive_lsp_core::T2Backend::StackGraphs);
-        assert!(host
-            .set_config(&SetConfigRequest {
+        assert!(
+            host.set_config(&SetConfigRequest {
                 patch_toml: "[[".into(),
             })
             .status
             .unwrap()
             .code
-            != 0);
+                != 0
+        );
         assert!(host
             .set_config(&SetConfigRequest {
                 patch_toml: "packs = [\"python\"]\n".into(),
@@ -849,16 +1010,34 @@ mod tests {
             .status
             .unwrap()
             .is_ok());
-        assert!(host.get_config(&GetConfigRequest {}).toml.contains("python"));
+        assert!(host
+            .get_config(&GetConfigRequest {})
+            .toml
+            .contains("python"));
         std::fs::write(layout.config_path(), "packs = [\"go\"]\n").unwrap();
-        assert!(host.reload_config(&ReloadConfigRequest {}).status.unwrap().is_ok());
-        assert!(host.get_config(&GetConfigRequest {}).toml.contains("python") || host.get_config(&GetConfigRequest {}).toml.contains("go"));
-        assert!(host.watch_subscribe(&WatchSubscribeRequest {}).status.unwrap().is_ok());
+        assert!(host
+            .reload_config(&ReloadConfigRequest {})
+            .status
+            .unwrap()
+            .is_ok());
+        assert!(
+            host.get_config(&GetConfigRequest {})
+                .toml
+                .contains("python")
+                || host.get_config(&GetConfigRequest {}).toml.contains("go")
+        );
+        assert!(host
+            .watch_subscribe(&WatchSubscribeRequest {})
+            .status
+            .unwrap()
+            .is_ok());
         std::fs::write(src.join("New.java"), "class New {}\n").unwrap();
         host.poll_disk_watch();
         let batches = host.take_watch_batches();
         assert!(
-            batches.iter().any(|b| b.events.iter().any(|e| e.path.contains("New.java")))
+            batches
+                .iter()
+                .any(|b| b.events.iter().any(|e| e.path.contains("New.java")))
                 || host
                     .files_since(&FilesSinceRequest {
                         since: Some(files_since_request::Since::SinceUnixMs(0)),
@@ -873,7 +1052,13 @@ mod tests {
         let tiers = host.tier_status(&TierStatusRequest {});
         assert!(tiers.status.unwrap().is_ok());
         let ready = host.take_tier_ready();
-        assert!(ready.iter().any(|r| r.tier == "syntax" || r.tier == "graph") || ready.is_empty() || !tiers.rows.is_empty());
+        assert!(
+            ready
+                .iter()
+                .any(|r| r.tier == "syntax" || r.tier == "graph")
+                || ready.is_empty()
+                || !tiers.rows.is_empty()
+        );
         let inbox = layout.root().join("inbox/ty");
         std::fs::create_dir_all(&inbox).unwrap();
         std::fs::write(inbox.join("payload"), b"wrong-bytes").unwrap();
@@ -892,10 +1077,16 @@ mod tests {
         assert!(parse_sha256_hex("zz").is_err());
         assert_eq!(canonical_pack("ty"), "python");
         assert_eq!(canonical_pack("python"), "python");
-        assert!(script_paths_on_chain(&layout, Some(workspace.path()), &Config::empty()).is_empty()
-            || true);
+        assert!(
+            script_paths_on_chain(&layout, Some(workspace.path()), &Config::empty()).is_empty()
+                || true
+        );
         let _ = host.last_watch_batch();
-        assert!(host.reload_scripts(&ReloadScriptsRequest {}).status.unwrap().is_ok());
+        assert!(host
+            .reload_scripts(&ReloadScriptsRequest {})
+            .status
+            .unwrap()
+            .is_ok());
     }
 
     #[test]
@@ -910,12 +1101,23 @@ mod tests {
         )
         .unwrap();
         std::fs::write(layout.config_path(), "scripts = [\"abort.rhai\"]\n").unwrap();
-        let host = ServeHost::new(layout).unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
         let err = host.on_initialize(&serde_json::json!({
             "rootPath": workspace.path().to_string_lossy()
         }));
         assert!(err.is_err(), "{err:?}");
         assert!(err.unwrap_err().0.contains("nope"));
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("script")
+                    && r.message.contains("on_bootstrap abort")),
+            "{:?}",
+            log.records()
+        );
     }
 
     #[test]
@@ -923,9 +1125,207 @@ mod tests {
         let prefix = tempfile::tempdir().unwrap();
         let layout = PrefixLayout::from_path(prefix.path());
         layout.ensure_dirs().unwrap();
-        install_pack_from_inbox_or_stub(&layout, "python").unwrap();
+        install_pack_from_inbox_or_stub(&layout, "python", Arc::new(NullLog)).unwrap();
         assert!(layout.engines_dir().join("python/ty").is_file());
-        assert!(install_pack_from_inbox_or_stub(&layout, "nope").is_err());
-        assert_eq!(mtime_stamp(&std::fs::metadata(prefix.path()).unwrap()) > 0 || true, true);
+        assert!(install_pack_from_inbox_or_stub(&layout, "nope", Arc::new(NullLog)).is_err());
+        assert_eq!(
+            mtime_stamp(&std::fs::metadata(prefix.path()).unwrap()) > 0 || true,
+            true
+        );
+    }
+
+    #[test]
+    fn initialize_holds_supervisor_and_try_spawns_stub_refuse() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("App.java"), "class App {}\n").unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        install_pack_from_inbox_or_stub(&layout, "python", Arc::new(NullLog)).unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let mut sup = EngineSupervisor::new(Arc::new(FakeClock::at_unix_ms(1)), layout.clone())
+            .with_log(Arc::new(log.clone()));
+        sup.register(Box::new(progressive_lsp_engine::PackAdapter::python()));
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone()))
+            .unwrap()
+            .with_supervisor(Arc::new(sup));
+        host.on_initialize(&serde_json::json!({
+            "rootPath": workspace.path().to_string_lossy()
+        }))
+        .unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("spawn")
+                    && r.component.as_ref().map(|c| c.as_str()) == Some("engine")
+                    && r.message.contains("stub pack")),
+            "{:?}",
+            log.records()
+        );
+    }
+
+    #[test]
+    fn control_plane_status_error_emits_operation_control() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout.clone(), Arc::new(log.clone())).unwrap();
+        const LEAK: &str = "LEAK_TOML_BODY";
+        assert!(
+            host.set_config(&SetConfigRequest {
+                patch_toml: format!("[[ {LEAK}"),
+            })
+            .status
+            .unwrap()
+            .code
+                != 0
+        );
+        std::fs::remove_file(layout.config_path()).ok();
+        std::fs::create_dir_all(layout.config_path()).unwrap();
+        assert!(
+            host.set_config(&SetConfigRequest {
+                patch_toml: "packs = [\"python\"]\n".into(),
+            })
+            .status
+            .unwrap()
+            .code
+                != 0
+        );
+        assert!(
+            host.reload_config(&ReloadConfigRequest {})
+                .status
+                .unwrap()
+                .code
+                != 0
+        );
+        std::fs::remove_dir_all(layout.config_path()).unwrap();
+        std::fs::write(layout.config_path(), "scripts = [\"abort.rhai\"]\n").unwrap();
+        std::fs::write(
+            layout.scripts_dir().join("abort.rhai"),
+            "fn on_bootstrap() { abort(\"nope\"); }\n",
+        )
+        .unwrap();
+        assert!(host
+            .reload_config(&ReloadConfigRequest {})
+            .status
+            .unwrap()
+            .is_ok());
+        assert!(
+            host.reload_scripts(&ReloadScriptsRequest {})
+                .status
+                .unwrap()
+                .code
+                != 0
+        );
+        assert!(
+            host.install_packs(&InstallPacksRequest {
+                packs: vec!["nope".into()],
+            })
+            .status
+            .unwrap()
+            .code
+                != 0
+        );
+        let recs = log.records();
+        for method in ["SetConfig", "ReloadConfig", "ReloadScripts", "InstallPacks"] {
+            assert!(
+                recs.iter()
+                    .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                        && r.operation.as_deref() == Some("control")
+                        && r.component.as_ref().map(|c| c.as_str()) == Some("control")
+                        && r.message.contains(method)
+                        && r.message.contains("Status::error")),
+                "{method} missing in {recs:?}"
+            );
+        }
+        for r in &recs {
+            assert!(!r.message.contains(LEAK), "body leaked: {}", r.message);
+        }
+    }
+
+    #[test]
+    fn initialize_success_and_files_since_truncated_emit() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        host.on_initialize(&serde_json::json!({
+            "rootPath": workspace.path().to_string_lossy()
+        }))
+        .unwrap();
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("initialize")
+                    && r.message.contains("initialize ok")),
+            "{:?}",
+            log.records()
+        );
+        host.journal.lock().expect("journal").mark_overflow(3);
+        let ans = host.files_since(&FilesSinceRequest {
+            since: Some(files_since_request::Since::SinceGeneration(0)),
+        });
+        assert!(ans.truncated);
+        let truncated_rows = log
+            .records()
+            .iter()
+            .filter(|r| {
+                r.level == progressive_lsp_core::LogLevel::Info
+                    && r.operation.as_deref() == Some("filesSince")
+                    && r.message.contains("truncated")
+            })
+            .count();
+        assert_eq!(truncated_rows, 1, "{:?}", log.records());
+        let untruncated = host.files_since(&FilesSinceRequest { since: None });
+        assert!(!untruncated.truncated);
+        let after = log
+            .records()
+            .iter()
+            .filter(|r| r.operation.as_deref() == Some("filesSince"))
+            .count();
+        assert_eq!(after, truncated_rows);
+    }
+
+    #[test]
+    fn initialize_fail_is_log_and_jsonrpc_32002() {
+        let prefix = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(
+            layout.scripts_dir().join("abort.rhai"),
+            "fn on_bootstrap() { abort(\"nope\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(layout.config_path(), "scripts = [\"abort.rhai\"]\n").unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let host = ServeHost::new_with_log(layout, Arc::new(log.clone())).unwrap();
+        let facade = progressive_lsp_protocol::LspFacade::new(None, false)
+            .with_log(Arc::new(log.clone()))
+            .with_intelligence(Arc::new(host));
+        let resp = facade
+            .handle_request(&progressive_lsp_protocol::rpc::JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(serde_json::json!(1)),
+                method: "initialize".into(),
+                params: serde_json::json!({
+                    "rootPath": workspace.path().to_string_lossy()
+                }),
+            })
+            .unwrap();
+        assert_eq!(resp["error"]["code"], -32002);
+        assert!(
+            log.records()
+                .iter()
+                .any(|r| r.level == progressive_lsp_core::LogLevel::Warn
+                    && r.operation.as_deref() == Some("initialize")),
+            "{:?}",
+            log.records()
+        );
     }
 }
