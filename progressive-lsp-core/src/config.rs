@@ -559,6 +559,28 @@ path = "/tmp/serve.sqlite"
     }
 
     #[test]
+    fn log_level_env_is_resolved_outside_overlay() {
+        use crate::log::ENV_LOG_LEVEL;
+        use std::ffi::OsString;
+        assert_eq!(ENV_LOG_LEVEL, "PROGRESSIVE_LSP_LOG_LEVEL");
+        let load = Config::from_toml("[log]\nlevel = \"warn\"\n").unwrap();
+        assert_eq!(load.config.log_level, LogLevel::Warn);
+        let (from_unset, warn) = LogLevel::from_env_or_config(None, load.config.log_level);
+        assert_eq!(from_unset, LogLevel::Warn);
+        assert!(warn.is_none());
+        let env = OsString::from("trace");
+        let (from_env, warn) =
+            LogLevel::from_env_or_config(Some(env.as_os_str()), load.config.log_level);
+        assert_eq!(from_env, LogLevel::Trace);
+        assert!(warn.is_none());
+        let bad = OsString::from("verbose");
+        let (from_bad, warn) =
+            LogLevel::from_env_or_config(Some(bad.as_os_str()), load.config.log_level);
+        assert_eq!(from_bad, LogLevel::Info);
+        assert!(warn.expect("invalid env").contains("verbose"));
+    }
+
+    #[test]
     fn invalid_log_level_warns_and_defaults_to_info() {
         let load = Config::from_toml("[log]\nlevel = \"verbose\"\n").unwrap();
         assert_eq!(load.config.log_level, LogLevel::Info);

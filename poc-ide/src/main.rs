@@ -4,7 +4,7 @@ mod ui;
 
 use std::path::PathBuf;
 
-use poc_ide::{RunLog, SystemClock};
+use poc_ide::{ControlSocketPath, RunLog, SystemClock};
 
 fn main() -> eframe::Result<()> {
     let launch = parse_args(std::env::args().skip(1));
@@ -26,7 +26,10 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(ui::PocIdeApp::new(
                 launch.folder,
                 launch.file,
-                launch.control_socket,
+                Some(
+                    ControlSocketPath::resolve_default(launch.control_socket.as_deref())
+                        .into_path(),
+                ),
                 run_log,
             )))
         }),

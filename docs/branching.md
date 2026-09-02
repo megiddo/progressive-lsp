@@ -66,6 +66,16 @@ main   # after poc-discover-log merge (current main)
 
 LOG-0–LOG-11 are **signed off**. Stack complete at `log11`. Do not reopen them. Parent of `log11` is `log10`. There is no `log12`. **Supersedes** “stack complete at `log4` / do not open `log5`.”
 
+POC-proof stack starts from **current `main`** (after the log11 merge), not from `log11` or `poc-discover-log` history:
+
+```text
+main   # after log11 merge
+  └── poc-proof-log
+        └── poc-lsp-async
+              └── poc-tier-status
+                    └── poc-no-stall
+```
+
 ## Rules
 
 1. **Scope:** a branch contains that milestone’s work packages only ([implementation-plan.md](implementation-plan.md)). No extra language packs on `m1`.

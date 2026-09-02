@@ -56,6 +56,12 @@ main   # after poc-discover-log merge (current main)
                                                         └── log9   # durable WAL fallback
                                                               └── log10  # child capture (FakeChildStderr)
                                                                     └── log11  # operational Err hygiene
+
+main   # after log11 merge
+  └── poc-proof-log   # empty F12 info; LOG_LEVEL env; poc-ide debug spawn
+        └── poc-lsp-async   # LSP/control IO threads (do not start from poc-proof-log)
+              └── poc-tier-status
+                    └── poc-no-stall
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -528,6 +534,28 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 - [x] Docs in this tree updated if a locked decision was refined
 - [x] [design-patterns.md](design-patterns.md) — no new type; Domain Result row names the hygiene gate
 
+## poc-proof-log (`poc-proof-log` branch)
+
+**Status: SIGNED OFF** on `poc-proof-log`. Parent is current `main` (log11 merge / `a0f10a2`). Do not start `poc-lsp-async` from this branch. Do not reopen LOG-0–LOG-11. `RunLog` stays a separate schema from the serve WAL.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PPL-1 | Empty F12 / implementation / references is **info** with extras (`location_count=0`, path, line, character, language_id, package_id, tier) | log11 | **SIGNED OFF.** Non-empty stays debug. `didChange` stays debug. |
+| PPL-2 | `PROGRESSIVE_LSP_LOG_LEVEL` overrides `[log].level`; invalid → warn + `info` | PPL-1 | **SIGNED OFF.** `LogLevel::from_env_or_config` + `LevelFilter`. Stock Neovim without the env stays info. |
+| PPL-3 | poc-ide default `ControlSocket`, child `LOG_LEVEL=debug`, stderr→RunLog, `ProofStatus` footer | PPL-2 | **SIGNED OFF.** `run_start` records binary / argv / level / both sqlite paths. |
+| PPL-4 | `xtask poc` builds serve then runs poc-ide with `PROGRESSIVE_LSP` | PPL-3 | **SIGNED OFF.** Supported proof launch. Args after `--` forward. Spawn shell N/A. |
+
+**Sign-off checklist (poc-proof-log)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (core 72; composition-root lib 68; poc-ide lib 176; xtask 30; hygiene 6)
+- [x] 95% llvm-cov on crates that exist — **96.10%** lines
+- [x] 80% mutants on listed crates that changed — core in-diff **7/7 (100%)**; poc-ide in-diff **34/37 (91.9%)**; composition-root session/lib in-diff **13/13 (100%)**; combined **54/57 (94.7%)**
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (musl ELF story unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `LevelFilter`, `ProofStatus`, `ChildStderrDrain`, `ServeSpawn`, `ControlSocketPath`, `ServeWalPath`, `RunStart`, `PocArgs`
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -547,3 +575,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off; `logN+1` until `logN` signed off).
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
+8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. Do not start `poc-lsp-async` from `poc-proof-log`.

@@ -1,10 +1,11 @@
-//! cargo xtask: musl, check-static, bench-alloc.
+//! cargo xtask: musl, check-static, bench-alloc, poc.
 
 mod allocator;
 mod check_static;
 mod dist;
 mod musl;
 mod perf;
+mod poc;
 mod tarball;
 
 use std::env;
@@ -26,6 +27,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "bench-alloc" => allocator::run(&args[1..]),
         "bench-perf" => perf::run(&args[1..]),
         "dist" => dist::run(&args[1..]),
+        "poc" => poc::run(&args[1..]),
         "help" | "-h" | "--help" => {
             print_help();
             Ok(())
@@ -42,6 +44,7 @@ xtask check-static <ELF>...
 xtask bench-alloc
 xtask bench-perf
 xtask dist [--slim|--full|--pack slim|full|python,rust,...] [--libc musl|glibc-static] --dest DIR
+xtask poc [-- <poc-ide args>...]
 "
     );
 }
@@ -61,6 +64,7 @@ mod tests {
     fn help_and_unknown() {
         run(vec!["help".into()]).unwrap();
         assert!(run(vec!["nope".into()]).is_err());
+        run(vec!["poc".into(), "--help".into()]).unwrap();
         print_help();
         assert!(workspace_root().join("Cargo.toml").is_file());
     }

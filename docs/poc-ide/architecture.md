@@ -28,12 +28,14 @@ poc-ide/                     workspace member; not a musl artifact
   src/discover.rs           DiscoverCommand, DiscoverKind
   src/highlight.rs          Highlighter (syntect)
   src/conflict.rs           ConflictModal, ConflictChoice
-  src/language.rs            LanguageCatalog, ServeMode
-  src/lsp.rs                LspClient Facade, LspLocation, SpawnSpec, StdioLsp
+  src/language.rs            LanguageCatalog, ServeMode, ControlSocketPath
+  src/lsp.rs                LspClient Facade, LspLocation, SpawnSpec, ServeSpawn, StdioLsp
   src/control.rs             ControlClient Adapter, UnixControl
   src/console.rs             ProtocolConsole Facade, TranscriptEntry (lib + unit tests; not wired in the bin)
   src/watch.rs              DiskWatch Observer, NotifyWatch
-  src/log.rs                RunLog Repository (per-run sqlite debug sink)
+  src/log.rs                RunLog Repository (per-run sqlite debug sink; separate schema from serve WAL)
+  src/child_stderr.rs       ChildStderrDrain Observer (serve stderr → RunLog)
+  src/proof.rs              ProofStatus DTO the footer renders
 ```
 
 **Dependency rule:** the lib does not import `egui` / `eframe` / `egui_dock` / `rfd`. Those belong in `main.rs`. Tests never open a window.
@@ -66,7 +68,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 
 Prefer a **local `ClockPort`** in poc-ide (same invariant: tests never `thread::sleep`) rather than depending on `progressive-lsp-core`. Do not take a dependency on core just for the clock.
 
-`RunLog` is a per-process sqlite Repository. Each `cargo run -p poc-ide` writes a new file under `$HOME/.progressivelsp/poc-ide-runs/poc-ide-{unix_ms}-{pid}.sqlite` (override with `POC_IDE_LOG_DIR`). Tests inject `:memory:` or a tempfile path. Rows are `timestamp_ms`, `category`, `event`, optional JSON payload (method + error, never file bodies / clipboard / secrets). Discover rows also store `path`, `uri`, `line`, `character`, `location_count`. A failed write is `IdeError::Log` and is ignored at the composition root — the editor does not panic.
+`RunLog` is a per-process sqlite Repository. Each `cargo xtask poc` (supported launch) writes a new file under `$HOME/.progressivelsp/poc-ide-runs/poc-ide-{unix_ms}-{pid}.sqlite` (override with `POC_IDE_LOG_DIR`). Tests inject `:memory:` or a tempfile path. Rows are `timestamp_ms`, `category`, `event`, optional JSON payload (method + error, never file bodies / clipboard / secrets). Discover rows also store `path`, `uri`, `line`, `character`, `location_count`. Child stderr lines are `category=lsp`, `event=child_stderr`. `run_start` records the resolved binary, argv, log level, RunLog path, and serve WAL path (or “not open yet”). A failed write is `IdeError::Log` and is ignored at the composition root — the editor does not panic. Do **not** merge this schema with the server WAL.
 
 ## LSP client
 
@@ -77,11 +79,11 @@ Content-Length JSON-RPC, same shape as the integration harness, **copied as a ne
 - `textDocument/definition` / `implementation` / `references`
 - Read `capabilities.experimental.progressiveLsp` (socket may be null in stock mode)
 
-Unknown server methods on `ProtocolConsole` (lib/tests): send anyway; record the JSON-RPC error. Jump targets are `LspLocation` (uri + range). `SpawnSpec` resolves the `progressive-lsp` binary (env, then `target/{debug,release}/progressive-lsp`, then `PATH`); missing binary is a domain error, not a panic.
+Unknown server methods on `ProtocolConsole` (lib/tests): send anyway; record the JSON-RPC error. Jump targets are `LspLocation` (uri + range). `SpawnSpec` resolves the `progressive-lsp` binary (env, then `target/{debug,release}/progressive-lsp`, then `PATH`); missing binary is a domain error, not a panic. poc-proof-log default spawn is `ServeMode::ControlSocket` with an owned socket (CLI path, else `$PREFIX/run/poc-ide.sock`, else temp). The child always gets `PROGRESSIVE_LSP_LOG_LEVEL=debug` and `stderr(Stdio::piped())` into `ChildStderrDrain` → `RunLog`. stdout stays JSON-RPC. Do not inherit stderr into the GUI tty.
 
 ## Control client
 
-Only when `ServeMode::ControlSocket`. Spawn:
+Default spawn is `ServeMode::ControlSocket`. Spawn:
 
 ```text
 progressive-lsp serve --control-socket PATH [--prefix DIR]
@@ -118,6 +120,7 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 - Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References; they run `DiscoverCommand` (same path as Navigate / F12). Navigate records `PendingDiscover` and applies after the menu UI.
 - Modal: `egui::Modal` / `Window` for `ConflictModal`.
 - No bottom protocol console. Debug is `RunLog` sqlite, not a hand-typed inspector.
+- Footer (`ProofStatus`): binary basename, log level, RunLog path, serve WAL path (or “WAL not open yet”), last discover (`definition L23:88 → 0 locations`) from RunLog discover rows.
 
 ## Failure modes
 

@@ -1,7 +1,7 @@
 //! `LanguageCatalog` Registry and `ServeMode` Strategy.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::IdeError;
 
@@ -49,12 +49,77 @@ impl LanguageCatalog {
     }
 }
 
-/// Stock stdio vs control-socket. [`ServeMode::ControlSocket`] spawns
-/// `serve --control-socket PATH`. `--mux` is `pending_mux` and is never an argv.
+/// Stock stdio vs control-socket. Default is [`ServeMode::ControlSocket`] with
+/// an owned [`ControlSocketPath`]. [`ServeMode::StockStdio`] stays an explicit
+/// variant. `--mux` is `pending_mux` and is never an argv.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ServeMode {
     StockStdio,
     ControlSocket,
+}
+
+/// Value object. CLI path, else `$PREFIX/run/poc-ide.sock`, else temp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControlSocketPath {
+    path: PathBuf,
+}
+
+impl ControlSocketPath {
+    pub const FILE_NAME: &'static str = "poc-ide.sock";
+
+    pub fn from_path(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    /// Tests inject prefix / home / temp so they never require `$HOME`.
+    pub fn resolve_in(
+        cli: Option<&Path>,
+        prefix_home: Option<&str>,
+        home: Option<&str>,
+        temp_dir: &Path,
+    ) -> Self {
+        if let Some(path) = cli {
+            if !path.as_os_str().is_empty() {
+                return Self::from_path(path);
+            }
+        }
+        if let Some(prefix) = prefix_home.filter(|s| !s.is_empty()) {
+            return Self::from_path(Path::new(prefix).join("run").join(Self::FILE_NAME));
+        }
+        if let Some(home) = home.filter(|s| !s.is_empty()) {
+            return Self::from_path(
+                Path::new(home)
+                    .join(".progressivelsp")
+                    .join("run")
+                    .join(Self::FILE_NAME),
+            );
+        }
+        Self::from_path(temp_dir.join(Self::FILE_NAME))
+    }
+
+    pub fn resolve_default(cli: Option<&Path>) -> Self {
+        Self::resolve_in(
+            cli,
+            std::env::var("PROGRESSIVE_LSP_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+            &std::env::temp_dir(),
+        )
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn into_path(self) -> PathBuf {
+        self.path
+    }
+
+    pub fn ensure_parent(&self) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
 }
 
 impl ServeMode {
@@ -99,7 +164,7 @@ impl ServeMode {
 
 impl Default for ServeMode {
     fn default() -> Self {
-        Self::StockStdio
+        Self::ControlSocket
     }
 }
 
@@ -209,7 +274,7 @@ mod tests {
         assert!(ServeMode::ControlSocket.is_control_socket());
         assert!(!ServeMode::ControlSocket.is_stock_stdio());
         assert_eq!(ServeMode::ControlSocket.as_str(), "control-socket");
-        assert_eq!(ServeMode::default(), ServeMode::StockStdio);
+        assert_eq!(ServeMode::default(), ServeMode::ControlSocket);
         assert_eq!(ServeMode::parse("stock-stdio"), Some(ServeMode::StockStdio));
         assert_eq!(
             ServeMode::parse("control-socket"),
@@ -238,5 +303,56 @@ mod tests {
         assert_eq!(ctrl, vec!["serve", "--control-socket", "/tmp/plsp.sock"]);
         assert!(!ctrl.iter().any(|a| a.contains("mux")));
         assert_eq!(ctrl.iter().filter(|a| *a == "--mux").count(), 0);
+    }
+
+    #[test]
+    fn control_socket_path_value_object_resolve_order() {
+        // Value object: CLI → prefix → home → temp. ServeMode does not own the path.
+        assert_eq!(ServeMode::default(), ServeMode::ControlSocket);
+        assert!(ServeMode::default().is_control_socket());
+        let owned =
+            ControlSocketPath::resolve_in(None, Some("/pfx"), Some("/home/me"), Path::new("/tmp"));
+        assert_eq!(owned.as_path(), Path::new("/pfx/run/poc-ide.sock"));
+        let args = ServeMode::default()
+            .serve_args(Some(owned.as_path()))
+            .unwrap();
+        assert_eq!(
+            args,
+            vec!["serve", "--control-socket", "/pfx/run/poc-ide.sock"]
+        );
+        assert!(ServeMode::default()
+            .serve_args(None)
+            .unwrap_err()
+            .is_control_socket_missing());
+
+        let cli = ControlSocketPath::resolve_in(
+            Some(Path::new("/cli.sock")),
+            Some("/pfx"),
+            Some("/home/me"),
+            Path::new("/tmp"),
+        );
+        assert_eq!(cli.as_path(), Path::new("/cli.sock"));
+        let via_home =
+            ControlSocketPath::resolve_in(None, None, Some("/home/me"), Path::new("/tmp"));
+        assert_eq!(
+            via_home.as_path(),
+            Path::new("/home/me/.progressivelsp/run/poc-ide.sock")
+        );
+        let via_temp = ControlSocketPath::resolve_in(None, None, None, Path::new("/tmp"));
+        assert_eq!(via_temp.as_path(), Path::new("/tmp/poc-ide.sock"));
+        let empty_cli = ControlSocketPath::resolve_in(
+            Some(Path::new("")),
+            Some("/pfx"),
+            None,
+            Path::new("/tmp"),
+        );
+        assert_eq!(empty_cli.as_path(), Path::new("/pfx/run/poc-ide.sock"));
+        let copied = ControlSocketPath::from_path("/x.sock");
+        assert_eq!(copied.into_path(), PathBuf::from("/x.sock"));
+        assert_eq!(ControlSocketPath::FILE_NAME, "poc-ide.sock");
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = ControlSocketPath::from_path(tmp.path().join("run").join("poc-ide.sock"));
+        nested.ensure_parent().unwrap();
+        assert!(tmp.path().join("run").is_dir());
     }
 }

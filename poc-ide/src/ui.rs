@@ -6,14 +6,15 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
-    ControlClient, CursorOffsets, DialogOutcome, DialogPort, DiscoverKind, DiskEvent, DiskWatch,
-    EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, IdeError, LayoutState, LspClient,
-    LspSessionState, NotifyWatch, OpenBuffer, PendingDialog, PendingDiscover, RunLog, Selection,
-    ServeMode, SpawnSpec, StdFs, StdioLsp, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl,
+    advertised_control_socket, BufferMap, ChildStderrDrain, ClipboardPort, CompactChain,
+    ConflictChoice, ControlClient, ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort,
+    DiscoverKind, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan, Highlighter,
+    IdeError, LayoutState, LspClient, LspSessionState, NotifyWatch, OpenBuffer, PendingDialog,
+    PendingDiscover, ProofStatus, RunLog, Selection, ServeMode, ServeSpawn, ServeWalPath,
+    SpawnSpec, StdFs, StdioLsp, SystemClock, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl,
     WatchPort, WorkspaceRoot,
 };
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 /// Native `rfd` Adapter. Tests never construct this type.
 pub struct RfdDialog;
@@ -120,7 +121,9 @@ pub struct PocIdeApp {
     lsp_session: LspSessionState,
     lsp_error: Option<String>,
     serve_mode: ServeMode,
-    control_socket_path: Option<PathBuf>,
+    serve_spawn: ServeSpawn,
+    spawn_binary: Option<PathBuf>,
+    stderr_drain: Option<Arc<ChildStderrDrain>>,
     /// Live Envelope connection when `ServeMode::ControlSocket`. Held so the
     /// socket stays up; the bin has no inspector that sends through it.
     #[allow(dead_code)]
@@ -139,11 +142,23 @@ impl PocIdeApp {
         control_socket: Option<PathBuf>,
         run_log: RunLog,
     ) -> Self {
-        let serve_mode = if control_socket.is_some() {
-            ServeMode::ControlSocket
-        } else {
-            ServeMode::StockStdio
-        };
+        let socket = ControlSocketPath::resolve_default(control_socket.as_deref());
+        let _ = socket.ensure_parent();
+        let wal = ServeWalPath::resolve_default(&SystemClock);
+        let _ = wal.ensure_parent();
+        let serve_mode = ServeMode::ControlSocket;
+        let serve_spawn = ServeSpawn::new(
+            serve_mode,
+            Some(socket.as_path()),
+            Some(wal.as_path().to_path_buf()),
+        )
+        .expect("ControlSocket always owns a path");
+        let spawn_binary = SpawnSpec::resolve().ok().map(|s| s.binary().to_path_buf());
+        let mut run_log = run_log;
+        let run_log_path = run_log.path().map(Path::to_path_buf);
+        run_log.log_run_start(
+            &serve_spawn.run_start(spawn_binary.as_deref(), run_log_path.as_deref()),
+        );
         let mut app = Self {
             dialog: RfdDialog,
             fs: StdFs,
@@ -162,7 +177,9 @@ impl PocIdeApp {
             lsp_session: LspSessionState::Idle,
             lsp_error: None,
             serve_mode,
-            control_socket_path: control_socket,
+            serve_spawn,
+            spawn_binary,
+            stderr_drain: None,
             control: None,
             control_error: None,
             status: String::new(),
@@ -324,12 +341,11 @@ impl PocIdeApp {
         let (tx, rx) = mpsc::channel();
         self.lsp_inbox = Some(rx);
         let root = root.as_path().to_path_buf();
-        let mode = self.serve_mode;
-        let socket = self.control_socket_path.clone();
+        let spawn = self.serve_spawn.clone();
         let _ = std::thread::Builder::new()
             .name("poc-ide-lsp".into())
             .spawn(move || {
-                let result = spawn_initialized_client(root, mode, socket.as_deref());
+                let result = spawn_initialized_client(root, spawn);
                 let _ = tx.send(result.map_err(|e| e.to_string()));
             });
     }
@@ -366,6 +382,7 @@ impl PocIdeApp {
 
     fn finish_lsp(&mut self, mut client: LspClient<StdioLsp>) {
         self.run_log.log_lsp("initialize", None);
+        self.stderr_drain = client.transport().stderr_drain();
         self.connect_control(client.progressive_cap());
         let opens: Vec<(PathBuf, String)> = self
             .tabs
@@ -428,6 +445,7 @@ impl PocIdeApp {
     fn shutdown_lsp(&mut self) {
         self.lsp_inbox = None;
         self.control = None;
+        self.stderr_drain = None;
         self.lsp_session = LspSessionState::Idle;
         if let Some(mut client) = self.lsp.take() {
             let _ = client.shutdown();
@@ -460,6 +478,28 @@ impl PocIdeApp {
             Err(e) if e.is_missing_binary() => self.status = self.missing_server_status(),
             Err(e) => self.status = e.to_string(),
         }
+    }
+
+    fn flush_child_stderr(&mut self) {
+        if let Some(drain) = self.stderr_drain.clone() {
+            drain.write_to(&mut self.run_log);
+        }
+    }
+
+    fn proof_status(&self) -> ProofStatus {
+        let last = self
+            .run_log
+            .rows()
+            .ok()
+            .map(|rows| ProofStatus::last_discover_from_rows(&rows))
+            .unwrap_or_default();
+        ProofStatus::from_parts(
+            self.spawn_binary.as_deref(),
+            self.serve_spawn.log_level(),
+            self.run_log.path(),
+            self.serve_spawn.serve_wal_path(),
+            last,
+        )
     }
 
     fn show_conflict_modal(&mut self, ui: &mut egui::Ui) {
@@ -496,6 +536,7 @@ impl PocIdeApp {
 
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.flush_child_stderr();
         self.apply_pending_dialog();
         self.poll_lsp_inbox();
         if self.lsp_inbox.is_some() {
@@ -643,6 +684,12 @@ impl eframe::App for PocIdeApp {
             });
         self.layout
             .set_left_width(tree_response.response.rect.width());
+
+        egui::Panel::bottom("proof")
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.small(self.proof_status().footer_line());
+            });
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -907,12 +954,11 @@ fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -
 
 fn spawn_initialized_client(
     root: PathBuf,
-    mode: ServeMode,
-    control_socket: Option<&Path>,
+    spawn: ServeSpawn,
 ) -> Result<LspClient<StdioLsp>, IdeError> {
     let spec = SpawnSpec::resolve()?;
-    let transport = StdioLsp::spawn_serve(&spec, mode, control_socket)?;
-    let mut client = LspClient::new(transport).with_mode(mode);
+    let transport = StdioLsp::spawn_plan(&spec, &spawn)?;
+    let mut client = LspClient::new(transport).with_mode(ServeMode::ControlSocket);
     client.initialize(&root)?;
     Ok(client)
 }

@@ -37,7 +37,7 @@ This file is the **source of truth** for the logging stack. `poc-ide` `RunLog` i
 
 LOG-6–LOG-11 closed the rows below. This table is the LOG-4 ingest list, not current coverage. After `log11`, a silent operational class is a defect in the [coverage matrix](#coverage-matrix-zero-blind-spots).
 
-Covered today at default **info**: config unknown keys, watch overflow, index-cache IO, watch/ghost-disk `read_to_string` fail, install `remove_file` fail, CLI usage/help, process fatals after Facade exists. `didOpen` / `didChange` / `definition` are **debug**.
+Covered today at default **info**: config unknown keys, watch overflow, index-cache IO, watch/ghost-disk `read_to_string` fail, install `remove_file` fail, CLI usage/help, process fatals after Facade exists. Empty `definition` / `implementation` / `references` (`location_count=0`) is **info** (poc-proof-log). Non-empty discover, `didOpen`, and `didChange` stay **debug**.
 
 | Gap | Where | What sqlite sees today |
 |---|---|---|
@@ -117,7 +117,7 @@ $PREFIX/log/
   <pack>/                    # optional tails (zls, biome)
 ```
 
-`PrefixLayout::log_dir()` is the directory. Filename is a Value object `ServeLogPath` (same idea as poc-ide `RunLogPath`). Tests inject `:memory:` (shared-cache URI) or a tempfile. Override: env `PROGRESSIVE_LSP_LOG` (absolute file path) or `[log].path` in config. Empty / unset → default name under `log_dir()`.
+`PrefixLayout::log_dir()` is the directory. Filename is a Value object `ServeLogPath` (same idea as poc-ide `RunLogPath`). Tests inject `:memory:` (shared-cache URI) or a tempfile. Override: env `PROGRESSIVE_LSP_LOG` (absolute file path) or `[log].path` in config. Empty / unset → default name under `log_dir()`. Min level: env `PROGRESSIVE_LSP_LOG_LEVEL` or `[log].level`; empty / unset → `info`.
 
 If the primary WAL cannot open, [durable fallback](#durable-fallback-sqlite-open-fail) tries `ServeLogPath::fallback` in the same directory, then a tempfile-injected / `std::env::temp_dir()` WAL named `progressive-lsp-serve-<unix_ms>-<pid>.sqlite`. Still rusqlite WAL. Never syslog, journald, OpenTelemetry, or JSON files.
 
@@ -131,7 +131,7 @@ Every type below is in [design-patterns.md](design-patterns.md). Ad-hoc logger h
 
 | Crate | Owns | Must not own |
 |---|---|---|
-| `progressive-lsp-core` | `LogPort`, `LogRecord`, `LogLevel`, `LogOrigin`, `LogScope`, `LogComponent`, `NeverFailLog` Decorator, `FakeLog`, `MemoryLog`, `NullLog` | rusqlite, threads, `log` crate |
+| `progressive-lsp-core` | `LogPort`, `LogRecord`, `LogLevel`, `LogOrigin`, `LogScope`, `LogComponent`, `NeverFailLog` Decorator, `LevelFilter` Decorator / Filter, `FakeLog`, `MemoryLog`, `NullLog` | rusqlite, threads, `log` crate |
 | `progressive-lsp-log` | `SqliteLogRepository`, `WriterActor`, `CrashSafeBatch`, `ServeLogPath`, `LogOpenPlan`, WAL pragmas, capture Adapters | LSP parsing of engine **requests** (protocol crate still owns JSON-RPC) |
 | Composition root | Wires `SqliteLogRepository` via `LogOpenPlan` (or `MemoryLog` until prefix exists / after all WAL opens fail), installs bridges, flushes on shutdown | Direct `Connection` use |
 
@@ -202,7 +202,7 @@ On `COMMIT` failure: keep the batch in a retry `Vec` (cap 1024). Overflow: drop 
 
 **`LogOpenPlan`** — Command. Ordered WAL open: primary `ServeLogPath` → same-dir fallback → temp WAL. First success wins; replay `MemoryLog` into it; emit `warn` `operation=log` naming the path that opened and why the previous failed. All three fail → keep `MemoryLog` (honest residual: those rows die with the process). Still `emit` returns `()`.
 
-**`LogLevel`** — Value object. Unknown parse → `info` (never fail). Filter: records below configured min level are dropped **in the Facade**.
+**`LogLevel`** — Value object. Unknown parse → `info` (never fail). `PROGRESSIVE_LSP_LOG_LEVEL` overrides `[log].level` (`from_env_or_config`; tests inject `Option<&OsStr>`). Invalid env → warn + `info` (never fail boot). Filter: `LevelFilter` Decorator drops records where `!record.level.at_least(min)`.
 
 **`LogOrigin`** — Value object. `FirstParty` (`progressive-lsp`) vs `ThirdParty`.
 
@@ -220,7 +220,7 @@ Investigation: engine packs speak LSP on **stdout**. Logs are stderr and/or a si
 | `ChildStderrAdapter` | Observer + Adapter | Line-delimited stderr of a pack | third-party | stdout of the child is **never** this Adapter; bounded drain so stderr cannot stall LSP |
 | `LogFileTailAdapter` | Adapter | Engine log **file** | third-party | Prefer `$PREFIX/log/<pack>/`; do not parse LSP from the file |
 | `LspLogMessageAdapter` | Adapter | `window/logMessage` / `window/showMessage` / `$/logTrace` | third-party | Secondary; never a substitute for crash/panic on stderr |
-| `NullStderrAdapter` | Adapter | `stderr(Stdio::null())` | — | **Forbidden** on production pack spawn (today’s poc-ide `StdioLsp` gap) |
+| `NullStderrAdapter` | Adapter | `stderr(Stdio::null())` | — | **Forbidden** on production pack spawn. poc-ide serve child pipes stderr into RunLog (poc-proof-log); this row stays the pack-spawn forbid |
 | `InheritStderrAdapter` | Adapter | `stderr(Stdio::inherit())` | — | Operator/CI harness only |
 | `ConfigWarnAdapter` | Adapter | `ConfigLoad.warnings` | first-party | Unknown keys emit `warn` + `operation=config` |
 | `CliUsageAdapter` | Adapter | `--help` / usage | first-party | **Also** writes stderr (IT-1.7) |
@@ -247,7 +247,7 @@ Pipe stderr; do **not** inherit it. Do **not** set `--log-file` into `$PREFIX/lo
 
 **Line parse (best-effort, never fail):** if a stderr line looks like `LEVEL module: message`, fill `level` / `source_crate`. Otherwise `level=info`, `message=line`. Invalid UTF-8 → lossy. No regex panic.
 
-**poc-ide `StdioLsp`:** LOG-3 left `stderr(Stdio::null())`. Do not inherit engine stderr into the IDE process. LOG-4 may pipe into `RunLog`; server-side capture is the product gate.
+**poc-ide `StdioLsp`:** poc-proof-log pipes child **stderr** into `RunLog` (`category=lsp`, `event=child_stderr`). Do **not** inherit into the GUI tty. stdout stays JSON-RPC. Server WAL stays a separate schema.
 
 ### Config
 
@@ -259,7 +259,7 @@ path = ""               # optional absolute sqlite path; omit = ServeLogPath def
 
 Unknown keys still warn (and now **emit**). `[log]` merges on the same chain as the rest of `Config`. Invalid `level` → warn + default `info` (never fail boot).
 
-`PROGRESSIVE_LSP_LOG` env overrides `path` for the process. `--prefix` still wins for the directory when `path` is unset.
+`PROGRESSIVE_LSP_LOG` env overrides `path` for the process. `PROGRESSIVE_LSP_LOG_LEVEL` overrides `level` the same way. Empty / unset → config (default `info`). Invalid value → warn + default `info` (never fail boot). `--prefix` still wins for the directory when `path` is unset.
 
 ### Bootstrap order (composition root)
 
@@ -326,7 +326,7 @@ This table **is** the definition. After the last LOG-N, a silent class here is a
 | Install `remove_file` fail | `Installer::remove_or_emit` | warn | `install` | first-party | LOG-4 | `FakeLog` |
 | CLI usage / help | `CliUsageAdapter` | warn | `cli` | first-party | LOG-3 | `FakeLog` |
 | Process fatal after Facade exists | `StderrEmitAdapter` | error | `serve` / `install` | first-party | LOG-3 | `FakeLog` |
-| `didOpen` / `didChange` / `definition` | `WorkspaceSession` | debug | LSP method | first-party | LOG-4 | `FakeLog` |
+| `didOpen` / `didChange` / non-empty `definition` | `WorkspaceSession` | debug | LSP method | first-party | LOG-4 | `FakeLog` |
 | Sqlite primary open fail (MemoryLog only) | `wire_process_log` | warn | `log` | first-party | LOG-4 | `MemoryLog` — **not durable; LOG-9** |
 
 ### LOG-6 — Supervisor + ScriptHost lifecycle
@@ -414,6 +414,15 @@ Every product `Err` on `serve` / `install` either emits or is listed as **client
 |---|---|---|---|---|---|---|
 | Hygiene scan of operational `Err` constructors | `tests/log_hygiene.rs` | — | — | first-party | LOG-11 | source walk + logging.md allowlist |
 
+### poc-proof-log (do not reopen LOG-0–LOG-11)
+
+Empty discover is an ops-visible miss, not a non-goal. Stock Neovim without `PROGRESSIVE_LSP_LOG_LEVEL` stays **info**. poc-ide `RunLog` stays a separate schema.
+
+| Event | Crate / type | Level | `operation` | Origin | Lands | Test double |
+|---|---|---|---|---|---|---|
+| Empty `definition` / `implementation` / `references` (`location_count=0`) | `WorkspaceSession::resolve` | info | LSP method | first-party | poc-proof-log | `FakeLog` extras: `location_count`, path, line, character, `language_id`, `package_id`, `tier` |
+| Invalid `PROGRESSIVE_LSP_LOG_LEVEL` | `LogLevel::from_env_or_config` + `ConfigWarnAdapter` | warn | `config` | first-party | poc-proof-log | inject `Option<OsString>` |
+
 ### Explicit non-goals (not blind spots)
 
 | Class | Why it is not a blind spot |
@@ -427,7 +436,6 @@ Every product `Err` on `serve` / `install` either emits or is listed as **client
 | Tree-sitter silence | No first-party `log` emitters; optional `t2-stack-graphs` goes through `LogCrateBridge` |
 | Optional T2 stack-graph fetch (`stack_graph.rs` `load_error`) | Default T2 is heuristic; git clone/fetch is PD4 bake-off, not serve/install ops |
 | `CodecError::Incomplete` / `MuxError::Incomplete` | Need-more-bytes, not a failure |
-| Empty definition locations | Valid miss, not an operational failure |
 | All three WAL opens fail | Unwritable prefix **and** temp dir; syslog is forbidden |
 | `PackAdapter` real `Command` on Darwin | Linux CI / Docker; LOG the refuse |
 | Sharing one WAL across two `serve` processes | Locked |

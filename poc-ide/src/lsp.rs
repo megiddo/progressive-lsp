@@ -6,6 +6,8 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
+use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use lsp_types::{
     ClientCapabilities, GotoDefinitionResponse, InitializeParams, Location, LocationLink, Uri,
@@ -13,8 +15,10 @@ use lsp_types::{
 use serde_json::{json, Value};
 
 use crate::buffer::{BufferMap, Selection};
+use crate::child_stderr::ChildStderrDrain;
 use crate::error::IdeError;
 use crate::language::{LanguageCatalog, ServeMode};
+use crate::log::{RunStart, CHILD_LOG_LEVEL};
 use crate::ports::{FsPort, LspTransport};
 use crate::tabs::{TabId, TabStrip};
 
@@ -215,12 +219,103 @@ impl SpawnSpec {
     }
 }
 
+/// Child argv + env for `progressive-lsp serve`. Tests inspect this; they do not
+/// spawn a live serve.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServeSpawn {
+    args: Vec<String>,
+    log_level: String,
+    serve_wal: Option<PathBuf>,
+    control_socket: Option<PathBuf>,
+}
+
+impl ServeSpawn {
+    pub const ENV_LOG_LEVEL: &'static str = "PROGRESSIVE_LSP_LOG_LEVEL";
+    pub const ENV_LOG: &'static str = "PROGRESSIVE_LSP_LOG";
+
+    pub fn new(
+        mode: ServeMode,
+        control_socket: Option<&Path>,
+        serve_wal: Option<PathBuf>,
+    ) -> Result<Self, IdeError> {
+        let args = mode.serve_args(control_socket)?;
+        Ok(Self {
+            args,
+            log_level: CHILD_LOG_LEVEL.into(),
+            serve_wal,
+            control_socket: control_socket.map(Path::to_path_buf),
+        })
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub fn log_level(&self) -> &str {
+        &self.log_level
+    }
+
+    pub fn serve_wal_path(&self) -> Option<&Path> {
+        self.serve_wal.as_deref()
+    }
+
+    pub fn control_socket(&self) -> Option<&Path> {
+        self.control_socket.as_deref()
+    }
+
+    pub fn run_start(&self, binary: Option<&Path>, run_log_path: Option<&Path>) -> RunStart {
+        RunStart::new(
+            binary,
+            self.args.clone(),
+            &self.log_level,
+            run_log_path,
+            self.serve_wal.as_deref(),
+        )
+    }
+
+    /// Apply argv, debug log env, and piped stdio. Never inherit stderr.
+    pub fn apply_to(&self, cmd: &mut Command) {
+        for arg in &self.args {
+            cmd.arg(arg);
+        }
+        cmd.env(Self::ENV_LOG_LEVEL, &self.log_level);
+        if let Some(wal) = &self.serve_wal {
+            cmd.env(Self::ENV_LOG, wal);
+        }
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+    }
+
+    fn ensure_parents(&self) {
+        if let Some(socket) = &self.control_socket {
+            if let Some(parent) = socket.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        if let Some(wal) = &self.serve_wal {
+            if let Some(parent) = wal.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+    }
+}
+
+/// Function (not a type): apply [`ServeSpawn`] onto a `Command`. Tests inspect env/argv.
+pub fn build_serve_command(spec: &SpawnSpec, spawn: &ServeSpawn) -> Command {
+    let mut cmd = Command::new(spec.binary());
+    spawn.apply_to(&mut cmd);
+    cmd
+}
+
 /// Content-Length JSON-RPC over child stdio (or a test pair).
 pub struct StdioLsp {
     child: Option<Child>,
     writer: Box<dyn Write + Send>,
     reader: Box<dyn BufRead + Send>,
     next_id: i64,
+    stderr_drain: Option<Arc<ChildStderrDrain>>,
+    stderr_thread: Option<JoinHandle<()>>,
 }
 
 impl StdioLsp {
@@ -233,8 +328,14 @@ impl StdioLsp {
         mode: ServeMode,
         control_socket: Option<&Path>,
     ) -> Result<Self, IdeError> {
-        let args = mode.serve_args(control_socket)?;
-        Self::spawn_with_args(spec, &args)
+        let spawn = ServeSpawn::new(mode, control_socket, None)?;
+        Self::spawn_plan(spec, &spawn)
+    }
+
+    pub fn spawn_plan(spec: &SpawnSpec, spawn: &ServeSpawn) -> Result<Self, IdeError> {
+        spawn.ensure_parents();
+        let cmd = build_serve_command(spec, spawn);
+        Self::from_command(cmd)
     }
 
     pub fn spawn_with_args(spec: &SpawnSpec, args: &[impl AsRef<OsStr>]) -> Result<Self, IdeError> {
@@ -242,19 +343,25 @@ impl StdioLsp {
         for arg in args {
             cmd.arg(arg);
         }
-        let mut child = cmd
-            .stdin(Stdio::piped())
+        cmd.env(ServeSpawn::ENV_LOG_LEVEL, CHILD_LOG_LEVEL);
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // LOG-3: leave discarded. Do not inherit engine stderr into the IDE process.
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    IdeError::MissingBinary
-                } else {
-                    IdeError::lsp(e.to_string())
-                }
-            })?;
+            .stderr(Stdio::piped());
+        Self::from_command(cmd)
+    }
+
+    fn from_command(mut cmd: Command) -> Result<Self, IdeError> {
+        let child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                IdeError::MissingBinary
+            } else {
+                IdeError::lsp(e.to_string())
+            }
+        })?;
+        Self::from_child(child)
+    }
+
+    fn from_child(mut child: Child) -> Result<Self, IdeError> {
         let stdin = child
             .stdin
             .take()
@@ -263,11 +370,21 @@ impl StdioLsp {
             .stdout
             .take()
             .ok_or_else(|| IdeError::lsp("child stdout missing"))?;
+        let drain = Arc::new(ChildStderrDrain::new());
+        let stderr_thread = child.stderr.take().and_then(|stderr| {
+            let attached = Arc::clone(&drain);
+            std::thread::Builder::new()
+                .name("poc-ide-stderr".into())
+                .spawn(move || attached.drain_reader(stderr))
+                .ok()
+        });
         Ok(Self {
             child: Some(child),
             writer: Box::new(stdin),
             reader: Box::new(std::io::BufReader::new(stdout)),
             next_id: 1,
+            stderr_drain: Some(drain),
+            stderr_thread,
         })
     }
 
@@ -280,11 +397,17 @@ impl StdioLsp {
             writer: Box::new(writer),
             reader: Box::new(reader),
             next_id: 1,
+            stderr_drain: None,
+            stderr_thread: None,
         }
     }
 
     pub fn next_id(&self) -> i64 {
         self.next_id
+    }
+
+    pub fn stderr_drain(&self) -> Option<Arc<ChildStderrDrain>> {
+        self.stderr_drain.clone()
     }
 }
 
@@ -293,6 +416,7 @@ impl std::fmt::Debug for StdioLsp {
         f.debug_struct("StdioLsp")
             .field("has_child", &self.child.is_some())
             .field("next_id", &self.next_id)
+            .field("has_stderr_drain", &self.stderr_drain.is_some())
             .finish()
     }
 }
@@ -302,6 +426,9 @@ impl Drop for StdioLsp {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
         }
     }
 }
@@ -1040,6 +1167,72 @@ mod tests {
     }
 
     #[test]
+    fn serve_spawn_value_object_command_sets_debug_env_and_argv() {
+        let spec = SpawnSpec::from_path("/opt/progressive-lsp");
+        let spawn = ServeSpawn::new(
+            ServeMode::ControlSocket,
+            Some(Path::new("/pfx/run/poc-ide.sock")),
+            Some(PathBuf::from("/pfx/log/serve-1-2.sqlite")),
+        )
+        .unwrap();
+        assert_eq!(
+            spawn.args(),
+            &["serve", "--control-socket", "/pfx/run/poc-ide.sock"]
+        );
+        assert_eq!(spawn.log_level(), CHILD_LOG_LEVEL);
+        assert_eq!(
+            spawn.serve_wal_path(),
+            Some(Path::new("/pfx/log/serve-1-2.sqlite"))
+        );
+        assert_eq!(
+            spawn.control_socket(),
+            Some(Path::new("/pfx/run/poc-ide.sock"))
+        );
+        let cmd = build_serve_command(&spec, &spawn);
+        assert_eq!(cmd.get_program(), OsStr::new("/opt/progressive-lsp"));
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec!["serve", "--control-socket", "/pfx/run/poc-ide.sock"]
+        );
+        assert!(!args.iter().any(|a| a == "--mux"));
+        let envs: Vec<(String, String)> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.to_string_lossy().into_owned(),
+                    v?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        assert!(
+            envs.iter()
+                .any(|(k, v)| k == ServeSpawn::ENV_LOG_LEVEL && v == "debug"),
+            "{envs:?}"
+        );
+        assert!(
+            envs.iter()
+                .any(|(k, v)| k == ServeSpawn::ENV_LOG && v == "/pfx/log/serve-1-2.sqlite"),
+            "{envs:?}"
+        );
+        let start = spawn.run_start(Some(spec.binary()), Some(Path::new("/logs/run.sqlite")));
+        assert_eq!(start.to_payload()["log_level"], "debug");
+        assert_eq!(
+            start.to_payload()["serve_wal_path"],
+            "/pfx/log/serve-1-2.sqlite"
+        );
+        assert!(ServeSpawn::new(ServeMode::ControlSocket, None, None)
+            .unwrap_err()
+            .is_control_socket_missing());
+        let stock = ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap();
+        assert_eq!(stock.args(), &["serve"]);
+        assert!(stock.serve_wal_path().is_none());
+    }
+
+    #[test]
     fn stdio_lsp_adapter_content_length_round_trip() {
         let framed = encode_message(b"hi");
         assert_eq!(&framed, b"Content-Length: 2\r\n\r\nhi");
@@ -1100,6 +1293,7 @@ mod tests {
         assert!(debug.contains("StdioLsp"));
         assert!(debug.contains("has_child: false"));
         assert!(debug.contains("next_id: 1"));
+        assert!(debug.contains("has_stderr_drain: false"));
         assert_eq!(lsp.next_id(), 1);
         let result = lsp.request("initialize", json!({})).unwrap();
         assert_eq!(result, json!({"ok": true}));
@@ -1172,6 +1366,7 @@ mod tests {
     fn stdio_lsp_adapter_spawn_immediate_exit_is_domain_result() {
         let spec = SpawnSpec::from_path("/usr/bin/true");
         let mut lsp = StdioLsp::spawn(&spec).unwrap();
+        assert!(lsp.stderr_drain().is_some());
         assert!(lsp.request("initialize", json!({})).unwrap_err().is_lsp());
     }
 

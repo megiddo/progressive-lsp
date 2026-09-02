@@ -5,6 +5,7 @@
 //! in the composition-root bin (`main.rs` / `ui.rs`).
 
 pub mod buffer;
+pub mod child_stderr;
 pub mod conflict;
 pub mod console;
 pub mod control;
@@ -17,11 +18,13 @@ pub mod layout;
 pub mod log;
 pub mod lsp;
 pub mod ports;
+pub mod proof;
 pub mod tabs;
 pub mod tree;
 pub mod watch;
 
 pub use buffer::{BufferMap, CursorOffsets, DirtyFlag, OpenBuffer, Selection};
+pub use child_stderr::{ChildStderrDrain, STDERR_DRAIN_CAP};
 pub use conflict::{ConflictChoice, ConflictModal};
 pub use console::{ProtocolConsole, TranscriptEntry, TranscriptKind, STOCK_LSP_METHODS};
 pub use control::{
@@ -31,23 +34,25 @@ pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
 pub use error::IdeError;
 pub use highlight::{HighlightSpan, Highlighter};
-pub use language::{LanguageCatalog, ServeMode};
+pub use language::{ControlSocketPath, LanguageCatalog, ServeMode};
 pub use layout::LayoutState;
 pub use log::{
     default_run_log_dir, run_log_dir, sanitize_payload, LogCategory, LogRow, RunLog, RunLogPath,
-    EVENT_CONFLICT_ENQUEUE, EVENT_CONFLICT_RESOLVE, EVENT_CONTROL_CONNECT_ERROR, EVENT_OPEN_FILE,
-    EVENT_OPEN_FOLDER, EVENT_RUN_START, EVENT_SAVE, EVENT_TAB_CLOSE, EVENT_TAB_OPEN,
-    EVENT_TREE_EXPAND, EVENT_TREE_LOAD,
+    RunStart, ServeWalPath, CHILD_LOG_LEVEL, EVENT_CHILD_STDERR, EVENT_CONFLICT_ENQUEUE,
+    EVENT_CONFLICT_RESOLVE, EVENT_CONTROL_CONNECT_ERROR, EVENT_OPEN_FILE, EVENT_OPEN_FOLDER,
+    EVENT_RUN_START, EVENT_SAVE, EVENT_TAB_CLOSE, EVENT_TAB_OPEN, EVENT_TREE_EXPAND,
+    EVENT_TREE_LOAD, SERVE_WAL_NOT_OPEN,
 };
 pub use lsp::{
-    file_uri, path_from_file_uri, position_at, LspClient, LspLocation, LspSessionState,
-    ProgressiveLspCap, SpawnSpec, StdioLsp,
+    build_serve_command, file_uri, path_from_file_uri, position_at, LspClient, LspLocation,
+    LspSessionState, ProgressiveLspCap, ServeSpawn, SpawnSpec, StdioLsp,
 };
 pub use ports::{
     ClipboardPort, ClockPort, ControlTransport, DialogPort, DiskEvent, DiskEventKind,
     FakeClipboard, FakeClock, FakeControl, FakeDialog, FakeLsp, FakeWatch, FsPort, LspCall,
     LspTransport, MemFs, StdFs, SystemClock, WatchPort,
 };
+pub use proof::ProofStatus;
 pub use tabs::{TabId, TabStrip};
 pub use tree::{
     CompactChain, DialogAction, DialogOutcome, FileTree, PendingDialog, TreeExpansion, TreeNode,
@@ -95,6 +100,17 @@ mod tests {
         let _ = LanguageCatalog::new();
         let _ = ServeMode::StockStdio;
         let _ = ServeMode::ControlSocket;
+        let _ = ServeMode::default();
+        let _ = ControlSocketPath::from_path("/tmp/poc-ide.sock");
+        let _ = ServeWalPath::new("/tmp", 1, 1);
+        let _ = ServeSpawn::new(ServeMode::StockStdio, None, None);
+        let _ = ProofStatus::default();
+        let _ = ChildStderrDrain::new();
+        let _ = RunStart::bootstrap(None);
+        let _ = build_serve_command(
+            &SpawnSpec::from_path("/opt/progressive-lsp"),
+            &ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap(),
+        );
         let _ = FakeLsp::new();
         let _ = LspCall::request("initialize", serde_json::json!({}));
         let _ = LspLocation::new("file:///ws/a.rs", 0, 0, 0, 0);
@@ -140,6 +156,11 @@ mod tests {
         assert!(LanguageCatalog::new().skips_did_open("/ws/a.txt"));
         assert!(!ServeMode::StockStdio.is_control_socket());
         assert!(ServeMode::ControlSocket.is_control_socket());
+        assert_eq!(ServeMode::default(), ServeMode::ControlSocket);
+        assert_eq!(STDERR_DRAIN_CAP, 1024);
+        assert_eq!(CHILD_LOG_LEVEL, "debug");
+        assert_eq!(EVENT_CHILD_STDERR, "child_stderr");
+        assert_eq!(SERVE_WAL_NOT_OPEN, "not open yet");
         assert!(ProtocolConsole::new().is_empty());
         assert!(!STOCK_LSP_METHODS.is_empty());
         assert_eq!(CONTROL_UNARY_METHODS.len(), 9);

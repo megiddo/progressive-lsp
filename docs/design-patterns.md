@@ -17,7 +17,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
-| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info` |
+| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info`; `PROGRESSIVE_LSP_LOG_LEVEL` is resolved on `LogLevel`, not in the overlay |
 | `apply_worktree_excludes` / `GitExcludeReport` | Command | Writes `.git/info/exclude` + overlay belt `.gitignore`; never edits the project’s committed `.gitignore` |
 | `ProgressiveLspCap` | Value object / DTO | `version` is `v1`; `socket` may be null; stock clients ignore it |
 | `InstallPlan` | Command | `apply` hashes tmp before rename; mismatch deletes tmp |
@@ -131,9 +131,10 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
 | `LogPort` | Dependency injection / Port | `fn emit(&self, record: LogRecord)` returns `()`; no `Result`; same injection rule as `ClockPort`; libs take `Arc<dyn LogPort>`; process-wide `OnceLock<LogPort>` is forbidden |
-| `LogFacade` | Facade | Wraps `LogSink` + `ReentrancyGuard` + min-level filter; records below configured min level are dropped **here**; never logs onto stdout |
+| `LogFacade` | Facade | Documented composition of `LogSink` + `ReentrancyGuard`; min-level filter is `LevelFilter` (this type is not a Rust Facade yet); never logs onto stdout |
 | `LogRecord` | DTO | Construction never fails; omit unknown fields (sqlite NULL); `message` truncates at 64 KiB, lossy UTF-8; `sanitize_extras` drops `text` / `content` / `body` / `clipboard` / `password` / `secret` / `token`; indexes `(ts_unix_ms)`, `(level)`, `(component)`, `(content_path)`, `(source_repo)` |
-| `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail) |
+| `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail); `from_env_or_config` empty/unset → config; known env → that level; unknown env → `info` + warning (never fail boot) |
+| `LevelFilter` | Decorator / Filter | Wraps `LogPort`; drops records where `!record.level.at_least(min)`; composition root sets `min` from `LogLevel::from_env_or_config` (unset/empty env + omitted `[log].level` → `info`; invalid env still boots at `info`) |
 | `LogOrigin` | Value object | `FirstParty` (`progressive-lsp`) vs `ThirdParty`; `source_repo` is one of those two strings |
 | `LogComponent` | Value object | Stable strings only: `core`, `protocol`, `control`, `engine`, `index`, `watch`, `install`, `script`, `lang-<id>`, pack name, `xtask` (only if a lib path logs) |
 | `LogScope` / `LogScopeGuard` | Context Object | Task-local / thread-local: `content_path`, `content_line`, `operation`, `component`; `emit` copies scope fields when the caller left them unset; Drop of `LogScopeGuard` restores the previous scope (stack) |
@@ -215,7 +216,13 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
 | `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
-| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; `serve_args` never includes `--mux` (`pending_mux`) |
+| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `serve_args` never includes `--mux` (`pending_mux`) |
+| `ControlSocketPath` | Value object | CLI path wins; else `$PREFIX/run/poc-ide.sock`; else `$HOME/.progressivelsp/run/poc-ide.sock`; else `{temp}/poc-ide.sock`; tests inject prefix / home / temp — never require `$HOME` |
+| `ServeWalPath` | Value object | Unique `{log_dir}/serve-{unix_ms}-{pid}.sqlite` the IDE sets on `PROGRESSIVE_LSP_LOG`; tests inject dirs + FakeClock |
+| `ServeSpawn` | Value object | Child argv + `PROGRESSIVE_LSP_LOG_LEVEL=debug` + optional `PROGRESSIVE_LSP_LOG`; `fn build_serve_command` is a function (not a type) that applies this onto `std::process::Command` — tests inspect env/argv and do not spawn a live serve; stderr is piped, never inherited |
+| `ChildStderrDrain` | Observer + Adapter | Line-delimited child stderr → `RunLog` (`category=lsp`, `event=child_stderr`); `STDERR_DRAIN_CAP=1024` overflow drops oldest; tests drain a `Cursor` / `push_line` without a thread; never attached to child stdout |
+| `RunStart` | DTO | `run_start` payload always has `binary`, `argv`, `log_level`, `run_log_path`, `serve_wal_path` (`not open yet` when unset) |
+| `ProofStatus` | DTO / Value object | Footer: binary basename, log level, RunLog path, serve WAL path, last discover (`definition L23:88 → 0 locations`); last discover is filled from `RunLog` discover rows / `DiscoverCommand` |
 | `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |
 | `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
 | `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
@@ -236,6 +243,14 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `LogRow` | DTO | `timestamp_ms` + `category` + `event` + optional JSON; payload is structured, never file bodies |
 | `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict`; unknown parse → `None` |
 | `IdeError::Log` | Domain Result | Classifier `is_log`; composition root ignores write failures |
+
+## xtask (operator CLI)
+
+llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
+
+| Component / type | Pattern | Invariant (testable) |
+|---|---|---|
+| `PocArgs` | Value object | Split at the first `--`; left side is xtask flags (`-h` / `--help` only); right side is forwarded to `poc-ide`; leftover without `--` is an error. `poc::run` spawn is a thin shell (N/A for unit tests). |
 
 ## Adding a type
 

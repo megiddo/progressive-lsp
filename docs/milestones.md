@@ -818,6 +818,34 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - Native `cargo test -- --test-threads=1` is the LOG-11 gate on macOS.
 - No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
 
+## poc-proof-log — empty discover + POC debug spawn
+
+**Status: SIGNED OFF** on branch `poc-proof-log`. Parent is **current `main`** (log11 merge / `a0f10a2`). Do not start `poc-lsp-async` from this branch. Do not reopen LOG-0–LOG-11. There is no `log12`.
+
+**Scope:** Serve empty F12 is an **info** row; `PROGRESSIVE_LSP_LOG_LEVEL`; poc-ide default `ControlSocket` + debug child + stderr→RunLog + `ProofStatus` footer; `xtask poc`. Not LSP IO threads, IndexStatus ingest fields, DiscoverOffer menus, or highlight cache.
+
+**Exit**
+
+- [x] Empty definition / implementation / references emit **info** with `location_count=0` extras; a hit stays debug; `didChange` stays debug.
+- [x] `PROGRESSIVE_LSP_LOG_LEVEL` overrides `[log].level`; invalid → warn + `info`; stock serve without the env stays info.
+- [x] poc-ide default-spawns `serve --control-socket` with `PROGRESSIVE_LSP_LOG_LEVEL=debug`, piped stderr into RunLog, and a footer that shows both sqlite paths + last discover.
+- [x] `cargo xtask poc` is the supported proof launch.
+
+**Sign-off checklist (poc-proof-log)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (core 72; composition-root lib 68; poc-ide lib 176; xtask 30; hygiene 6)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.10%** lines
+- [x] 80% mutants on listed crates that changed — core in-diff **7/7 (100%)**; poc-ide in-diff **34/37 (91.9%)**; composition-root session/lib in-diff **13/13 (100%)**; combined **54/57 (94.7%)**
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

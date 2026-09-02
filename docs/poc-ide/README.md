@@ -2,7 +2,7 @@
 
 An in-tree **proof-of-concept editor** that consumes `progressive-lsp`. It is **not** the language-intelligence product. The server still does not own pixels, git, SSH, or a PTY. This sample exists so we can open a folder, edit buffers, and exercise both stock LSP and `progressive.v1` against a real UI.
 
-Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [agent-context.md](agent-context.md), [../consumer.md](../consumer.md), [../lsp-contract.md](../lsp-contract.md), [../user/progressive-v1-api.md](../user/progressive-v1-api.md).
+Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [agent-context.md](agent-context.md), [proof-agent-context.md](proof-agent-context.md), [../consumer.md](../consumer.md), [../lsp-contract.md](../lsp-contract.md), [../user/progressive-v1-api.md](../user/progressive-v1-api.md).
 
 ## What it must do
 
@@ -29,16 +29,18 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 
 `poc-ide/` is a workspace member. Library = testable domain. `src/main.rs` = composition root (eframe + `rfd`). Consumers of the server may depend on `progressive-lsp-control`; this sample does.
 
-Run (after IDE-1+):
+Supported proof launch (builds `progressive-lsp` first so poc-ide does not spawn a stale binary):
 
 ```text
-cargo run -p poc-ide
-cargo run -p poc-ide -- --folder DIR
-cargo run -p poc-ide -- --file PATH
+cargo xtask poc
+cargo xtask poc -- --folder DIR
+cargo xtask poc -- --file PATH
 ```
 
-Spawn of `progressive-lsp serve` uses (first hit wins): `PROGRESSIVE_LSP` env, `target/{debug,release}/progressive-lsp`, then `progressive-lsp` on `PATH`.
+`xtask poc` runs `cargo build --bin progressive-lsp`, then `cargo run -p poc-ide` with `PROGRESSIVE_LSP` set to that artifact. Args after `--` are forwarded to poc-ide.
+
+Bare `cargo run -p poc-ide` is **not** the supported proof launch: it does not rebuild `progressive-lsp`. Spawn of `progressive-lsp serve` still uses (first hit wins): `PROGRESSIVE_LSP` env, `target/{debug,release}/progressive-lsp`, then `progressive-lsp` on `PATH`.
 
 ## Milestones
 
-Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log` … `poc-navigate` and `poc-no-console` (not IDE-6). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md).
+Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log` … `poc-discover-log`, then LOG-0–LOG-11, then the POC-proof stack `poc-proof-log` → `poc-lsp-async` → `poc-tier-status` → `poc-no-stall` (not IDE-6, not `log12`). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md). Proof orchestrators: [proof-agent-context.md](proof-agent-context.md).

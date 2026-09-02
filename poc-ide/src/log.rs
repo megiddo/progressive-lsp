@@ -14,6 +14,7 @@ use crate::error::IdeError;
 use crate::ports::ClockPort;
 
 pub const EVENT_RUN_START: &str = "run_start";
+pub const EVENT_CHILD_STDERR: &str = "child_stderr";
 pub const EVENT_OPEN_FOLDER: &str = "open_folder";
 pub const EVENT_OPEN_FILE: &str = "open_file";
 pub const EVENT_TREE_LOAD: &str = "tree_load";
@@ -24,6 +25,11 @@ pub const EVENT_SAVE: &str = "save";
 pub const EVENT_CONTROL_CONNECT_ERROR: &str = "control_connect_error";
 pub const EVENT_CONFLICT_ENQUEUE: &str = "conflict_enqueue";
 pub const EVENT_CONFLICT_RESOLVE: &str = "conflict_resolve";
+
+/// Child `PROGRESSIVE_LSP_LOG_LEVEL`. poc-ide always sets this on spawn.
+pub const CHILD_LOG_LEVEL: &str = "debug";
+/// Display when the serve WAL path is not known yet.
+pub const SERVE_WAL_NOT_OPEN: &str = "not open yet";
 
 const FORBIDDEN_PAYLOAD_KEYS: &[&str] = &[
     "text",
@@ -127,6 +133,158 @@ pub fn sanitize_payload(payload: Option<Value>) -> Option<Value> {
         map.remove(*key);
     }
     Some(Value::Object(map))
+}
+
+/// DTO for the `run_start` payload: binary, argv, log level, both sqlite paths.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunStart {
+    binary: Option<PathBuf>,
+    argv: Vec<String>,
+    log_level: String,
+    run_log_path: Option<PathBuf>,
+    serve_wal_path: Option<PathBuf>,
+    memory: bool,
+}
+
+impl RunStart {
+    pub fn new(
+        binary: Option<&Path>,
+        argv: impl Into<Vec<String>>,
+        log_level: impl Into<String>,
+        run_log_path: Option<&Path>,
+        serve_wal_path: Option<&Path>,
+    ) -> Self {
+        Self {
+            binary: binary.map(Path::to_path_buf),
+            argv: argv.into(),
+            log_level: log_level.into(),
+            run_log_path: run_log_path.map(Path::to_path_buf),
+            serve_wal_path: serve_wal_path.map(Path::to_path_buf),
+            memory: run_log_path.is_none(),
+        }
+    }
+
+    pub fn bootstrap(run_log_path: Option<&Path>) -> Self {
+        Self::new(None, Vec::new(), CHILD_LOG_LEVEL, run_log_path, None)
+    }
+
+    pub fn binary(&self) -> Option<&Path> {
+        self.binary.as_deref()
+    }
+
+    pub fn argv(&self) -> &[String] {
+        &self.argv
+    }
+
+    pub fn log_level(&self) -> &str {
+        &self.log_level
+    }
+
+    pub fn run_log_path(&self) -> Option<&Path> {
+        self.run_log_path.as_deref()
+    }
+
+    pub fn serve_wal_path(&self) -> Option<&Path> {
+        self.serve_wal_path.as_deref()
+    }
+
+    pub fn is_memory(&self) -> bool {
+        self.memory
+    }
+
+    pub fn to_payload(&self) -> Value {
+        let mut map = serde_json::Map::new();
+        match &self.binary {
+            Some(path) => {
+                map.insert("binary".into(), json!(path.display().to_string()));
+            }
+            None => {
+                map.insert("binary".into(), Value::Null);
+            }
+        }
+        map.insert("argv".into(), json!(self.argv));
+        map.insert("log_level".into(), json!(self.log_level));
+        match &self.run_log_path {
+            Some(path) => {
+                let shown = path.display().to_string();
+                map.insert("path".into(), json!(shown.clone()));
+                map.insert("run_log_path".into(), json!(shown));
+            }
+            None => {
+                map.insert("run_log_path".into(), Value::Null);
+            }
+        }
+        map.insert(
+            "serve_wal_path".into(),
+            json!(self
+                .serve_wal_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| SERVE_WAL_NOT_OPEN.into())),
+        );
+        if self.memory {
+            map.insert("memory".into(), json!(true));
+        }
+        Value::Object(map)
+    }
+}
+
+/// Value object. Unique serve WAL the IDE sets via `PROGRESSIVE_LSP_LOG`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServeWalPath {
+    path: PathBuf,
+}
+
+impl ServeWalPath {
+    pub fn new(log_dir: impl AsRef<Path>, unix_ms: u64, pid: u32) -> Self {
+        let name = format!("serve-{unix_ms}-{pid}.sqlite");
+        Self {
+            path: log_dir.as_ref().join(name),
+        }
+    }
+
+    /// Tests inject prefix / home / temp. Never requires `$HOME`.
+    pub fn resolve_in(
+        prefix_home: Option<&str>,
+        home: Option<&str>,
+        temp_dir: &Path,
+        unix_ms: u64,
+        pid: u32,
+    ) -> Self {
+        let log_dir = if let Some(prefix) = prefix_home.filter(|s| !s.is_empty()) {
+            PathBuf::from(prefix).join("log")
+        } else if let Some(home) = home.filter(|s| !s.is_empty()) {
+            PathBuf::from(home).join(".progressivelsp").join("log")
+        } else {
+            temp_dir.to_path_buf()
+        };
+        Self::new(log_dir, unix_ms, pid)
+    }
+
+    pub fn resolve_default(clock: &impl ClockPort) -> Self {
+        Self::resolve_in(
+            std::env::var("PROGRESSIVE_LSP_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+            &std::env::temp_dir(),
+            clock.unix_ms(),
+            std::process::id(),
+        )
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn into_path(self) -> PathBuf {
+        self.path
+    }
+
+    pub fn ensure_parent(&self) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
 }
 
 /// Deterministic per-run sqlite path: `{dir}/poc-ide-{timestamp_ms}-{pid}.sqlite`.
@@ -474,12 +632,21 @@ impl RunLog {
         );
     }
 
+    pub fn log_run_start(&mut self, start: &RunStart) {
+        self.record(LogCategory::Run, EVENT_RUN_START, Some(start.to_payload()));
+    }
+
+    pub fn log_child_stderr(&mut self, line: &str) {
+        self.record(
+            LogCategory::Lsp,
+            EVENT_CHILD_STDERR,
+            Some(json!({ "line": line })),
+        );
+    }
+
     fn record_run_start(&mut self) {
-        let payload = match &self.path {
-            Some(path) => json!({ "path": path.display().to_string() }),
-            None => json!({ "memory": true }),
-        };
-        self.record(LogCategory::Run, EVENT_RUN_START, Some(payload));
+        let start = RunStart::bootstrap(self.path.as_deref());
+        self.log_run_start(&start);
     }
 
     fn conn(&self) -> Result<&Connection, IdeError> {
@@ -676,6 +843,13 @@ mod tests {
         assert_eq!(start.event(), EVENT_RUN_START);
         assert_eq!(start.timestamp_ms(), 1_000);
         assert_eq!(start.payload().unwrap()["memory"], true);
+        assert_eq!(start.payload().unwrap()["log_level"], CHILD_LOG_LEVEL);
+        assert_eq!(
+            start.payload().unwrap()["serve_wal_path"],
+            SERVE_WAL_NOT_OPEN
+        );
+        assert!(start.payload().unwrap()["binary"].is_null());
+        assert_eq!(start.payload().unwrap()["argv"], json!([]));
 
         log.append(
             LogCategory::Ui,
@@ -917,6 +1091,118 @@ mod tests {
             .unwrap()
             .iter()
             .any(|r| r.event() == EVENT_RUN_START));
+    }
+
+    #[test]
+    fn run_start_dto_payload_keys_include_binary_argv_level_and_wal() {
+        let pending = RunStart::bootstrap(None);
+        let keys = pending.to_payload();
+        for key in [
+            "binary",
+            "argv",
+            "log_level",
+            "run_log_path",
+            "serve_wal_path",
+        ] {
+            assert!(keys.get(key).is_some(), "{key}");
+        }
+        assert!(keys["binary"].is_null());
+        assert_eq!(keys["argv"], json!([]));
+        assert_eq!(keys["log_level"], "debug");
+        assert!(keys["run_log_path"].is_null());
+        assert_eq!(keys["serve_wal_path"], SERVE_WAL_NOT_OPEN);
+        assert_eq!(keys["memory"], true);
+        assert!(pending.binary().is_none());
+        assert!(pending.argv().is_empty());
+        assert_eq!(pending.log_level(), CHILD_LOG_LEVEL);
+        assert!(pending.run_log_path().is_none());
+        assert!(pending.serve_wal_path().is_none());
+        assert!(pending.is_memory());
+
+        let start = RunStart::new(
+            Some(Path::new("/opt/progressive-lsp")),
+            vec![
+                "serve".into(),
+                "--control-socket".into(),
+                "/pfx/run/poc-ide.sock".into(),
+            ],
+            CHILD_LOG_LEVEL,
+            Some(Path::new("/logs/poc-ide-1-2.sqlite")),
+            Some(Path::new("/pfx/log/serve-1-2.sqlite")),
+        );
+        let payload = start.to_payload();
+        assert_eq!(payload["binary"], "/opt/progressive-lsp");
+        assert_eq!(
+            payload["argv"],
+            json!(["serve", "--control-socket", "/pfx/run/poc-ide.sock"])
+        );
+        assert_eq!(payload["log_level"], "debug");
+        assert_eq!(payload["run_log_path"], "/logs/poc-ide-1-2.sqlite");
+        assert_eq!(payload["path"], "/logs/poc-ide-1-2.sqlite");
+        assert_eq!(payload["serve_wal_path"], "/pfx/log/serve-1-2.sqlite");
+        assert!(payload.get("memory").is_none());
+        assert_eq!(start.binary(), Some(Path::new("/opt/progressive-lsp")));
+        assert_eq!(start.argv().len(), 3);
+        assert_eq!(
+            start.run_log_path(),
+            Some(Path::new("/logs/poc-ide-1-2.sqlite"))
+        );
+        assert_eq!(
+            start.serve_wal_path(),
+            Some(Path::new("/pfx/log/serve-1-2.sqlite"))
+        );
+        assert!(!start.is_memory());
+
+        let mut log = memory_at(9);
+        log.log_run_start(&start);
+        log.log_child_stderr("fatal: boom");
+        let rows = log.rows().unwrap();
+        let recorded = rows
+            .iter()
+            .rev()
+            .find(|r| r.event() == EVENT_RUN_START)
+            .unwrap();
+        assert_eq!(
+            recorded.payload().unwrap()["binary"],
+            "/opt/progressive-lsp"
+        );
+        let stderr = rows
+            .iter()
+            .find(|r| r.event() == EVENT_CHILD_STDERR)
+            .unwrap();
+        assert_eq!(stderr.category(), LogCategory::Lsp);
+        assert_eq!(stderr.payload().unwrap()["line"], "fatal: boom");
+    }
+
+    #[test]
+    fn serve_wal_path_value_object_is_unique_per_clock() {
+        let a = ServeWalPath::resolve_in(Some("/pfx"), Some("/home/me"), Path::new("/tmp"), 11, 7);
+        let b = ServeWalPath::resolve_in(Some("/pfx"), Some("/home/me"), Path::new("/tmp"), 12, 7);
+        assert_eq!(a.as_path(), Path::new("/pfx/log/serve-11-7.sqlite"));
+        assert_ne!(a, b);
+        let via_home = ServeWalPath::resolve_in(None, Some("/home/me"), Path::new("/tmp"), 1, 2);
+        assert_eq!(
+            via_home.as_path(),
+            Path::new("/home/me/.progressivelsp/log/serve-1-2.sqlite")
+        );
+        let via_temp = ServeWalPath::resolve_in(None, None, Path::new("/tmp"), 3, 4);
+        assert_eq!(via_temp.as_path(), Path::new("/tmp/serve-3-4.sqlite"));
+        assert_eq!(
+            ServeWalPath::new("/logs", 1, 1).into_path(),
+            PathBuf::from("/logs/serve-1-1.sqlite")
+        );
+        let clock = FakeClock::at_unix_ms(99);
+        let from_clock = ServeWalPath::resolve_default(&clock);
+        assert!(from_clock
+            .as_path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("serve-99-"));
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = ServeWalPath::new(tmp.path().join("log"), 1, 1);
+        nested.ensure_parent().unwrap();
+        assert!(tmp.path().join("log").is_dir());
     }
 
     #[test]

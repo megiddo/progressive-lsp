@@ -20,9 +20,9 @@ pub use git_exclude::{
 };
 pub use ids::{FileId, LanguageId, LanguageVersion, PackageId, Tier, WorkspaceId};
 pub use log::{
-    message_from_bytes, sanitize_extras, FakeLog, LogComponent, LogLevel, LogOrigin, LogPort,
-    LogRecord, LogScope, LogScopeGuard, LogSink, MemoryLog, NeverFailLog, NullLog, MEMORY_LOG_CAP,
-    MESSAGE_MAX_BYTES,
+    message_from_bytes, sanitize_extras, FakeLog, LevelFilter, LogComponent, LogLevel, LogOrigin,
+    LogPort, LogRecord, LogScope, LogScopeGuard, LogSink, MemoryLog, NeverFailLog, NullLog,
+    ENV_LOG_LEVEL, MEMORY_LOG_CAP, MESSAGE_MAX_BYTES,
 };
 pub use prefix::{PrefixLayout, PREFIX_DIR_NAME};
 pub use rss::{
@@ -33,6 +33,7 @@ pub use rss::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn public_reexports_resolve() {
@@ -40,9 +41,12 @@ mod tests {
         let _ = FakeClock::at_unix_ms(1);
         let _ = Config::empty();
         let _ = NullLog;
+        assert_eq!(ENV_LOG_LEVEL, "PROGRESSIVE_LSP_LOG_LEVEL");
         let log = FakeLog::new();
         log.info("reexport");
         assert_eq!(log.records().len(), 1);
+        let filtered = LevelFilter::new(Arc::new(log.clone()), LogLevel::Info);
+        assert_eq!(filtered.min(), LogLevel::Info);
         assert_eq!(MEMORY_LOG_CAP, 4096);
         assert_eq!(MESSAGE_MAX_BYTES, 64 * 1024);
         assert_eq!(message_from_bytes(b"ok"), "ok");
