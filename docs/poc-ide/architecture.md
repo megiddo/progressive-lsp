@@ -30,7 +30,8 @@ poc-ide/                     workspace member; not a musl artifact
   src/conflict.rs           ConflictModal, ConflictChoice
   src/language.rs            LanguageCatalog, ServeMode, ControlSocketPath
   src/lsp.rs                LspClient Facade, LspLocation, SpawnSpec, ServeSpawn, StdioLsp
-  src/control.rs             ControlClient Adapter, UnixControl
+  src/lsp_io.rs             LspIoRequest Command, LspIoEvent, ProgressEvent, DiscoverFlight, LspIoMailbox
+  src/control.rs             ControlClient Adapter, UnixControl, ControlPushInbox Observer
   src/console.rs             ProtocolConsole Facade, TranscriptEntry (lib + unit tests; not wired in the bin)
   src/watch.rs              DiskWatch Observer, NotifyWatch
   src/log.rs                RunLog Repository (per-run sqlite debug sink; separate schema from serve WAL)
@@ -50,7 +51,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 4. Keystrokes → `EditCommand` on `OpenBuffer` → dirty → `didChange` incremental.
 5. Save → `FsPort.write` → clear dirty → `didSave`.
 6. `WatchPort` events for an open path → if the buffer is open, enqueue `ConflictModal` (always; even if clean). Choice `LoadDisk` replaces rope and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime`. Folder open subscribes at `WatchDepth::Immediate` on the workspace root; nested directories are watched when expanded (and a file's parent when opened). Recursive OS watch is not used at bind time.
-7. After the tree is bound, `initialize` runs on a worker thread (`LspSessionState::Connecting`). The UI stays interactive. When the client is ready, already-open buffers get `didOpen`. Go to definition / implementation / references → `DiscoverCommand` → `LspClient` → jump opens or focuses a tab at `LspLocation`. Navigate records `PendingDiscover` and applies after the menu closes (same path as F12 and the editor / file-tree context menu). The editor view copies caret char offsets onto `OpenBuffer.selection` via `CursorOffsets` so discover uses the visible caret, not a stale 0,0. Right-click uses the focused tab + cursor (same as F12), not the tree path.
+7. After the tree is bound, one `poc-ide-lsp` thread owns child stdin/stdout and the stderr drain. The UI submits `LspIoRequest` (initialize, didOpen/didChange/didSave/didClose, discover, shutdown) and polls `LspIoEvent`. **The UI thread never calls `LspTransport::request`.** `$/progress` and `window/logMessage` are kept as `ProgressEvent` / `LogMessageEvent`. When a discover is in flight, F12 and context-menu discover items are disabled with label `waiting for server`; tree, tabs, and typing stay live (`didChange` is queued). `DiscoverCommand::apply_locations` jumps and writes `ProofStatus` last-discover when the inbox yields. Control IO is a second thread (`poc-ide-control`) that polls Envelope pushes (`TierReady`, `WatchBatch`) into `ControlPushInbox`; `fn ui` never calls `index_status()` / `tier_status()`. Navigate records `PendingDiscover` and submits after the menu closes (same path as F12 and the editor / file-tree context menu). The editor view copies caret char offsets onto `OpenBuffer.selection` via `CursorOffsets` so discover uses the visible caret, not a stale 0,0. Right-click uses the focused tab + cursor (same as F12), not the tree path.
 8. Debug events go to `RunLog` (sqlite). `ProtocolConsole` remains a lib Facade for Envelope/LSP transcript tests; the bin has no hand-typed inspector.
 
 ## Ports (inject always)
@@ -117,7 +118,7 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 
 - Left: `egui::Panel::left("tree").resizable(true)` bound to `LayoutState.left_width` (egui 0.36 renamed `SidePanel` to `Panel`).
 - Center: `TabStrip` rendered with a thin custom tab bar in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on this workspace’s rustc). Same `TabStrip` tests.
-- Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References; they run `DiscoverCommand` (same path as Navigate / F12). Navigate records `PendingDiscover` and applies after the menu UI.
+- Editor: `egui::TextEdit::multiline` + syntect layouter from `egui_extras` (or a galley built from `Highlighter` tokens). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References; while a discover is in flight they are disabled (`waiting for server`). Clicks queue `LspIoRequest`; jump runs when the inbox yields. Navigate records `PendingDiscover` and submits after the menu UI.
 - Modal: `egui::Modal` / `Window` for `ConflictModal`.
 - No bottom protocol console. Debug is `RunLog` sqlite, not a hand-typed inspector.
 - Footer (`ProofStatus`): binary basename, log level, RunLog path, serve WAL path (or “WAL not open yet”), last discover (`definition L23:88 → 0 locations`) from RunLog discover rows.

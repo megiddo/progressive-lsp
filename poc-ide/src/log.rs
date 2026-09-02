@@ -23,6 +23,9 @@ pub const EVENT_TAB_OPEN: &str = "tab_open";
 pub const EVENT_TAB_CLOSE: &str = "tab_close";
 pub const EVENT_SAVE: &str = "save";
 pub const EVENT_CONTROL_CONNECT_ERROR: &str = "control_connect_error";
+pub const EVENT_CONTROL_PUSH: &str = "control_push";
+pub const EVENT_PROGRESS: &str = "$/progress";
+pub const EVENT_LOG_MESSAGE: &str = "window/logMessage";
 pub const EVENT_CONFLICT_ENQUEUE: &str = "conflict_enqueue";
 pub const EVENT_CONFLICT_RESOLVE: &str = "conflict_resolve";
 
@@ -606,6 +609,36 @@ impl RunLog {
         );
     }
 
+    pub fn log_control_push(&mut self, method: &str) {
+        self.record(
+            LogCategory::Control,
+            EVENT_CONTROL_PUSH,
+            Some(json!({ "method": method })),
+        );
+    }
+
+    pub fn log_progress(&mut self, progress_token: &str, kind: &str) {
+        self.record(
+            LogCategory::Lsp,
+            EVENT_PROGRESS,
+            Some(json!({
+                "progress_token": progress_token,
+                "kind": kind,
+            })),
+        );
+    }
+
+    pub fn log_window_log_message(&mut self, typ: i64, message: &str) {
+        self.record(
+            LogCategory::Lsp,
+            EVENT_LOG_MESSAGE,
+            Some(json!({
+                "typ": typ,
+                "line": message,
+            })),
+        );
+    }
+
     pub fn log_conflict_enqueue(&mut self, path: &Path, mtime: u64) {
         self.record(
             LogCategory::Conflict,
@@ -940,6 +973,9 @@ mod tests {
         log.log_lsp("textDocument/implementation", None);
         log.log_lsp("textDocument/references", None);
         log.log_control_connect_error("control socket missing");
+        log.log_control_push("TierReady");
+        log.log_progress("ingest", "begin");
+        log.log_window_log_message(3, "hi");
         log.log_conflict_enqueue(Path::new("/ws/a.rs"), 9);
         log.log_conflict_resolve(Path::new("/ws/a.rs"), ConflictChoice::LoadDisk);
         log.log_conflict_resolve(Path::new("/ws/a.rs"), ConflictChoice::KeepMemory);
@@ -961,6 +997,9 @@ mod tests {
         assert!(events.contains(&"textDocument/implementation"));
         assert!(events.contains(&"textDocument/references"));
         assert!(events.contains(&EVENT_CONTROL_CONNECT_ERROR));
+        assert!(events.contains(&EVENT_CONTROL_PUSH));
+        assert!(events.contains(&EVENT_PROGRESS));
+        assert!(events.contains(&EVENT_LOG_MESSAGE));
         assert!(events.contains(&EVENT_CONFLICT_ENQUEUE));
         assert!(events.contains(&EVENT_CONFLICT_RESOLVE));
         let def = rows
@@ -983,6 +1022,22 @@ mod tests {
         assert_eq!(discover.payload().unwrap()["line"], 3);
         assert_eq!(discover.payload().unwrap()["character"], 4);
         assert_eq!(discover.payload().unwrap()["location_count"], 0);
+        let progress = rows.iter().find(|r| r.event() == EVENT_PROGRESS).unwrap();
+        assert_eq!(progress.payload().unwrap()["progress_token"], "ingest");
+        assert_eq!(progress.payload().unwrap()["kind"], "begin");
+        assert!(progress.payload().unwrap().get("token").is_none());
+        let push = rows
+            .iter()
+            .find(|r| r.event() == EVENT_CONTROL_PUSH)
+            .unwrap();
+        assert_eq!(push.category(), LogCategory::Control);
+        assert_eq!(push.payload().unwrap()["method"], "TierReady");
+        let log_msg = rows
+            .iter()
+            .find(|r| r.event() == EVENT_LOG_MESSAGE)
+            .unwrap();
+        assert_eq!(log_msg.payload().unwrap()["typ"], 3);
+        assert_eq!(log_msg.payload().unwrap()["line"], "hi");
         let tree_err = rows
             .iter()
             .filter(|r| r.event() == EVENT_TREE_LOAD)

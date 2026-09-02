@@ -6,15 +6,16 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, BufferMap, ChildStderrDrain, ClipboardPort, CompactChain,
-    ConflictChoice, ControlClient, ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort,
-    DiscoverKind, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan, Highlighter,
-    IdeError, LayoutState, LspClient, LspSessionState, NotifyWatch, OpenBuffer, PendingDialog,
-    PendingDiscover, ProofStatus, RunLog, Selection, ServeMode, ServeSpawn, ServeWalPath,
-    SpawnSpec, StdFs, StdioLsp, SystemClock, TabId, TabStrip, TreeExpansion, TreeNode, UnixControl,
+    advertised_control_socket, spawn_control_io, spawn_lsp_io, BufferMap, ClipboardPort,
+    CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle, ControlPushInbox,
+    ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort, DiscoverFlight, DiscoverKind,
+    DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, IdeError,
+    LayoutState, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState, NotifyWatch, OpenBuffer,
+    PendingDialog, PendingDiscover, ProofStatus, RunLog, Selection, ServeMode, ServeSpawn,
+    ServeWalPath, SpawnSpec, StdFs, SystemClock, TabId, TabStrip, TreeExpansion, TreeNode,
     WatchPort, WorkspaceRoot,
 };
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 
 /// Native `rfd` Adapter. Tests never construct this type.
 pub struct RfdDialog;
@@ -116,19 +117,16 @@ pub struct PocIdeApp {
     layout: LayoutState,
     watch: LiveWatch,
     disk: DiskWatch,
-    lsp: Option<LspClient<StdioLsp>>,
-    lsp_inbox: Option<mpsc::Receiver<Result<LspClient<StdioLsp>, String>>>,
+    lsp_io: Option<LspIoHandle>,
     lsp_session: LspSessionState,
     lsp_error: Option<String>,
     serve_mode: ServeMode,
     serve_spawn: ServeSpawn,
     spawn_binary: Option<PathBuf>,
-    stderr_drain: Option<Arc<ChildStderrDrain>>,
-    /// Live Envelope connection when `ServeMode::ControlSocket`. Held so the
-    /// socket stays up; the bin has no inspector that sends through it.
-    #[allow(dead_code)]
-    control: Option<ControlClient<UnixControl>>,
+    control_io: Option<ControlIoHandle>,
+    control_inbox: ControlPushInbox,
     control_error: Option<String>,
+    discover_flight: DiscoverFlight,
     status: String,
     run_log: RunLog,
     pending_discover: Option<PendingDiscover>,
@@ -172,16 +170,16 @@ impl PocIdeApp {
             layout: LayoutState::new(),
             watch: LiveWatch::new(),
             disk: DiskWatch::new(),
-            lsp: None,
-            lsp_inbox: None,
+            lsp_io: None,
             lsp_session: LspSessionState::Idle,
             lsp_error: None,
             serve_mode,
             serve_spawn,
             spawn_binary,
-            stderr_drain: None,
-            control: None,
+            control_io: None,
+            control_inbox: ControlPushInbox::new(),
             control_error: None,
+            discover_flight: DiscoverFlight::idle(),
             status: String::new(),
             run_log,
             pending_discover: None,
@@ -279,14 +277,19 @@ impl PocIdeApp {
                 if let Some(parent) = opened.parent() {
                     let _ = self.watch.watch(parent);
                 }
-                if let Some(lsp) = &mut self.lsp {
-                    match lsp.did_open(&opened, &text) {
-                        Ok(_) => self.run_log.log_lsp("textDocument/didOpen", None),
-                        Err(e) => {
-                            self.run_log
-                                .log_lsp("textDocument/didOpen", Some(&e.to_string()));
-                            self.status = e.to_string();
-                            return;
+                if self.lsp_session.is_ready() {
+                    if let Some(io) = &self.lsp_io {
+                        match io.submit(LspIoRequest::DidOpen {
+                            path: opened.clone(),
+                            text,
+                        }) {
+                            Ok(()) => self.run_log.log_lsp("textDocument/didOpen", None),
+                            Err(e) => {
+                                self.run_log
+                                    .log_lsp("textDocument/didOpen", Some(&e.to_string()));
+                                self.status = e.to_string();
+                                return;
+                            }
                         }
                     }
                 }
@@ -297,8 +300,12 @@ impl PocIdeApp {
     }
 
     fn close_tab(&mut self, id: &TabId) {
-        if let Some(lsp) = &mut self.lsp {
-            let _ = lsp.did_close(id.as_path());
+        if self.lsp_session.is_ready() {
+            if let Some(io) = &self.lsp_io {
+                let _ = io.submit(LspIoRequest::DidClose {
+                    path: id.as_path().to_path_buf(),
+                });
+            }
         }
         self.buffers.close(id.as_path());
         self.tabs.close(id);
@@ -313,14 +320,18 @@ impl PocIdeApp {
             match buf.save(&mut self.fs) {
                 Ok(()) => {
                     self.run_log.log_save(id.as_path(), None);
-                    if let Some(lsp) = &mut self.lsp {
-                        match lsp.did_save(id.as_path()) {
-                            Ok(()) => self.run_log.log_lsp("textDocument/didSave", None),
-                            Err(e) => {
-                                self.run_log
-                                    .log_lsp("textDocument/didSave", Some(&e.to_string()));
-                                self.status = e.to_string();
-                                return;
+                    if self.lsp_session.is_ready() {
+                        if let Some(io) = &self.lsp_io {
+                            match io.submit(LspIoRequest::DidSave {
+                                path: id.as_path().to_path_buf(),
+                            }) {
+                                Ok(()) => self.run_log.log_lsp("textDocument/didSave", None),
+                                Err(e) => {
+                                    self.run_log
+                                        .log_lsp("textDocument/didSave", Some(&e.to_string()));
+                                    self.status = e.to_string();
+                                    return;
+                                }
                             }
                         }
                     }
@@ -338,82 +349,129 @@ impl PocIdeApp {
         self.shutdown_lsp();
         self.lsp_session = self.lsp_session.begin_connect();
         self.run_log.log_lsp("initialize_start", None);
-        let (tx, rx) = mpsc::channel();
-        self.lsp_inbox = Some(rx);
-        let root = root.as_path().to_path_buf();
-        let spawn = self.serve_spawn.clone();
-        let _ = std::thread::Builder::new()
-            .name("poc-ide-lsp".into())
-            .spawn(move || {
-                let result = spawn_initialized_client(root, spawn);
-                let _ = tx.send(result.map_err(|e| e.to_string()));
-            });
+        self.lsp_io = Some(spawn_lsp_io(
+            root.as_path().to_path_buf(),
+            self.serve_spawn.clone(),
+        ));
     }
 
     fn poll_lsp_inbox(&mut self) {
-        let incoming = match &self.lsp_inbox {
+        let events = match &self.lsp_io {
             None => return,
-            Some(rx) => match rx.try_recv() {
-                Ok(v) => Some(v),
-                Err(mpsc::TryRecvError::Empty) => None,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    Some(Err("language server thread ended".into()))
-                }
-            },
+            Some(io) => io.poll(),
         };
-        let Some(incoming) = incoming else {
-            return;
-        };
-        self.lsp_inbox = None;
-        match incoming {
-            Ok(client) => self.finish_lsp(client),
-            Err(e) => {
-                self.run_log.log_lsp("initialize", Some(&e));
-                self.lsp = None;
-                self.lsp_error = Some(e.clone());
-                self.lsp_session = self.lsp_session.finish_err();
-                if self.serve_mode.is_control_socket() {
-                    self.control_error = Some(e.clone());
-                }
-                self.status = e;
-            }
+        for ev in events {
+            self.handle_lsp_event(ev);
         }
     }
 
-    fn finish_lsp(&mut self, mut client: LspClient<StdioLsp>) {
-        self.run_log.log_lsp("initialize", None);
-        self.stderr_drain = client.transport().stderr_drain();
-        self.connect_control(client.progressive_cap());
-        let opens: Vec<(PathBuf, String)> = self
-            .tabs
-            .tabs()
-            .iter()
-            .filter_map(|tab| {
-                self.buffers
-                    .get(tab.as_path())
-                    .map(|buf| (buf.path().to_path_buf(), buf.text()))
-            })
-            .collect();
-        for (path, text) in opens {
-            match client.did_open(&path, &text) {
-                Ok(_) => self.run_log.log_lsp("textDocument/didOpen", None),
-                Err(e) => {
-                    self.run_log
-                        .log_lsp("textDocument/didOpen", Some(&e.to_string()));
-                    self.status = e.to_string();
+    fn handle_lsp_event(&mut self, ev: LspIoEvent) {
+        match ev {
+            LspIoEvent::Initialized { cap } => {
+                self.run_log.log_lsp("initialize", None);
+                self.lsp_error = None;
+                self.lsp_session = self.lsp_session.finish_ok();
+                self.connect_control(cap.as_ref());
+                let opens: Vec<(PathBuf, String)> = self
+                    .tabs
+                    .tabs()
+                    .iter()
+                    .filter_map(|tab| {
+                        self.buffers
+                            .get(tab.as_path())
+                            .map(|buf| (buf.path().to_path_buf(), buf.text()))
+                    })
+                    .collect();
+                if let Some(io) = &self.lsp_io {
+                    for (path, text) in opens {
+                        match io.submit(LspIoRequest::DidOpen { path, text }) {
+                            Ok(()) => self.run_log.log_lsp("textDocument/didOpen", None),
+                            Err(e) => {
+                                self.run_log
+                                    .log_lsp("textDocument/didOpen", Some(&e.to_string()));
+                                self.status = e.to_string();
+                            }
+                        }
+                    }
+                }
+                if self.status == "Connecting language server…" {
+                    self.status.clear();
                 }
             }
-        }
-        self.lsp = Some(client);
-        self.lsp_error = None;
-        self.lsp_session = self.lsp_session.finish_ok();
-        if self.status == "Connecting language server…" {
-            self.status.clear();
+            LspIoEvent::Opened { .. }
+            | LspIoEvent::Changed { .. }
+            | LspIoEvent::Saved { .. }
+            | LspIoEvent::Closed { .. }
+            | LspIoEvent::ShutdownDone => {}
+            LspIoEvent::Discover {
+                kind,
+                path,
+                line,
+                character,
+                locations,
+            } => {
+                self.discover_flight = self.discover_flight.finish();
+                match locations {
+                    Ok(locs) => match poc_ide::DiscoverCommand::new(kind).apply_locations(
+                        &locs,
+                        &path,
+                        line,
+                        character,
+                        &mut self.tabs,
+                        &mut self.buffers,
+                        &self.fs,
+                        Some(&mut self.run_log),
+                        None,
+                    ) {
+                        Ok(0) => self.status = "No locations".into(),
+                        Ok(_) => self.status.clear(),
+                        Err(e) => self.status = e.to_string(),
+                    },
+                    Err(e) => {
+                        let _ = poc_ide::DiscoverCommand::new(kind).apply_locations(
+                            &[],
+                            &path,
+                            line,
+                            character,
+                            &mut self.tabs,
+                            &mut self.buffers,
+                            &self.fs,
+                            Some(&mut self.run_log),
+                            Some(&e),
+                        );
+                        self.status = if e.contains("binary") {
+                            self.missing_server_status()
+                        } else {
+                            e
+                        };
+                    }
+                }
+            }
+            LspIoEvent::Progress(p) => {
+                self.run_log.log_progress(p.token(), p.kind().as_str());
+            }
+            LspIoEvent::LogMessage(m) => {
+                self.run_log.log_window_log_message(m.typ(), m.message());
+            }
+            LspIoEvent::ChildStderr { line } => {
+                self.run_log.log_child_stderr(&line);
+            }
+            LspIoEvent::Failed { method, error } => {
+                self.run_log.log_lsp(&method, Some(&error));
+                if method == "initialize" {
+                    self.lsp_error = Some(error.clone());
+                    self.lsp_session = self.lsp_session.finish_err();
+                    if self.serve_mode.is_control_socket() {
+                        self.control_error = Some(error.clone());
+                    }
+                }
+                self.status = error;
+            }
         }
     }
 
     fn connect_control(&mut self, cap: Option<&poc_ide::ProgressiveLspCap>) {
-        self.control = None;
+        self.control_io = None;
         self.control_error = None;
         if !self.serve_mode.is_control_socket() {
             return;
@@ -425,16 +483,10 @@ impl PocIdeApp {
             return;
         };
         match advertised_control_socket(cap) {
-            Ok(path) => match ControlClient::<UnixControl>::connect(path) {
-                Ok(client) => {
-                    self.control = Some(client);
-                    self.control_error = None;
-                }
-                Err(e) => {
-                    self.run_log.log_control_connect_error(&e.to_string());
-                    self.control_error = Some(e.to_string());
-                }
-            },
+            Ok(path) => {
+                self.control_io = Some(spawn_control_io(path.to_string()));
+                self.control_error = None;
+            }
             Err(e) => {
                 self.run_log.log_control_connect_error(&e.to_string());
                 self.control_error = Some(e.to_string());
@@ -442,14 +494,34 @@ impl PocIdeApp {
         }
     }
 
-    fn shutdown_lsp(&mut self) {
-        self.lsp_inbox = None;
-        self.control = None;
-        self.stderr_drain = None;
-        self.lsp_session = LspSessionState::Idle;
-        if let Some(mut client) = self.lsp.take() {
-            let _ = client.shutdown();
+    fn poll_control_inbox(&mut self) {
+        let events = match &self.control_io {
+            None => return,
+            Some(io) => io.poll(),
+        };
+        for ev in events {
+            match ev {
+                ControlIoEvent::Connected => {}
+                ControlIoEvent::Push(push) => {
+                    self.run_log.log_control_push(push.method());
+                    self.control_inbox.ingest(push);
+                }
+                ControlIoEvent::Failed(e) => {
+                    self.run_log.log_control_connect_error(&e);
+                    self.control_error = Some(e);
+                }
+            }
         }
+    }
+
+    fn shutdown_lsp(&mut self) {
+        if let Some(io) = self.lsp_io.take() {
+            let _ = io.submit(LspIoRequest::Shutdown);
+        }
+        self.control_io = None;
+        self.control_inbox = ControlPushInbox::new();
+        self.discover_flight = DiscoverFlight::idle();
+        self.lsp_session = LspSessionState::Idle;
     }
 
     fn missing_server_status(&self) -> String {
@@ -466,23 +538,24 @@ impl PocIdeApp {
         let Some(pending) = self.pending_discover.take() else {
             return;
         };
-        match pending.apply(
-            self.lsp.as_mut(),
-            &mut self.tabs,
-            &mut self.buffers,
-            &self.fs,
-            Some(&mut self.run_log),
-        ) {
-            Ok(0) => self.status = "No locations".into(),
-            Ok(_) => self.status.clear(),
+        if !self.discover_flight.can_submit() {
+            return;
+        }
+        match pending.to_io_request(&self.tabs, &self.buffers) {
+            Ok(req) => {
+                if let Some(io) = &self.lsp_io {
+                    match io.submit(req) {
+                        Ok(()) => {
+                            self.discover_flight = self.discover_flight.begin(pending.kind());
+                        }
+                        Err(e) => self.status = e.to_string(),
+                    }
+                } else {
+                    self.status = self.missing_server_status();
+                }
+            }
             Err(e) if e.is_missing_binary() => self.status = self.missing_server_status(),
             Err(e) => self.status = e.to_string(),
-        }
-    }
-
-    fn flush_child_stderr(&mut self) {
-        if let Some(drain) = self.stderr_drain.clone() {
-            drain.write_to(&mut self.run_log);
         }
     }
 
@@ -536,10 +609,10 @@ impl PocIdeApp {
 
 impl eframe::App for PocIdeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.flush_child_stderr();
         self.apply_pending_dialog();
         self.poll_lsp_inbox();
-        if self.lsp_inbox.is_some() {
+        self.poll_control_inbox();
+        if self.lsp_session.is_connecting() || self.discover_flight.is_in_flight() {
             ui.ctx().request_repaint();
         }
         let already: Vec<PathBuf> = self
@@ -564,12 +637,14 @@ impl eframe::App for PocIdeApp {
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
         }
-        if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.shift) {
-            self.queue_discover(DiscoverKind::References);
-        } else if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.command) {
-            self.queue_discover(DiscoverKind::Implementation);
-        } else if ui.input(|i| i.key_pressed(egui::Key::F12)) {
-            self.queue_discover(DiscoverKind::Definition);
+        if self.discover_flight.can_submit() {
+            if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.shift) {
+                self.queue_discover(DiscoverKind::References);
+            } else if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.command) {
+                self.queue_discover(DiscoverKind::Implementation);
+            } else if ui.input(|i| i.key_pressed(egui::Key::F12)) {
+                self.queue_discover(DiscoverKind::Definition);
+            }
         }
 
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
@@ -591,15 +666,35 @@ impl eframe::App for PocIdeApp {
                     }
                 });
                 ui.menu_button("Navigate", |ui| {
-                    if ui.button("Go to Definition").clicked() {
+                    let waiting = self.discover_flight.waiting_label();
+                    let enabled = self.discover_flight.can_submit();
+                    if ui
+                        .add_enabled(
+                            enabled,
+                            egui::Button::new(waiting.unwrap_or("Go to Definition")),
+                        )
+                        .clicked()
+                    {
                         ui.close_kind(egui::UiKind::Menu);
                         self.queue_discover(DiscoverKind::Definition);
                     }
-                    if ui.button("Go to Implementation").clicked() {
+                    if ui
+                        .add_enabled(
+                            enabled,
+                            egui::Button::new(waiting.unwrap_or("Go to Implementation")),
+                        )
+                        .clicked()
+                    {
                         ui.close_kind(egui::UiKind::Menu);
                         self.queue_discover(DiscoverKind::Implementation);
                     }
-                    if ui.button("Find References").clicked() {
+                    if ui
+                        .add_enabled(
+                            enabled,
+                            egui::Button::new(waiting.unwrap_or("Find References")),
+                        )
+                        .clicked()
+                    {
                         ui.close_kind(egui::UiKind::Menu);
                         self.queue_discover(DiscoverKind::References);
                     }
@@ -629,9 +724,11 @@ impl eframe::App for PocIdeApp {
                     let mut discover = None;
                     let mut became_expanded = Vec::new();
                     let mut became_collapsed = Vec::new();
+                    let discover_enabled = self.discover_flight.can_submit();
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(tree) = self.tree.as_ref() {
-                            let shown = show_nodes(ui, tree.children(), &self.expansion);
+                            let shown =
+                                show_nodes(ui, tree.children(), &self.expansion, discover_enabled);
                             clicked = shown.clicked;
                             discover = shown.discover;
                             became_expanded = shown.became_expanded;
@@ -726,17 +823,31 @@ impl eframe::App for PocIdeApp {
                     }
                     ui.label(id.as_path().display().to_string());
                     if let Some(buf) = self.buffers.get_mut(id.as_path()) {
-                        let outcome = show_editor(ui, buf, &self.highlighter, &mut self.clipboard);
+                        let outcome = show_editor(
+                            ui,
+                            buf,
+                            &self.highlighter,
+                            &mut self.clipboard,
+                            self.discover_flight.can_submit(),
+                        );
                         if let Some((path, old, new)) = outcome.change {
-                            if let Some(lsp) = &mut self.lsp {
-                                match lsp.did_change(&path, &old, &new) {
-                                    Ok(()) => self.run_log.log_lsp("textDocument/didChange", None),
-                                    Err(e) => {
-                                        self.run_log.log_lsp(
-                                            "textDocument/didChange",
-                                            Some(&e.to_string()),
-                                        );
-                                        self.status = e.to_string();
+                            if self.lsp_session.is_ready() {
+                                if let Some(io) = &self.lsp_io {
+                                    match io.submit(LspIoRequest::DidChange {
+                                        path,
+                                        old_text: old,
+                                        new_text: new,
+                                    }) {
+                                        Ok(()) => {
+                                            self.run_log.log_lsp("textDocument/didChange", None)
+                                        }
+                                        Err(e) => {
+                                            self.run_log.log_lsp(
+                                                "textDocument/didChange",
+                                                Some(&e.to_string()),
+                                            );
+                                            self.status = e.to_string();
+                                        }
                                     }
                                 }
                             }
@@ -762,22 +873,50 @@ struct ShowTree {
     became_collapsed: Vec<PathBuf>,
 }
 
-fn discover_context_menu(ui: &mut egui::Ui, chosen: &mut Option<DiscoverKind>) {
-    if ui.button("Find Definition").clicked() {
+fn discover_context_menu(ui: &mut egui::Ui, chosen: &mut Option<DiscoverKind>, enabled: bool) {
+    let waiting = if enabled {
+        None
+    } else {
+        Some("waiting for server")
+    };
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(waiting.unwrap_or("Find Definition")),
+        )
+        .clicked()
+    {
         ui.close_kind(egui::UiKind::Menu);
         *chosen = Some(DiscoverKind::Definition);
     }
-    if ui.button("Find Implementation").clicked() {
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(waiting.unwrap_or("Find Implementation")),
+        )
+        .clicked()
+    {
         ui.close_kind(egui::UiKind::Menu);
         *chosen = Some(DiscoverKind::Implementation);
     }
-    if ui.button("Find References").clicked() {
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(waiting.unwrap_or("Find References")),
+        )
+        .clicked()
+    {
         ui.close_kind(egui::UiKind::Menu);
         *chosen = Some(DiscoverKind::References);
     }
 }
 
-fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) -> ShowTree {
+fn show_nodes(
+    ui: &mut egui::Ui,
+    nodes: &[TreeNode],
+    expansion: &TreeExpansion,
+    discover_enabled: bool,
+) -> ShowTree {
     let mut clicked = None;
     let mut discover = None;
     let mut became_expanded = Vec::new();
@@ -794,7 +933,9 @@ fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) 
                 .id_salt(path)
                 .default_open(false)
                 .open(Some(open))
-                .show(ui, |ui| show_nodes(ui, tail.children(), expansion));
+                .show(ui, |ui| {
+                    show_nodes(ui, tail.children(), expansion, discover_enabled)
+                });
             if let Some(inner) = response.body_returned {
                 if clicked.is_none() {
                     clicked = inner.clicked;
@@ -817,7 +958,7 @@ fn show_nodes(ui: &mut egui::Ui, nodes: &[TreeNode], expansion: &TreeExpansion) 
             if response.clicked() {
                 clicked = Some(node.path().to_path_buf());
             }
-            response.context_menu(|ui| discover_context_menu(ui, &mut discover));
+            response.context_menu(|ui| discover_context_menu(ui, &mut discover, discover_enabled));
         }
     }
     ShowTree {
@@ -838,6 +979,7 @@ fn show_editor(
     buffer: &mut OpenBuffer,
     highlighter: &Highlighter,
     clipboard: &mut impl ClipboardPort,
+    discover_enabled: bool,
 ) -> EditorOutcome {
     let path = buffer.path().to_path_buf();
     let mut text = buffer.text();
@@ -856,7 +998,7 @@ fn show_editor(
     let mut discover = None;
     output
         .response
-        .context_menu(|ui| discover_context_menu(ui, &mut discover));
+        .context_menu(|ui| discover_context_menu(ui, &mut discover, discover_enabled));
     let change = if output.response.changed() && text != buffer.text() {
         let old = buffer.text();
         let path = buffer.path().to_path_buf();
@@ -950,15 +1092,4 @@ fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -
         );
     }
     job
-}
-
-fn spawn_initialized_client(
-    root: PathBuf,
-    spawn: ServeSpawn,
-) -> Result<LspClient<StdioLsp>, IdeError> {
-    let spec = SpawnSpec::resolve()?;
-    let transport = StdioLsp::spawn_plan(&spec, &spawn)?;
-    let mut client = LspClient::new(transport).with_mode(ServeMode::ControlSocket);
-    client.initialize(&root)?;
-    Ok(client)
 }

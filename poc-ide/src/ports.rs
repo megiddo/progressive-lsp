@@ -648,6 +648,9 @@ pub trait ControlTransport {
 
     /// Read any available pushes without sending. Unix adapter is non-blocking.
     fn poll(&mut self) -> Result<(), IdeError>;
+
+    /// Block until a frame is available (or error). FakeControl is `poll`.
+    fn wait(&mut self) -> Result<(), IdeError>;
 }
 
 /// Test double: scripted Envelope replies. Pushes use `request_id == 0`.
@@ -828,6 +831,10 @@ impl ControlTransport for FakeControl {
         }
         self.deliver_pending();
         Ok(())
+    }
+
+    fn wait(&mut self) -> Result<(), IdeError> {
+        self.poll()
     }
 }
 

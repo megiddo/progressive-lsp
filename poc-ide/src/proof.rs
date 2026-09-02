@@ -1,5 +1,6 @@
 //! `ProofStatus` DTO the footer renders. Last discover comes from `RunLog`
-//! discover rows / `DiscoverCommand` — not from an LSP IO thread.
+//! discover rows after the LSP inbox yields — not from a blocking request on
+//! the UI thread.
 
 use std::path::Path;
 

@@ -201,8 +201,14 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
 | `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
 | `DiscoverKind` | Value object | Definition / Implementation / References; `lsp_method` is the stock JSON-RPC name |
-| `DiscoverCommand` | Command | Focused tab + cursor → `LspClient` method + `jump`; no file open / missing client are domain errors, not panics; empty location list is valid |
-| `PendingDiscover` | Command / value | Click records a `DiscoverKind`; apply runs `DiscoverCommand` once after the menu closes; close does not panic |
+| `DiscoverCommand` | Command | Focused tab + cursor → IO `LspIoRequest` (`to_io_request`) or blocking `apply` for FakeLsp tests; `apply_locations` jumps when the inbox yields. No file open / missing client are domain errors, not panics; empty location list is valid. UI-facing `to_io_request` / `apply_locations` never call `LspTransport::request` |
+| `PendingDiscover` | Command / value | Click records a `DiscoverKind`; `to_io_request` queues an `LspIoRequest` after the menu closes; close does not panic |
+| `LspIoRequest` | Command | didOpen / didChange / didSave / didClose / discover / shutdown / initialize sent on the LSP IO channel |
+| `LspIoEvent` | Event | Inbox yield: initialized, notify acks, discover locations, `$/progress`, `window/logMessage`, child stderr, shutdown, failed |
+| `LspIoMailbox` / `LspIoHandle` | Command queue + Event inbox | UI `submit` / `poll` never call `LspTransport::request`; the IO thread (or test `pump_lsp_io`) owns the transport |
+| `ProgressEvent` / `LspProgressKind` | Event / DTO | `$/progress` begin/report/end kept by the reader; token may be string or number; unknown kind is dropped |
+| `LogMessageEvent` | Event / DTO | `window/logMessage` kept by the reader; missing `type` is 0 |
+| `DiscoverFlight` | Value object | Idle vs in-flight kind; second `begin` is a no-op; `waiting_label` is `waiting for server` iff in flight; not a Manager |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
 | `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
@@ -222,8 +228,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `ServeSpawn` | Value object | Child argv + `PROGRESSIVE_LSP_LOG_LEVEL=debug` + optional `PROGRESSIVE_LSP_LOG`; `fn build_serve_command` is a function (not a type) that applies this onto `std::process::Command` — tests inspect env/argv and do not spawn a live serve; stderr is piped, never inherited |
 | `ChildStderrDrain` | Observer + Adapter | Line-delimited child stderr → `RunLog` (`category=lsp`, `event=child_stderr`); `STDERR_DRAIN_CAP=1024` overflow drops oldest; tests drain a `Cursor` / `push_line` without a thread; never attached to child stdout |
 | `RunStart` | DTO | `run_start` payload always has `binary`, `argv`, `log_level`, `run_log_path`, `serve_wal_path` (`not open yet` when unset) |
-| `ProofStatus` | DTO / Value object | Footer: binary basename, log level, RunLog path, serve WAL path, last discover (`definition L23:88 → 0 locations`); last discover is filled from `RunLog` discover rows / `DiscoverCommand` |
-| `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |
+| `ProofStatus` | DTO / Value object | Footer: binary basename, log level, RunLog path, serve WAL path, last discover (`definition L23:88 → 0 locations`); last discover is filled from `RunLog` discover rows after the inbox yields |
+| `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui`. Reader keeps no-id `$/progress` and `window/logMessage` on `take_notifications` — it does not drop them |
 | `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
 | `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
 | `LspClient` | Facade | JSON-RPC in; domain locations out; no watch internals |
@@ -232,6 +238,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `FakeControl` | Test double | Same `ControlTransport`; pushes use `request_id == 0` |
 | `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |
 | `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
+| `ControlPushInbox` | Observer | UI `ingest` / `poll` of `ControlPush`; never calls `index_status` / `tier_status` |
+| `ControlIoEvent` / `ControlIoHandle` | Event + inbox | Control IO thread yields Connected / Push / Failed; `fn ui` only `poll`s |
 | `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
 | `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |

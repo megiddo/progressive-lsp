@@ -10,6 +10,15 @@ exclude_globs = [
     "poc-ide/src/ui.rs",
 ]
 exclude_re = [
+    # poc-lsp-async: named IO threads / Unix wait are composition-root shells.
+    "spawn_lsp_io",
+    "run_stdio_lsp_io",
+    "emit_stdio_sideband",
+    "spawn_control_io",
+    "run_control_io_thread",
+    "UnixControl>::wait",
+    "StdioLsp::from_child",
+    "StdioLsp::from_pair",
     "impl GraphIndex for crate::query::EmptyIndex",
     "impl crate::tree_sitter::SymbolIndex for EmptyIndex",
     # Linux-only; not compiled on Darwin host mutants.

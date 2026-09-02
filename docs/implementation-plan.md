@@ -556,6 +556,27 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `LevelFilter`, `ProofStatus`, `ChildStderrDrain`, `ServeSpawn`, `ControlSocketPath`, `ServeWalPath`, `RunStart`, `PocArgs`
 
+## poc-lsp-async (`poc-lsp-async` branch)
+
+**Status: SIGNED OFF** on `poc-lsp-async`. Parent is `poc-proof-log`. Do not start `poc-tier-status` from this branch. Do not invent IndexStatus ingest fields or DiscoverOffer menus. `RunLog` stays a separate schema from the serve WAL.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PLA-1 | LSP IO thread owns stdin/stdout + stderr drain; `LspIoRequest` / `LspIoEvent`; keep `$/progress` | poc-proof-log | **SIGNED OFF.** UI apply never calls `LspTransport::request`. |
+| PLA-2 | Discover in flight: F12 / context menu disabled (`waiting for server`); `didChange` queued | PLA-1 | **SIGNED OFF.** `DiscoverFlight` value object. |
+| PLA-3 | Control IO thread / inbox; `fn ui` never calls `index_status` / `tier_status` | PLA-1 | **SIGNED OFF.** Records `ControlPush` in `ControlPushInbox` + RunLog. |
+
+**Sign-off checklist (poc-lsp-async)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (core 72; composition-root lib 68; poc-ide lib 188; xtask 30; hygiene 6)
+- [x] 95% llvm-cov on crates that exist — **95.94%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **27/27 (100%)** caught (9 unviable)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (musl ELF story unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `LspIoRequest`, `LspIoEvent`, `ProgressEvent`, `LspProgressKind`, `LogMessageEvent`, `LspIoMailbox`, `DiscoverFlight`, `ControlPushInbox`, `ControlIoEvent`
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -575,4 +596,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off; `logN+1` until `logN` signed off).
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
-8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. Do not start `poc-lsp-async` from `poc-proof-log`.
+8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. Do not start `poc-tier-status` from `poc-lsp-async`.

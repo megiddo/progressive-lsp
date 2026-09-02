@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use progressive_lsp_control::prost::Message;
 use progressive_lsp_control::{
@@ -76,6 +77,81 @@ impl ControlPush {
 
     pub fn is_tier_ready(&self) -> bool {
         matches!(self, Self::TierReady(_))
+    }
+}
+
+/// Event the control IO thread yields. The UI never calls `index_status` / `tier_status`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ControlIoEvent {
+    Connected,
+    Push(ControlPush),
+    Failed(String),
+}
+
+impl ControlIoEvent {
+    pub fn is_push(&self) -> bool {
+        matches!(self, Self::Push(_))
+    }
+
+    pub fn method(&self) -> Option<&str> {
+        match self {
+            Self::Push(p) => Some(p.method()),
+            Self::Connected => None,
+            Self::Failed(_) => None,
+        }
+    }
+}
+
+/// Observer of [`ControlPush`]. UI `ingest` / `poll` never call unary RPCs.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ControlPushInbox {
+    pushes: Vec<ControlPush>,
+}
+
+impl ControlPushInbox {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn ingest(&mut self, push: ControlPush) {
+        self.pushes.push(push);
+    }
+
+    pub fn ingest_all(&mut self, pushes: impl IntoIterator<Item = ControlPush>) {
+        self.pushes.extend(pushes);
+    }
+
+    pub fn poll(&mut self) -> Vec<ControlPush> {
+        std::mem::take(&mut self.pushes)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pushes.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.pushes.len()
+    }
+}
+
+/// UI-facing control inbox. `poll` never calls `index_status` / `tier_status`.
+#[derive(Debug)]
+pub struct ControlIoHandle {
+    rx: mpsc::Receiver<ControlIoEvent>,
+}
+
+impl ControlIoHandle {
+    pub fn pair() -> (Self, mpsc::Sender<ControlIoEvent>) {
+        let (tx, rx) = mpsc::channel();
+        (Self { rx }, tx)
+    }
+
+    pub fn poll(&self) -> Vec<ControlIoEvent> {
+        let mut out = Vec::new();
+        while let Ok(ev) = self.rx.try_recv() {
+            out.push(ev);
+        }
+        out
     }
 }
 
@@ -226,6 +302,16 @@ impl ControlTransport for UnixControl {
         if eof && !self.buf.is_empty() {
             return Err(IdeError::control("eof"));
         }
+        Ok(())
+    }
+
+    fn wait(&mut self) -> Result<(), IdeError> {
+        let _ = self.drain_complete(false)?;
+        if !self.pushes.is_empty() {
+            return Ok(());
+        }
+        self.read_blocking()?;
+        let _ = self.drain_complete(false)?;
         Ok(())
     }
 }
@@ -408,6 +494,68 @@ impl<T: ControlTransport> ControlClient<T> {
         self.ingest_pushes();
         std::mem::take(&mut self.pushes)
     }
+
+    pub fn wait_pushes(&mut self) -> Result<Vec<ControlPush>, IdeError> {
+        self.transport.wait()?;
+        self.ingest_pushes();
+        Ok(std::mem::take(&mut self.pushes))
+    }
+}
+
+/// IO-thread / test pump. The UI inbox is [`ControlPushInbox`], not this function.
+pub fn pump_control_io<T: ControlTransport>(
+    client: &mut ControlClient<T>,
+    inbox: &mut ControlPushInbox,
+) -> Result<(), IdeError> {
+    inbox.ingest_all(client.poll_pushes()?);
+    Ok(())
+}
+
+/// Blocking wait loop for the control IO thread. Tests use [`pump_control_io`].
+pub fn run_control_io_ready<T: ControlTransport>(
+    client: &mut ControlClient<T>,
+    ev_tx: mpsc::Sender<ControlIoEvent>,
+) {
+    loop {
+        match client.wait_pushes() {
+            Ok(pushes) => {
+                for push in pushes {
+                    if ev_tx.send(ControlIoEvent::Push(push)).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = ev_tx.send(ControlIoEvent::Failed(e.to_string()));
+                return;
+            }
+        }
+    }
+}
+
+/// Second named thread owns the Envelope socket. Does not run on `fn ui`.
+pub fn spawn_control_io(socket: String) -> ControlIoHandle {
+    let (handle, tx) = ControlIoHandle::pair();
+    let _ = std::thread::Builder::new()
+        .name("poc-ide-control".into())
+        .spawn(move || run_control_io_thread(socket, tx));
+    handle
+}
+
+fn run_control_io_thread(socket: String, tx: mpsc::Sender<ControlIoEvent>) {
+    let mut client = match ControlClient::<UnixControl>::connect(&socket) {
+        Ok(c) => {
+            if tx.send(ControlIoEvent::Connected).is_err() {
+                return;
+            }
+            c
+        }
+        Err(e) => {
+            let _ = tx.send(ControlIoEvent::Failed(e.to_string()));
+            return;
+        }
+    };
+    run_control_io_ready(&mut client, tx);
 }
 
 impl ControlClient<UnixControl> {
@@ -560,7 +708,11 @@ mod tests {
         assert_eq!(tiers.rows[0].tier, "syntax");
         assert!(client.reload_scripts().unwrap().status.unwrap().is_ok());
 
-        let pushes = client.poll_pushes().unwrap();
+        let mut inbox = ControlPushInbox::new();
+        assert!(inbox.is_empty());
+        assert_eq!(inbox.len(), 0);
+        pump_control_io(&mut client, &mut inbox).unwrap();
+        let pushes = inbox.poll();
         assert_eq!(pushes.len(), 2);
         assert!(pushes.iter().all(|p| p.request_id() == 0));
         assert!(pushes[0].is_watch_batch());
@@ -589,6 +741,73 @@ mod tests {
                 && !e.method.starts_with("$/")));
         assert!(inner.sent().iter().any(|e| e.method == METHOD_FILES_SINCE));
         assert_eq!(inner.sent().len(), 10);
+    }
+
+    #[test]
+    fn control_push_inbox_observer_never_calls_index_or_tier_status() {
+        let mut fake = FakeControl::new();
+        fake.queue_push(Envelope::push(
+            METHOD_WATCH_BATCH,
+            WatchBatch {
+                events: vec![],
+                overflow: false,
+                need_rescan: false,
+                generation: 1,
+            },
+        ));
+        fake.queue_push(Envelope::push(
+            METHOD_TIER_READY,
+            TierReady {
+                package_id: "pkg".into(),
+                tier: "syntax".into(),
+            },
+        ));
+        let mut client = ControlClient::new(fake);
+        let waited = client.wait_pushes().unwrap();
+        assert_eq!(waited.len(), 2);
+        let mut inbox = ControlPushInbox::new();
+        inbox.ingest(waited[0].clone());
+        inbox.ingest_all(waited[1..].iter().cloned());
+        assert_eq!(inbox.len(), 2);
+        assert!(!inbox.is_empty());
+        let seen = inbox.poll();
+        assert_eq!(seen.len(), 2);
+        assert!(inbox.is_empty());
+        let methods = client.transport().sent_methods();
+        assert!(!methods.contains(&METHOD_INDEX_STATUS));
+        assert!(!methods.contains(&METHOD_TIER_STATUS));
+
+        let (handle, tx) = ControlIoHandle::pair();
+        tx.send(ControlIoEvent::Connected).unwrap();
+        tx.send(ControlIoEvent::Push(seen[1].clone())).unwrap();
+        tx.send(ControlIoEvent::Failed("x".into())).unwrap();
+        let events = handle.poll();
+        assert_eq!(events.len(), 3);
+        assert!(!events[0].is_push());
+        assert!(events[1].is_push());
+        assert_eq!(events[1].method(), Some(METHOD_TIER_READY));
+        assert!(events[0].method().is_none());
+        assert!(events[2].method().is_none());
+        assert_eq!(ControlIoEvent::Connected, ControlIoEvent::Connected);
+
+        let mut missing = ControlClient::new(FakeControl::missing_socket());
+        let (fail_handle, fail_tx) = ControlIoHandle::pair();
+        run_control_io_ready(&mut missing, fail_tx);
+        let failed = fail_handle.poll();
+        assert!(matches!(failed.as_slice(), [ControlIoEvent::Failed(_)]));
+
+        let mut queued = FakeControl::new();
+        queued.queue_push(Envelope::push(
+            METHOD_TIER_READY,
+            TierReady {
+                package_id: "p".into(),
+                tier: "graph".into(),
+            },
+        ));
+        let mut queued_client = ControlClient::new(queued);
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        run_control_io_ready(&mut queued_client, tx);
     }
 
     #[test]
@@ -776,6 +995,10 @@ mod tests {
 
         fn poll(&mut self) -> Result<(), IdeError> {
             Ok(())
+        }
+
+        fn wait(&mut self) -> Result<(), IdeError> {
+            self.poll()
         }
     }
 

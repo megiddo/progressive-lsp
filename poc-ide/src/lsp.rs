@@ -316,6 +316,7 @@ pub struct StdioLsp {
     next_id: i64,
     stderr_drain: Option<Arc<ChildStderrDrain>>,
     stderr_thread: Option<JoinHandle<()>>,
+    notifications: Vec<Value>,
 }
 
 impl StdioLsp {
@@ -385,6 +386,7 @@ impl StdioLsp {
             next_id: 1,
             stderr_drain: Some(drain),
             stderr_thread,
+            notifications: Vec::new(),
         })
     }
 
@@ -399,6 +401,7 @@ impl StdioLsp {
             next_id: 1,
             stderr_drain: None,
             stderr_thread: None,
+            notifications: Vec::new(),
         }
     }
 
@@ -408,6 +411,14 @@ impl StdioLsp {
 
     pub fn stderr_drain(&self) -> Option<Arc<ChildStderrDrain>> {
         self.stderr_drain.clone()
+    }
+
+    pub fn take_notifications(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.notifications)
+    }
+
+    pub fn notification_len(&self) -> usize {
+        self.notifications.len()
     }
 }
 
@@ -450,6 +461,7 @@ impl LspTransport for StdioLsp {
             let v: Value =
                 serde_json::from_slice(&body).map_err(|e| IdeError::lsp(e.to_string()))?;
             if v.get("id").is_none() {
+                self.notifications.push(v);
                 continue;
             }
             if v.get("id") != Some(&json!(id)) {
@@ -1277,11 +1289,14 @@ mod tests {
     }
 
     #[test]
-    fn stdio_lsp_adapter_request_skips_notifications() {
+    fn stdio_lsp_adapter_request_keeps_progress_and_log_message() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let mut bytes = encode_message(
             br#"{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"hi"}}"#,
         );
+        bytes.extend_from_slice(&encode_message(
+            br#"{"jsonrpc":"2.0","method":"$/progress","params":{"token":"t","value":{"kind":"begin"}}}"#,
+        ));
         bytes.extend_from_slice(&encode_message(
             br#"{"jsonrpc":"2.0","id":99,"result":null}"#,
         ));
@@ -1295,9 +1310,16 @@ mod tests {
         assert!(debug.contains("next_id: 1"));
         assert!(debug.contains("has_stderr_drain: false"));
         assert_eq!(lsp.next_id(), 1);
+        assert_eq!(lsp.notification_len(), 0);
         let result = lsp.request("initialize", json!({})).unwrap();
         assert_eq!(result, json!({"ok": true}));
         assert_eq!(lsp.next_id(), 2);
+        assert_eq!(lsp.notification_len(), 2);
+        let notes = lsp.take_notifications();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0]["method"], "window/logMessage");
+        assert_eq!(notes[1]["method"], "$/progress");
+        assert_eq!(lsp.notification_len(), 0);
         let sent = writes.lock().unwrap().clone();
         assert!(String::from_utf8_lossy(&sent).contains("initialize"));
         lsp.notify("initialized", json!({})).unwrap();
