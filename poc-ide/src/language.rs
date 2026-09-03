@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::discover::DiscoverKind;
 use crate::error::IdeError;
 
 /// Extension → `languageId`. Unknown → `plaintext`.
@@ -46,6 +47,108 @@ impl LanguageCatalog {
 
     pub fn override_len(&self) -> usize {
         self.overrides.len()
+    }
+
+    pub fn is_known(&self, language_id: &str) -> bool {
+        language_id != "plaintext" && stock_language_ids().contains(&language_id)
+    }
+
+    /// Method × min tier × ceiling from the language matrix. Java has no T3 offers.
+    pub fn discover_offers(&self, language_id: &str) -> &'static [DiscoverOffer] {
+        offers_for(language_id)
+    }
+
+    pub fn offer(&self, language_id: &str, kind: DiscoverKind) -> Option<DiscoverOffer> {
+        self.discover_offers(language_id)
+            .iter()
+            .copied()
+            .find(|o| o.kind == kind)
+    }
+
+    /// Languages with a T2 row (not Rust/CSS/HTML `—`).
+    pub fn has_t2(&self, language_id: &str) -> bool {
+        !matches!(language_id, "rust" | "css" | "html" | "plaintext") && self.is_known(language_id)
+    }
+
+    /// Java none; C# T1/T2 ceiling; others have a types engine in the matrix.
+    pub fn t3_supported(&self, language_id: &str) -> bool {
+        self.is_known(language_id) && !matches!(language_id, "java" | "csharp")
+    }
+
+    pub fn ceiling(&self, language_id: &str) -> Option<WireTier> {
+        if !self.is_known(language_id) {
+            return None;
+        }
+        if matches!(language_id, "java" | "csharp") {
+            Some(WireTier::Graph)
+        } else {
+            Some(WireTier::Types)
+        }
+    }
+}
+
+/// Wire `syntax` / `graph` / `types`. Value object; comparable for menu gates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WireTier {
+    Syntax = 1,
+    Graph = 2,
+    Types = 3,
+}
+
+impl WireTier {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "syntax" => Some(Self::Syntax),
+            "graph" => Some(Self::Graph),
+            "types" => Some(Self::Types),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Syntax => "syntax",
+            Self::Graph => "graph",
+            Self::Types => "types",
+        }
+    }
+
+    pub fn meets(self, min: Self) -> bool {
+        self >= min
+    }
+}
+
+/// Method × min tier × language ceiling. Value object on the catalog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiscoverOffer {
+    kind: DiscoverKind,
+    min_tier: WireTier,
+    ceiling: WireTier,
+}
+
+impl DiscoverOffer {
+    pub const fn new(kind: DiscoverKind, min_tier: WireTier, ceiling: WireTier) -> Self {
+        Self {
+            kind,
+            min_tier,
+            ceiling,
+        }
+    }
+
+    pub fn kind(self) -> DiscoverKind {
+        self.kind
+    }
+
+    pub fn min_tier(self) -> WireTier {
+        self.min_tier
+    }
+
+    pub fn ceiling(self) -> WireTier {
+        self.ceiling
+    }
+
+    pub fn is_t3_only(self) -> bool {
+        self.min_tier == WireTier::Types
     }
 }
 
@@ -188,6 +291,63 @@ fn stock_language_id(ext: &str) -> Option<&'static str> {
         "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Some("cpp"),
         "cs" => Some("csharp"),
         _ => None,
+    }
+}
+
+fn stock_language_ids() -> &'static [&'static str] {
+    &[
+        "rust",
+        "python",
+        "java",
+        "javascript",
+        "typescript",
+        "php",
+        "html",
+        "css",
+        "go",
+        "zig",
+        "c",
+        "cpp",
+        "csharp",
+    ]
+}
+
+const T1_T2_CEILING: &[DiscoverOffer] = &[
+    DiscoverOffer::new(DiscoverKind::Definition, WireTier::Syntax, WireTier::Graph),
+    DiscoverOffer::new(
+        DiscoverKind::Implementation,
+        WireTier::Graph,
+        WireTier::Graph,
+    ),
+    DiscoverOffer::new(DiscoverKind::References, WireTier::Syntax, WireTier::Graph),
+];
+
+const T2_THEN_T3: &[DiscoverOffer] = &[
+    DiscoverOffer::new(DiscoverKind::Definition, WireTier::Syntax, WireTier::Types),
+    DiscoverOffer::new(
+        DiscoverKind::Implementation,
+        WireTier::Graph,
+        WireTier::Types,
+    ),
+    DiscoverOffer::new(DiscoverKind::References, WireTier::Syntax, WireTier::Types),
+];
+
+const T1_THEN_T3: &[DiscoverOffer] = &[
+    DiscoverOffer::new(DiscoverKind::Definition, WireTier::Syntax, WireTier::Types),
+    DiscoverOffer::new(
+        DiscoverKind::Implementation,
+        WireTier::Types,
+        WireTier::Types,
+    ),
+    DiscoverOffer::new(DiscoverKind::References, WireTier::Syntax, WireTier::Types),
+];
+
+fn offers_for(language_id: &str) -> &'static [DiscoverOffer] {
+    match language_id {
+        "java" | "csharp" => T1_T2_CEILING,
+        "javascript" | "typescript" | "php" | "go" | "zig" => T2_THEN_T3,
+        "rust" | "css" | "html" | "python" | "c" | "cpp" => T1_THEN_T3,
+        _ => &[],
     }
 }
 
@@ -354,5 +514,79 @@ mod tests {
         let nested = ControlSocketPath::from_path(tmp.path().join("run").join("poc-ide.sock"));
         nested.ensure_parent().unwrap();
         assert!(tmp.path().join("run").is_dir());
+    }
+
+    #[test]
+    fn discover_offer_value_object_java_has_no_t3_csharp_ceiling() {
+        let catalog = LanguageCatalog::new();
+        assert!(catalog.is_known("java"));
+        assert!(catalog.is_known("csharp"));
+        assert!(!catalog.is_known("plaintext"));
+        assert!(!catalog.is_known("unknown"));
+        assert!(catalog.has_t2("java"));
+        assert!(catalog.has_t2("csharp"));
+        assert!(!catalog.has_t2("rust"));
+        assert!(!catalog.has_t2("css"));
+        assert!(!catalog.has_t2("html"));
+        assert!(!catalog.has_t2("plaintext"));
+        assert!(catalog.has_t2("javascript"));
+        assert!(!catalog.t3_supported("java"));
+        assert!(!catalog.t3_supported("csharp"));
+        assert!(catalog.t3_supported("rust"));
+        assert!(catalog.t3_supported("python"));
+        assert!(!catalog.t3_supported("plaintext"));
+        assert_eq!(catalog.ceiling("java"), Some(WireTier::Graph));
+        assert_eq!(catalog.ceiling("csharp"), Some(WireTier::Graph));
+        assert_eq!(catalog.ceiling("rust"), Some(WireTier::Types));
+        assert_eq!(catalog.ceiling("plaintext"), None);
+
+        let java = catalog.discover_offers("java");
+        assert_eq!(java.len(), 3);
+        assert!(java.iter().all(|o| o.ceiling() == WireTier::Graph));
+        assert!(java.iter().all(|o| !o.is_t3_only()));
+        assert_eq!(
+            catalog
+                .offer("java", DiscoverKind::Implementation)
+                .unwrap()
+                .min_tier(),
+            WireTier::Graph
+        );
+        assert_eq!(
+            catalog
+                .offer("java", DiscoverKind::Definition)
+                .unwrap()
+                .min_tier(),
+            WireTier::Syntax
+        );
+        let rust_impl = catalog.offer("rust", DiscoverKind::Implementation).unwrap();
+        assert_eq!(rust_impl.min_tier(), WireTier::Types);
+        assert!(rust_impl.is_t3_only());
+        assert!(catalog
+            .offer("plaintext", DiscoverKind::Definition)
+            .is_none());
+        assert!(catalog.discover_offers("plaintext").is_empty());
+        assert_eq!(
+            catalog
+                .offer("javascript", DiscoverKind::Implementation)
+                .unwrap()
+                .min_tier(),
+            WireTier::Graph
+        );
+        assert_eq!(WireTier::parse("syntax"), Some(WireTier::Syntax));
+        assert_eq!(WireTier::parse("graph"), Some(WireTier::Graph));
+        assert_eq!(WireTier::parse("types"), Some(WireTier::Types));
+        assert_eq!(WireTier::parse("nope"), None);
+        assert_eq!(WireTier::Syntax.as_str(), "syntax");
+        assert_eq!(WireTier::Graph.as_str(), "graph");
+        assert_eq!(WireTier::Types.as_str(), "types");
+        assert!(WireTier::Graph.meets(WireTier::Syntax));
+        assert!(!WireTier::Syntax.meets(WireTier::Graph));
+        assert!(WireTier::Types.meets(WireTier::Types));
+        assert_ne!(WireTier::Syntax, WireTier::Graph);
+        let offer = DiscoverOffer::new(DiscoverKind::Definition, WireTier::Syntax, WireTier::Types);
+        assert_eq!(offer.kind(), DiscoverKind::Definition);
+        assert_eq!(offer.min_tier(), WireTier::Syntax);
+        assert_eq!(offer.ceiling(), WireTier::Types);
+        assert!(!offer.is_t3_only());
     }
 }

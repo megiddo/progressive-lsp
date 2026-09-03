@@ -13,8 +13,9 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 | Syntax highlighting | `Highlighter` Adapter over **syntect** (egui layouter in the bin) |
 | Background disk edits | `DiskWatch` Observer; dirty buffer → `ConflictModal` (load from disk or keep in memory) |
 | Edit | `EditCommand`: insert, delete, select, cut, copy, paste, open, save |
-| Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` (Navigate, F12, editor and file-tree context menu) |
-| Language by extension | `LanguageCatalog` Registry; one `progressive-lsp serve` per workspace |
+| Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` (Navigate, F12, editor and file-tree context menu). Items use `DiscoverOffer` × current tier; disabled labels are honest (`connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)`). |
+| T1/T2/T3 strip | `TierStrip` for the focused file’s package (workspace aggregate fallback). Java T3 is `not supported`; Rust/CSS T2 is `n/a`; Darwin stub refuse is `skipped`, not `done`. |
+| Language by extension | `LanguageCatalog` Registry + `DiscoverOffer`; one `progressive-lsp serve` per workspace |
 | Per-run debug log | `RunLog` Repository → sqlite under `~/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`); one file per process. No hand-typed protocol console in the bin. `ProtocolConsole` stays a lib Facade for Envelope/LSP transcript tests. |
 
 ## What it must not do

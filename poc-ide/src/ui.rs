@@ -7,13 +7,13 @@ use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
     advertised_control_socket, spawn_control_io, spawn_lsp_io, BufferMap, ClipboardPort,
-    CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle, ControlPushInbox,
+    CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle, ControlPush, ControlPushInbox,
     ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort, DiscoverFlight, DiscoverKind,
-    DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, IdeError,
-    LayoutState, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState, NotifyWatch, OpenBuffer,
-    PendingDialog, PendingDiscover, ProofStatus, RunLog, Selection, ServeMode, ServeSpawn,
-    ServeWalPath, SpawnSpec, StdFs, SystemClock, TabId, TabStrip, TreeExpansion, TreeNode,
-    WatchPort, WorkspaceRoot,
+    DiscoverMenu, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan, Highlighter,
+    IdeError, LanguageCatalog, LayoutState, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState,
+    NotifyWatch, OpenBuffer, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog,
+    Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec, StdFs, SystemClock, TabId, TabStrip,
+    TierStrip, TreeExpansion, TreeNode, WatchPort, WireTier, WorkspaceRoot,
 };
 use std::sync::mpsc;
 
@@ -126,6 +126,8 @@ pub struct PocIdeApp {
     control_io: Option<ControlIoHandle>,
     control_inbox: ControlPushInbox,
     control_error: Option<String>,
+    catalog: LanguageCatalog,
+    tiers: PackageTierMap,
     discover_flight: DiscoverFlight,
     status: String,
     run_log: RunLog,
@@ -179,6 +181,8 @@ impl PocIdeApp {
             control_io: None,
             control_inbox: ControlPushInbox::new(),
             control_error: None,
+            catalog: LanguageCatalog::new(),
+            tiers: PackageTierMap::new(),
             discover_flight: DiscoverFlight::idle(),
             status: String::new(),
             run_log,
@@ -502,8 +506,17 @@ impl PocIdeApp {
         for ev in events {
             match ev {
                 ControlIoEvent::Connected => {}
+                ControlIoEvent::IndexStatus(resp) => {
+                    self.tiers.apply_index_status(&resp);
+                }
+                ControlIoEvent::TierStatus(resp) => {
+                    self.tiers.apply_tier_status(&resp);
+                }
                 ControlIoEvent::Push(push) => {
                     self.run_log.log_control_push(push.method());
+                    if let ControlPush::TierReady(ready) = &push {
+                        self.tiers.apply_tier_ready(ready);
+                    }
                     self.control_inbox.ingest(push);
                 }
                 ControlIoEvent::Failed(e) => {
@@ -520,6 +533,7 @@ impl PocIdeApp {
         }
         self.control_io = None;
         self.control_inbox = ControlPushInbox::new();
+        self.tiers = PackageTierMap::new();
         self.discover_flight = DiscoverFlight::idle();
         self.lsp_session = LspSessionState::Idle;
     }
@@ -530,7 +544,44 @@ impl PocIdeApp {
             .unwrap_or_else(|| IdeError::MissingBinary.to_string())
     }
 
+    fn focused_language(&self) -> &str {
+        match self.tabs.focused() {
+            Some(id) => self.catalog.for_path(id.as_path()),
+            None => "plaintext",
+        }
+    }
+
+    fn focused_tier(&self) -> Option<WireTier> {
+        match self.tabs.focused() {
+            Some(id) => self.tiers.tier_for_path(id.as_path()),
+            None => self.tiers.aggregate(),
+        }
+    }
+
+    fn discover_menu(&self) -> DiscoverMenu {
+        DiscoverMenu::paint(
+            &self.catalog,
+            self.focused_language(),
+            self.lsp_session,
+            &self.discover_flight,
+            self.tiers.ingest(),
+            self.focused_tier(),
+        )
+    }
+
+    fn tier_strip(&self) -> TierStrip {
+        TierStrip::paint(
+            &self.catalog,
+            self.focused_language(),
+            self.tiers.ingest(),
+            self.focused_tier(),
+        )
+    }
+
     fn queue_discover(&mut self, kind: DiscoverKind) {
+        if !self.discover_menu().item(kind).can_submit() {
+            return;
+        }
         self.pending_discover = Some(PendingDiscover::record(kind));
     }
 
@@ -637,14 +688,12 @@ impl eframe::App for PocIdeApp {
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
         }
-        if self.discover_flight.can_submit() {
-            if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.shift) {
-                self.queue_discover(DiscoverKind::References);
-            } else if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.command) {
-                self.queue_discover(DiscoverKind::Implementation);
-            } else if ui.input(|i| i.key_pressed(egui::Key::F12)) {
-                self.queue_discover(DiscoverKind::Definition);
-            }
+        if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.shift) {
+            self.queue_discover(DiscoverKind::References);
+        } else if ui.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.command) {
+            self.queue_discover(DiscoverKind::Implementation);
+        } else if ui.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.queue_discover(DiscoverKind::Definition);
         }
 
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
@@ -666,12 +715,14 @@ impl eframe::App for PocIdeApp {
                     }
                 });
                 ui.menu_button("Navigate", |ui| {
-                    let waiting = self.discover_flight.waiting_label();
-                    let enabled = self.discover_flight.can_submit();
+                    let menu = self.discover_menu();
                     if ui
                         .add_enabled(
-                            enabled,
-                            egui::Button::new(waiting.unwrap_or("Go to Definition")),
+                            menu.item(DiscoverKind::Definition).can_submit(),
+                            egui::Button::new(
+                                menu.item(DiscoverKind::Definition)
+                                    .label("Go to Definition"),
+                            ),
                         )
                         .clicked()
                     {
@@ -680,8 +731,11 @@ impl eframe::App for PocIdeApp {
                     }
                     if ui
                         .add_enabled(
-                            enabled,
-                            egui::Button::new(waiting.unwrap_or("Go to Implementation")),
+                            menu.item(DiscoverKind::Implementation).can_submit(),
+                            egui::Button::new(
+                                menu.item(DiscoverKind::Implementation)
+                                    .label("Go to Implementation"),
+                            ),
                         )
                         .clicked()
                     {
@@ -690,8 +744,10 @@ impl eframe::App for PocIdeApp {
                     }
                     if ui
                         .add_enabled(
-                            enabled,
-                            egui::Button::new(waiting.unwrap_or("Find References")),
+                            menu.item(DiscoverKind::References).can_submit(),
+                            egui::Button::new(
+                                menu.item(DiscoverKind::References).label("Find References"),
+                            ),
                         )
                         .clicked()
                     {
@@ -704,6 +760,17 @@ impl eframe::App for PocIdeApp {
                 }
             });
         });
+
+        egui::Panel::top("tier_strip")
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for cell in self.tier_strip().cells() {
+                        ui.label(format!("{}: {}", cell.label(), cell.status()));
+                        ui.separator();
+                    }
+                });
+            });
 
         let tree_response = egui::Panel::left("tree")
             .resizable(true)
@@ -724,11 +791,10 @@ impl eframe::App for PocIdeApp {
                     let mut discover = None;
                     let mut became_expanded = Vec::new();
                     let mut became_collapsed = Vec::new();
-                    let discover_enabled = self.discover_flight.can_submit();
+                    let menu = self.discover_menu();
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(tree) = self.tree.as_ref() {
-                            let shown =
-                                show_nodes(ui, tree.children(), &self.expansion, discover_enabled);
+                            let shown = show_nodes(ui, tree.children(), &self.expansion, menu);
                             clicked = shown.clicked;
                             discover = shown.discover;
                             became_expanded = shown.became_expanded;
@@ -822,13 +888,14 @@ impl eframe::App for PocIdeApp {
                         self.open_path(id.as_path());
                     }
                     ui.label(id.as_path().display().to_string());
+                    let editor_menu = self.discover_menu();
                     if let Some(buf) = self.buffers.get_mut(id.as_path()) {
                         let outcome = show_editor(
                             ui,
                             buf,
                             &self.highlighter,
                             &mut self.clipboard,
-                            self.discover_flight.can_submit(),
+                            editor_menu,
                         );
                         if let Some((path, old, new)) = outcome.change {
                             if self.lsp_session.is_ready() {
@@ -873,41 +940,24 @@ struct ShowTree {
     became_collapsed: Vec<PathBuf>,
 }
 
-fn discover_context_menu(ui: &mut egui::Ui, chosen: &mut Option<DiscoverKind>, enabled: bool) {
-    let waiting = if enabled {
-        None
-    } else {
-        Some("waiting for server")
-    };
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Button::new(waiting.unwrap_or("Find Definition")),
-        )
-        .clicked()
-    {
-        ui.close_kind(egui::UiKind::Menu);
-        *chosen = Some(DiscoverKind::Definition);
-    }
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Button::new(waiting.unwrap_or("Find Implementation")),
-        )
-        .clicked()
-    {
-        ui.close_kind(egui::UiKind::Menu);
-        *chosen = Some(DiscoverKind::Implementation);
-    }
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Button::new(waiting.unwrap_or("Find References")),
-        )
-        .clicked()
-    {
-        ui.close_kind(egui::UiKind::Menu);
-        *chosen = Some(DiscoverKind::References);
+fn discover_context_menu(ui: &mut egui::Ui, chosen: &mut Option<DiscoverKind>, menu: DiscoverMenu) {
+    let items = [
+        (DiscoverKind::Definition, "Find Definition"),
+        (DiscoverKind::Implementation, "Find Implementation"),
+        (DiscoverKind::References, "Find References"),
+    ];
+    for (kind, enabled_label) in items {
+        let item = menu.item(kind);
+        if ui
+            .add_enabled(
+                item.can_submit(),
+                egui::Button::new(item.label(enabled_label)),
+            )
+            .clicked()
+        {
+            ui.close_kind(egui::UiKind::Menu);
+            *chosen = Some(kind);
+        }
     }
 }
 
@@ -915,7 +965,7 @@ fn show_nodes(
     ui: &mut egui::Ui,
     nodes: &[TreeNode],
     expansion: &TreeExpansion,
-    discover_enabled: bool,
+    menu: DiscoverMenu,
 ) -> ShowTree {
     let mut clicked = None;
     let mut discover = None;
@@ -933,9 +983,7 @@ fn show_nodes(
                 .id_salt(path)
                 .default_open(false)
                 .open(Some(open))
-                .show(ui, |ui| {
-                    show_nodes(ui, tail.children(), expansion, discover_enabled)
-                });
+                .show(ui, |ui| show_nodes(ui, tail.children(), expansion, menu));
             if let Some(inner) = response.body_returned {
                 if clicked.is_none() {
                     clicked = inner.clicked;
@@ -958,7 +1006,7 @@ fn show_nodes(
             if response.clicked() {
                 clicked = Some(node.path().to_path_buf());
             }
-            response.context_menu(|ui| discover_context_menu(ui, &mut discover, discover_enabled));
+            response.context_menu(|ui| discover_context_menu(ui, &mut discover, menu));
         }
     }
     ShowTree {
@@ -979,7 +1027,7 @@ fn show_editor(
     buffer: &mut OpenBuffer,
     highlighter: &Highlighter,
     clipboard: &mut impl ClipboardPort,
-    discover_enabled: bool,
+    menu: DiscoverMenu,
 ) -> EditorOutcome {
     let path = buffer.path().to_path_buf();
     let mut text = buffer.text();
@@ -998,7 +1046,7 @@ fn show_editor(
     let mut discover = None;
     output
         .response
-        .context_menu(|ui| discover_context_menu(ui, &mut discover, discover_enabled));
+        .context_menu(|ui| discover_context_menu(ui, &mut discover, menu));
     let change = if output.response.changed() && text != buffer.text() {
         let old = buffer.text();
         let path = buffer.path().to_path_buf();

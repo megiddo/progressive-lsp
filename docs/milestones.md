@@ -848,7 +848,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## poc-lsp-async — LSP/control IO threads
 
-**Status: SIGNED OFF** on branch `poc-lsp-async`. Parent is `poc-proof-log` (`0d9f6a8`). Do not start `poc-tier-status` from this branch. Do not invent IndexStatus ingest fields or DiscoverOffer menus. `RunLog` stays a separate schema from the serve WAL.
+**Status: SIGNED OFF** on branch `poc-lsp-async`. Parent is `poc-proof-log` (`0d9f6a8`). `poc-tier-status` stacks on this branch. `RunLog` stays a separate schema from the serve WAL.
 
 **Scope:** One `poc-ide-lsp` thread owns child stdin/stdout and the stderr drain. UI submits `LspIoRequest` and polls `LspIoEvent`. Discover / didChange never block `fn ui`. `$/progress` and `window/logMessage` are kept. Control IO is a second thread; `fn ui` never calls `index_status()` / `tier_status()`. In-flight discover disables F12 / context-menu items with `waiting for server`.
 
@@ -873,6 +873,33 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 - Native `cargo test -- --test-threads=1` is the gate on macOS.
 - No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
+## poc-tier-status — ingest field + T1/T2/T3 strip + honest menus
+
+**Status: SIGNED OFF** on branch `poc-tier-status`. Parent is `poc-lsp-async` (`1407212`). Do not start `poc-no-stall` from this branch. Do not invent highlight cache or tree-expand workers. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Additive `IndexStatus.ingest`; T1/T2/T3 status strip; context / Navigate menus from `LanguageCatalog` × current tier. Not highlight cache or tree-expand worker.
+
+**Exit**
+
+- [x] `IndexStatusResponse.ingest` is `not_started` / `running` / `done`, filled from session ingest reality.
+- [x] Status strip paints T1 / T2 / T3 for the focused package (`in progress` / `done` / `not supported` / `skipped` / `n/a`). Java T3 is `not supported`. Stub refuse is `skipped`, not `done`.
+- [x] Context and Navigate menus use `DiscoverOffer`. Disabled items do not call FakeLsp.
+
+**Sign-off checklist (poc-tier-status)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (control 19; poc-ide lib 193; composition-root lib 69; core 72; xtask 30)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.96%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **42/42 (100%)** caught (8 unviable); control in-diff **13/13 (100%)**; composition-root in-diff **3/3 (100%)**; combined **58/58 (100%)**
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 

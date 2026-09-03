@@ -22,6 +22,7 @@ pub mod lsp_io;
 pub mod ports;
 pub mod proof;
 pub mod tabs;
+pub mod tier;
 pub mod tree;
 pub mod watch;
 
@@ -30,14 +31,15 @@ pub use child_stderr::{ChildStderrDrain, STDERR_DRAIN_CAP};
 pub use conflict::{ConflictChoice, ConflictModal};
 pub use console::{ProtocolConsole, TranscriptEntry, TranscriptKind, STOCK_LSP_METHODS};
 pub use control::{
-    advertised_control_socket, pump_control_io, spawn_control_io, ControlClient, ControlIoEvent,
-    ControlIoHandle, ControlPush, ControlPushInbox, UnixControl, CONTROL_UNARY_METHODS,
+    advertised_control_socket, pump_control_io, request_control_status, spawn_control_io,
+    ControlClient, ControlIoEvent, ControlIoHandle, ControlPush, ControlPushInbox, UnixControl,
+    CONTROL_UNARY_METHODS,
 };
 pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
 pub use error::IdeError;
 pub use highlight::{HighlightSpan, Highlighter};
-pub use language::{ControlSocketPath, LanguageCatalog, ServeMode};
+pub use language::{ControlSocketPath, DiscoverOffer, LanguageCatalog, ServeMode, WireTier};
 pub use layout::LayoutState;
 pub use log::{
     default_run_log_dir, run_log_dir, sanitize_payload, LogCategory, LogRow, RunLog, RunLogPath,
@@ -62,6 +64,10 @@ pub use ports::{
 };
 pub use proof::ProofStatus;
 pub use tabs::{TabId, TabStrip};
+pub use tier::{
+    DiscoverMenu, DiscoverMenuItem, MenuDisableReason, PackageTierMap, TierCell, TierCellKind,
+    TierCellState, TierStrip,
+};
 pub use tree::{
     CompactChain, DialogAction, DialogOutcome, FileTree, PendingDialog, TreeExpansion, TreeNode,
     WorkspaceRoot,
@@ -114,6 +120,25 @@ mod tests {
         let _ = DiskEvent::modify("/ws/a.rs", 1);
         let _ = DiskEventKind::Modify;
         let _ = LanguageCatalog::new();
+        let _ = DiscoverOffer::new(DiscoverKind::Definition, WireTier::Syntax, WireTier::Graph);
+        let _ = WireTier::Syntax;
+        let _ = TierStrip::paint(
+            &LanguageCatalog::new(),
+            "java",
+            progressive_lsp_control::IngestState::Done,
+            Some(WireTier::Graph),
+        );
+        let _ = TierCell::new(TierCellKind::T1, TierCellState::Done);
+        let _ = PackageTierMap::new();
+        let _ = DiscoverMenu::paint(
+            &LanguageCatalog::new(),
+            "java",
+            LspSessionState::Ready,
+            &DiscoverFlight::idle(),
+            progressive_lsp_control::IngestState::Done,
+            Some(WireTier::Syntax),
+        );
+        let _ = MenuDisableReason::Connecting;
         let _ = ServeMode::StockStdio;
         let _ = ServeMode::ControlSocket;
         let _ = ServeMode::default();
@@ -214,6 +239,7 @@ mod tests {
         let _ = run_lsp_io_ready::<crate::ports::FakeLsp>;
         let _ = spawn_lsp_io;
         let _ = pump_control_io::<crate::ports::FakeControl>;
+        let _ = request_control_status::<crate::ports::FakeControl>;
         let _ = spawn_control_io;
         let _ = LspIoHandle::pair;
         let _ = ControlIoHandle::pair;

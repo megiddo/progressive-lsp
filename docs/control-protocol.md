@@ -61,7 +61,7 @@ Names are proto service methods. Unary unless marked push.
 | `WatchSubscribe` | req/resp | Start coalesced watch pushes to this client |
 | `WatchBatch` | **push** | create/modify/delete + `overflow` / `need_rescan` |
 | `FilesSince` | req/resp | Catch-up since generation N or unix ms; `truncated` flag |
-| `IndexStatus` | req/resp | Packages, generations, cache stats |
+| `IndexStatus` | req/resp | Packages, generations, cache stats, additive `ingest` (`not_started` \| `running` \| `done`) |
 | `TierStatus` | req/resp | Per-package current `Tier` |
 | `TierReady` | **push** | Package upgraded tier |
 | `ReloadScripts` | req/resp | Reload Rhai from merge chain |

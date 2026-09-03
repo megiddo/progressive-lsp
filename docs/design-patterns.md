@@ -118,6 +118,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |
 | `It2ReportRow` | DTO | `language`, `corpus_sha`, `pack`, `tier_observed`, `definition_ok`, `tokens_ok`, `ghost_edit_ok`, `notes`; T3 stub → `skip_pack_missing` |
 | `Envelope` | DTO / public dispatch | `method` + `request_id` + `body`; replies echo id; pushes use `request_id == 0`; never `$/` |
+| `IngestState` | Value object | `not_started` \| `running` \| `done`; unknown / empty parse → `not_started`; never panic |
 | `ControlPlane` | Port | Proto RPCs call the composition-root host; control crate does not own config/watch/install internals |
 | `ControlServer::dispatch_envelope` | Command | Case-sensitive method names match the API RPC table; unknown method → non-zero `Status` |
 | `bind_control_socket` / `spawn_control_accept` | Adapter | Unix socket beside stdio LSP; length-prefixed Envelope; stock serve without `--control-socket` still works; bind/accept/`PayloadTooLarge` emit `operation=control` (LOG-7) without payload bytes |
@@ -221,7 +222,9 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `SystemClock` (poc-ide) | ClockPort production | Wall `unix_ms`; tests use `FakeClock` |
 | `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
 | `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
-| `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
+| `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen`. `discover_offers` is method × min tier × ceiling from the language matrix; Java has no T3 offers; C# ceiling is T1/T2 |
+| `WireTier` | Value object | `syntax` / `graph` / `types`; unknown parse → `None`; `meets` is `>=` |
+| `DiscoverOffer` | Value object | One LSP method + `min_tier` + language `ceiling`; Java/C# ceiling is `graph`; typed-only methods have `min_tier == types` |
 | `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `serve_args` never includes `--mux` (`pending_mux`) |
 | `ControlSocketPath` | Value object | CLI path wins; else `$PREFIX/run/poc-ide.sock`; else `$HOME/.progressivelsp/run/poc-ide.sock`; else `{temp}/poc-ide.sock`; tests inject prefix / home / temp — never require `$HOME` |
 | `ServeWalPath` | Value object | Unique `{log_dir}/serve-{unix_ms}-{pid}.sqlite` the IDE sets on `PROGRESSIVE_LSP_LOG`; tests inject dirs + FakeClock |
@@ -239,7 +242,11 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |
 | `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
 | `ControlPushInbox` | Observer | UI `ingest` / `poll` of `ControlPush`; never calls `index_status` / `tier_status` |
-| `ControlIoEvent` / `ControlIoHandle` | Event + inbox | Control IO thread yields Connected / Push / Failed; `fn ui` only `poll`s |
+| `ControlIoEvent` / `ControlIoHandle` | Event + inbox | Control IO thread yields Connected / IndexStatus / TierStatus / Push / Failed; `fn ui` only `poll`s; unary snapshots are requested on the IO thread |
+| `PackageTierMap` | Value object / collection | Applies IndexStatus ingest + TierStatus / TierReady; focused path picks a package id in the path, else workspace max tier |
+| `TierCell` / `TierCellKind` / `TierCellState` | Value objects | Cell is T1/T2/T3 × `in progress` / `done` / `not supported` / `skipped` / `n/a`; Java T3 is `not supported`; Rust/CSS T2 is `n/a`; stub refuse is `skipped`, never `done` |
+| `TierStrip` | Value object | Three cells from LanguageCatalog × ingest × current wire tier; `ui.rs` only renders |
+| `DiscoverMenu` / `DiscoverMenuItem` / `MenuDisableReason` | Value objects | Same ground truth for Navigate and context menus; disabled labels are `connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)`; `to_io_request` is `None` while disabled so FakeLsp is not called |
 | `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
 | `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |

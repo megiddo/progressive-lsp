@@ -82,6 +82,9 @@ message IndexStatusResponse {
   Status status = 1;
   repeated IndexPackage packages = 2;
   uint64 cache_entries = 3;
+  // Additive. not_started | running | done. Distinguishes empty packages
+  // from ingest-in-flight without a new RPC.
+  string ingest = 4;
 }
 
 message TierStatusRequest {}

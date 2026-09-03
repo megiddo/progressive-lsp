@@ -558,7 +558,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## poc-lsp-async (`poc-lsp-async` branch)
 
-**Status: SIGNED OFF** on `poc-lsp-async`. Parent is `poc-proof-log`. Do not start `poc-tier-status` from this branch. Do not invent IndexStatus ingest fields or DiscoverOffer menus. `RunLog` stays a separate schema from the serve WAL.
+**Status: SIGNED OFF** on `poc-lsp-async`. Parent is `poc-proof-log`. `poc-tier-status` stacks on this branch. `RunLog` stays a separate schema from the serve WAL.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
@@ -576,6 +576,27 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 - [x] `check-static` — **N/A** (musl ELF story unchanged). Darwin: do not fake musl greens
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `LspIoRequest`, `LspIoEvent`, `ProgressEvent`, `LspProgressKind`, `LogMessageEvent`, `LspIoMailbox`, `DiscoverFlight`, `ControlPushInbox`, `ControlIoEvent`
+
+## poc-tier-status (`poc-tier-status` branch)
+
+**Status: SIGNED OFF** on `poc-tier-status`. Parent is `poc-lsp-async`. Do not start `poc-no-stall` from this branch. Do not invent highlight cache or tree-expand workers. `RunLog` stays a separate schema from the serve WAL.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PTS-1 | Additive `IndexStatus.ingest` (`not_started` / `running` / `done`); fill from session | poc-lsp-async | **SIGNED OFF.** Next proto tag; no new RPC. |
+| PTS-2 | `TierStrip` / `TierCell` for focused package (workspace aggregate fallback); IndexStatus / TierStatus requested on control IO thread | PTS-1 | **SIGNED OFF.** Java T3 `not supported`; Rust/CSS T2 `n/a`; stub refuse `skipped`. |
+| PTS-3 | `DiscoverOffer` + honest context / Navigate menus from LanguageCatalog × current tier | PTS-2 | **SIGNED OFF.** FakeLsp not called while disabled. |
+
+**Sign-off checklist (poc-tier-status)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (control 19; poc-ide lib 193; composition-root lib 69; core 72; xtask 30)
+- [x] 95% llvm-cov on crates that exist — **95.96%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **42/42 (100%)** caught (8 unviable); control in-diff **13/13 (100%)**; composition-root in-diff **3/3 (100%)**; combined **58/58 (100%)**
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (musl ELF story unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `IngestState`, `WireTier`, `DiscoverOffer`, `TierStrip`, `TierCell`, `PackageTierMap`, `DiscoverMenu`
 
 ## Spikes (do not skip hygiene on merge)
 
@@ -596,4 +617,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off; `logN+1` until `logN` signed off).
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
-8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. Do not start `poc-tier-status` from `poc-lsp-async`.
+8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. Do not start `poc-no-stall` from `poc-tier-status`.

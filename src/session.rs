@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use progressive_lsp_control::IngestState;
 use progressive_lsp_core::{
     FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort, LogRecord, LogScope,
     NullLog, PackageId, PrefixLayout, T2Backend, Tier,
@@ -56,6 +57,7 @@ pub struct WorkspaceSession {
     scripts: Mutex<Option<ScriptHost>>,
     progress: Mutex<Vec<WorkDoneProgress>>,
     skipped_packages: Mutex<Vec<PackageId>>,
+    ingest: Mutex<IngestState>,
     supervisor: Option<Arc<EngineSupervisor>>,
     log: Arc<dyn LogPort>,
     unknown_languages: Mutex<HashSet<String>>,
@@ -71,6 +73,7 @@ impl WorkspaceSession {
             scripts: Mutex::new(None),
             progress: Mutex::new(Vec::new()),
             skipped_packages: Mutex::new(Vec::new()),
+            ingest: Mutex::new(IngestState::NotStarted),
             supervisor: None,
             log: Arc::new(NullLog),
             unknown_languages: Mutex::new(HashSet::new()),
@@ -227,11 +230,16 @@ impl WorkspaceSession {
 
     /// Package-stream ingest. Completing a package marks Graph and emits progress.
     /// Never called from [`LspIntelligence::did_change`].
+    pub fn ingest_state(&self) -> IngestState {
+        *self.ingest.lock().expect("ingest")
+    }
+
     pub fn ingest_workspace(&self) {
         let model = self.model.lock().expect("model").clone();
         let Some(model) = model else {
             return;
         };
+        *self.ingest.lock().expect("ingest") = IngestState::Running;
         for pkg in &model.packages {
             if self
                 .skipped_packages
@@ -277,6 +285,7 @@ impl WorkspaceSession {
                 let _ = host.on_post_index(pkg.id.as_str());
             }
         }
+        *self.ingest.lock().expect("ingest") = IngestState::Done;
     }
 
     pub fn package_tier(&self, id: &str) -> Option<Tier> {
@@ -953,7 +962,9 @@ mod tests {
             "didChange highlighting must work before ingest finishes"
         );
         assert!(session.package_tier("lib").is_none());
+        assert_eq!(session.ingest_state(), IngestState::NotStarted);
         session.ingest_workspace();
+        assert_eq!(session.ingest_state(), IngestState::Done);
         assert_eq!(session.package_tier("lib"), Some(Tier::Graph));
         assert_eq!(session.package_tier("app"), Some(Tier::Graph));
         assert!(
@@ -968,6 +979,17 @@ mod tests {
         let progress = session.drain_progress();
         assert!(!progress.is_empty());
         assert!(session.drain_progress().is_empty());
+    }
+
+    #[test]
+    fn ingest_state_value_object_stays_not_started_without_model() {
+        let session = WorkspaceSession::java_default();
+        assert_eq!(session.ingest_state(), IngestState::NotStarted);
+        assert!(session.ingest_state().is_not_started());
+        session.ingest_workspace();
+        assert_eq!(session.ingest_state(), IngestState::NotStarted);
+        assert!(!session.ingest_state().is_done());
+        assert!(!session.ingest_state().is_running());
     }
 
     #[test]

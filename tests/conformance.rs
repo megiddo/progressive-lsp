@@ -116,7 +116,9 @@ impl Cell {
 
     fn pct(&self) -> Option<f64> {
         match self {
-            Cell::Pct { pass, total } if *total > 0 => Some(100.0 * (*pass as f64) / (*total as f64)),
+            Cell::Pct { pass, total } if *total > 0 => {
+                Some(100.0 * (*pass as f64) / (*total as f64))
+            }
             _ => None,
         }
     }
@@ -156,7 +158,10 @@ fn t2_for(lang: &str, t1: &Cell) -> Cell {
             // T2 heuristics need extracted symbols. Count the same matrix files
             // that T1 indexed cleanly *and* produced at least one symbol.
             let Some(indexer) = indexer_for(lang) else {
-                return Cell::Pct { pass: 0, total: *total };
+                return Cell::Pct {
+                    pass: 0,
+                    total: *total,
+                };
             };
             let dir = fixtures().join("matrix").join(lang);
             let mut pass = 0usize;

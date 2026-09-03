@@ -84,6 +84,8 @@ impl ControlPush {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControlIoEvent {
     Connected,
+    IndexStatus(IndexStatusResponse),
+    TierStatus(TierStatusResponse),
     Push(ControlPush),
     Failed(String),
 }
@@ -96,6 +98,8 @@ impl ControlIoEvent {
     pub fn method(&self) -> Option<&str> {
         match self {
             Self::Push(p) => Some(p.method()),
+            Self::IndexStatus(_) => Some(METHOD_INDEX_STATUS),
+            Self::TierStatus(_) => Some(METHOD_TIER_STATUS),
             Self::Connected => None,
             Self::Failed(_) => None,
         }
@@ -511,6 +515,15 @@ pub fn pump_control_io<T: ControlTransport>(
     Ok(())
 }
 
+/// Unary snapshot. Runs on the control IO thread (or test pump), never `fn ui`.
+pub fn request_control_status<T: ControlTransport>(
+    client: &mut ControlClient<T>,
+) -> Result<(IndexStatusResponse, TierStatusResponse), IdeError> {
+    let index = client.index_status()?;
+    let tiers = client.tier_status()?;
+    Ok((index, tiers))
+}
+
 /// Blocking wait loop for the control IO thread. Tests use [`pump_control_io`].
 pub fn run_control_io_ready<T: ControlTransport>(
     client: &mut ControlClient<T>,
@@ -555,6 +568,20 @@ fn run_control_io_thread(socket: String, tx: mpsc::Sender<ControlIoEvent>) {
             return;
         }
     };
+    match request_control_status(&mut client) {
+        Ok((index, tiers)) => {
+            if tx.send(ControlIoEvent::IndexStatus(index)).is_err() {
+                return;
+            }
+            if tx.send(ControlIoEvent::TierStatus(tiers)).is_err() {
+                return;
+            }
+        }
+        Err(e) => {
+            let _ = tx.send(ControlIoEvent::Failed(e.to_string()));
+            return;
+        }
+    }
     run_control_io_ready(&mut client, tx);
 }
 
@@ -593,7 +620,7 @@ impl<T: ControlTransport> std::fmt::Debug for ControlClient<T> {
 mod tests {
     use super::*;
     use crate::ports::FakeControl;
-    use progressive_lsp_control::{Status, WatchEvent};
+    use progressive_lsp_control::{IngestState, Status, WatchEvent};
     use serde_json::json;
 
     fn cap(socket: Option<&str>, mux: bool) -> ProgressiveLspCap {
@@ -789,6 +816,25 @@ mod tests {
         assert!(events[0].method().is_none());
         assert!(events[2].method().is_none());
         assert_eq!(ControlIoEvent::Connected, ControlIoEvent::Connected);
+
+        let mut status_client = ControlClient::new(FakeControl::new());
+        let (index, tiers) = request_control_status(&mut status_client).unwrap();
+        assert_eq!(index.ingest_state(), IngestState::Done);
+        assert_eq!(tiers.rows[0].tier, "syntax");
+        let status_methods = status_client.transport().sent_methods();
+        assert!(status_methods.contains(&METHOD_INDEX_STATUS));
+        assert!(status_methods.contains(&METHOD_TIER_STATUS));
+        let (status_handle, status_tx) = ControlIoHandle::pair();
+        status_tx
+            .send(ControlIoEvent::IndexStatus(index.clone()))
+            .unwrap();
+        status_tx
+            .send(ControlIoEvent::TierStatus(tiers.clone()))
+            .unwrap();
+        let status_events = status_handle.poll();
+        assert_eq!(status_events[0].method(), Some(METHOD_INDEX_STATUS));
+        assert_eq!(status_events[1].method(), Some(METHOD_TIER_STATUS));
+        assert!(!status_events[0].is_push());
 
         let mut missing = ControlClient::new(FakeControl::missing_socket());
         let (fail_handle, fail_tx) = ControlIoHandle::pair();

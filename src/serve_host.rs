@@ -499,6 +499,7 @@ impl ControlPlane for ServeHost {
             status: Some(Status::ok()),
             packages,
             cache_entries: self.session.cache_entries(),
+            ingest: self.session.ingest_state().as_str().into(),
         }
     }
 
@@ -1048,7 +1049,11 @@ mod tests {
             "{batches:?}"
         );
         let idx = host.index_status(&IndexStatusRequest {});
-        assert!(idx.status.unwrap().is_ok());
+        assert!(idx.status.as_ref().unwrap().is_ok());
+        assert_eq!(
+            idx.ingest_state(),
+            progressive_lsp_control::IngestState::Done
+        );
         let tiers = host.tier_status(&TierStatusRequest {});
         assert!(tiers.status.unwrap().is_ok());
         let ready = host.take_tier_ready();
