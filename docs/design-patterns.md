@@ -191,12 +191,18 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |
 | `MemFs` | Test double | Same `FsPort`; no host disk |
 | `CountingFs` | Decorator / test double | Wraps `MemFs`; records `read_dir` paths; inner Port is unchanged; used to prove shallow load / idempotent expand |
-| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder). `load_compact_chain` loads a single-child-dir chain for a compact row without changing `TreeExpansion`. Listing order is non-dot dirs, non-dot files, dot dirs, dot files (lexicographic within each group). |
+| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder). `load_compact_chain` loads a single-child-dir chain for a compact row without changing `TreeExpansion`. `apply_listing` grafts a [`CompactChainListing`] without calling `FsPort`. Listing order is non-dot dirs, non-dot files, dot dirs, dot files (lexicographic within each group). |
+| `ExpandChainCommand` | Command | Lists a compact single-child directory chain via `FsPort`; does not mutate `FileTree`. Tests use `MemFs` / `CountingFs` — no `thread::sleep` |
+| `CompactChainListing` | DTO | Path + listed children per level; `apply_listing` is the UI apply. Empty listing is a no-op on the workspace root |
+| `TreeIoRequest` | Command | Expand path sent on the tree IO channel |
+| `TreeIoEvent` | Event | Inbox yield: expanded listing or failed path + error |
+| `TreeIoMailbox` / `TreeIoHandle` | Command queue + Event inbox | UI `submit` / `poll` never call `FsPort::read_dir`; the tree worker (or test `pump_tree_io`) owns the Port |
+| `TreeExpandFlight` | Value object | Pending expand paths; second `begin` of the same path is a no-op; `can_expand` is false while loading; `loading_label` is `loading…`; not a Manager |
 | `CompactChain` | Value object / view of Composite | `/`-joined names of already-loaded single-child directories; `path` is the innermost directory. Unloaded / empty / one file child / 2+ children stop the chain. Length 1 is a non-compact directory. Skip-filtered names cannot be the "one child." |
 | `TreeExpansion` | Value object / collection | A path is expanded iff explicitly expanded; default is collapsed at every level. `for_root` / a new `FileTree` starts empty. `expand` / `collapse` are Commands. Collapse of a missing path is a no-op. Expanding a file is a no-op. Expanding a parent does not expand children. Expanding a compact row expands the innermost path only — nested names in the chain are not auto-expanded. |
 | `LayoutState` | Value object | `left_width` > 0; clamp on set; no window handle in the lib |
 | `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
-| `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |
+| `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth. `generation` bumps on insert / delete / reload, not on selection or save; the highlighter cache keys on it |
 | `Selection` | Value object | Range is ordered `start <= end` in char offsets |
 | `CursorOffsets` | Value object | Editor char offsets → `Selection`; apply writes the caret onto `OpenBuffer` without dirtying; offsets → `position_at` is not always line 0 character 0 |
 | `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
@@ -211,7 +217,9 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `LogMessageEvent` | Event / DTO | `window/logMessage` kept by the reader; missing `type` is 0 |
 | `DiscoverFlight` | Value object | Idle vs in-flight kind; second `begin` is a no-op; `waiting_label` is `waiting for server` iff in flight; not a Manager |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
-| `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
+| `Highlighter` | Adapter + Cache | syntect tokens; unknown syntax → empty/plain spans, no panic. `highlight(path, text, generation)` hits [`HighlightCache`]; a second call with the same path + generation does not re-tokenize (`tokenize_count` stays) |
+| `HighlightKey` | Value object / identity | Path + rope generation; equality is both fields |
+| `HighlightCache` | Cache | Stores `Vec<HighlightSpan>` for one key; hit returns the spans; miss tokenizes and stores; `clear` drops the entry |
 | `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
 | `WatchDepth` | Value object | `immediate` vs `recursive`; folder open uses immediate so a large tree does not block on a recursive OS watch |

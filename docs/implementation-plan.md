@@ -579,7 +579,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 
 ## poc-tier-status (`poc-tier-status` branch)
 
-**Status: SIGNED OFF** on `poc-tier-status`. Parent is `poc-lsp-async`. Do not start `poc-no-stall` from this branch. Do not invent highlight cache or tree-expand workers. `RunLog` stays a separate schema from the serve WAL.
+**Status: SIGNED OFF** on `poc-tier-status`. Parent is `poc-lsp-async`. `poc-no-stall` stacks on this branch. `RunLog` stays a separate schema from the serve WAL.
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
@@ -597,6 +597,27 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 - [x] `check-static` — **N/A** (musl ELF story unchanged). Darwin: do not fake musl greens
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `IngestState`, `WireTier`, `DiscoverOffer`, `TierStrip`, `TierCell`, `PackageTierMap`, `DiscoverMenu`
+
+## poc-no-stall (`poc-no-stall` branch)
+
+**Status: SIGNED OFF** on `poc-no-stall`. Parent is `poc-tier-status`. This is the last POC-proof slice. Do not open a follow-on branch. Do not implement PackAdapter `Command` spawn. `RunLog` stays a separate schema from the serve WAL.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| PNS-1 | `HighlightCache` keyed by path + rope generation; second highlight of unchanged text does not re-tokenize | poc-tier-status | **SIGNED OFF.** Unknown syntax stays empty spans. |
+| PNS-2 | Tree expand worker: `ExpandChainCommand` / `TreeIoRequest` / `TreeExpandFlight`; children show `loading…` until the inbox fills | PNS-1 | **SIGNED OFF.** UI apply never calls `read_dir`. MemFs / FakeClock; no `thread::sleep`. |
+| PNS-3 | Navigate / F12 disabled until `LspSessionState::Ready` (`connecting language server`) | PNS-2 | **SIGNED OFF.** Same `DiscoverMenu` as context menu; keyboard F12 uses `queue_discover`. Save / disk conflict modal stays. |
+
+**Sign-off checklist (poc-no-stall)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (poc-ide lib 203; composition-root lib 69; core 72; xtask 30)
+- [x] 95% llvm-cov on crates that exist — **95.96%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **67 caught / 78 scored (85.9%)**, 34 unviable, 10 missed, 1 timeout
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (musl ELF story unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `HighlightKey`, `HighlightCache`, `ExpandChainCommand`, `CompactChainListing`, `TreeIoRequest`, `TreeIoEvent`, `TreeIoMailbox`, `TreeExpandFlight`
 
 ## Spikes (do not skip hygiene on merge)
 
@@ -617,4 +638,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 5. Stop at sign-off; do not start the next milestone branch (`pdN+1` until `pdN` signed off; `ideN+1` until `ideN` signed off; `logN+1` until `logN` signed off).
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
-8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. Do not start `poc-no-stall` from `poc-tier-status`.
+8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The stack is complete at `poc-no-stall`. Do not open a follow-on POC-proof branch.

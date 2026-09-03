@@ -24,6 +24,7 @@ pub mod proof;
 pub mod tabs;
 pub mod tier;
 pub mod tree;
+pub mod tree_io;
 pub mod watch;
 
 pub use buffer::{BufferMap, CursorOffsets, DirtyFlag, OpenBuffer, Selection};
@@ -38,7 +39,7 @@ pub use control::{
 pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
 pub use error::IdeError;
-pub use highlight::{HighlightSpan, Highlighter};
+pub use highlight::{HighlightCache, HighlightKey, HighlightSpan, Highlighter};
 pub use language::{ControlSocketPath, DiscoverOffer, LanguageCatalog, ServeMode, WireTier};
 pub use layout::LayoutState;
 pub use log::{
@@ -69,8 +70,12 @@ pub use tier::{
     TierCellState, TierStrip,
 };
 pub use tree::{
-    CompactChain, DialogAction, DialogOutcome, FileTree, PendingDialog, TreeExpansion, TreeNode,
-    WorkspaceRoot,
+    CompactChain, CompactChainListing, DialogAction, DialogOutcome, ExpandChainCommand, FileTree,
+    PendingDialog, TreeExpansion, TreeNode, WorkspaceRoot,
+};
+pub use tree_io::{
+    dispatch_tree_io, pump_tree_io, spawn_tree_io, TreeExpandFlight, TreeIoEvent, TreeIoHandle,
+    TreeIoMailbox, TreeIoRequest,
 };
 pub use watch::{DiskWatch, NotifyWatch, WatchDepth};
 
@@ -107,6 +112,18 @@ mod tests {
         let _ = DialogOutcome::Cancelled;
         let _ = Highlighter::new();
         let _ = HighlightSpan::new(0, 1, 0, 0, 0);
+        let _ = HighlightKey::new("/ws/a.rs", 0);
+        let _ = HighlightCache::new();
+        let _ = ExpandChainCommand::new("/ws/a");
+        let _ = CompactChainListing::empty("/ws");
+        let _ = TreeExpandFlight::idle();
+        let _ = TreeIoMailbox::new();
+        let _ = TreeIoRequest::expand("/ws/a");
+        let _ = TreeIoEvent::Failed {
+            path: "/ws/a".into(),
+            error: "x".into(),
+        };
+        let _ = TreeIoHandle::pair;
         let _ = FakeWatch::new();
         let _ = WatchDepth::Immediate;
         let _ = LspSessionState::Idle;
@@ -224,6 +241,9 @@ mod tests {
         assert_eq!(EVENT_PROGRESS, "$/progress");
         assert_eq!(EVENT_LOG_MESSAGE, "window/logMessage");
         assert!(DiscoverFlight::idle().can_submit());
+        assert!(TreeExpandFlight::idle().can_expand(std::path::Path::new("/ws")));
+        assert_eq!(TreeExpandFlight::loading_label(), "loading…");
+        assert!(TreeIoRequest::expand("/ws/a").is_expand());
         assert_eq!(
             LspProgressKind::parse("begin"),
             Some(LspProgressKind::Begin)
@@ -238,6 +258,9 @@ mod tests {
         let _ = dispatch_lsp_io::<crate::ports::FakeLsp>;
         let _ = run_lsp_io_ready::<crate::ports::FakeLsp>;
         let _ = spawn_lsp_io;
+        let _ = pump_tree_io::<crate::ports::MemFs>;
+        let _ = dispatch_tree_io::<crate::ports::MemFs>;
+        let _ = spawn_tree_io;
         let _ = pump_control_io::<crate::ports::FakeControl>;
         let _ = request_control_status::<crate::ports::FakeControl>;
         let _ = spawn_control_io;

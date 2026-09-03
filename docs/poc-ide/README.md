@@ -10,7 +10,8 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 |---|---|
 | Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog` |
 | Tree, tabs, editor, resizable left panel | Domain `FileTree` + `CompactChain` + `TabStrip` + `LayoutState`; eframe `SidePanel` in the bin. Single-child dir chains render as `a/b/c`. |
-| Syntax highlighting | `Highlighter` Adapter over **syntect** (egui layouter in the bin) |
+| Syntax highlighting | `Highlighter` Adapter + `HighlightCache` over **syntect** (egui layouter in the bin; keyed by path + rope generation) |
+| Tree expand | `TreeIoRequest` / `ExpandChainCommand` on a background worker; header may look open with `loading…` until the inbox fills |
 | Background disk edits | `DiskWatch` Observer; dirty buffer → `ConflictModal` (load from disk or keep in memory) |
 | Edit | `EditCommand`: insert, delete, select, cut, copy, paste, open, save |
 | Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` (Navigate, F12, editor and file-tree context menu). Items use `DiscoverOffer` × current tier; disabled labels are honest (`connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)`). |

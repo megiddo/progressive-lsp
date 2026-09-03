@@ -6,14 +6,15 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, spawn_control_io, spawn_lsp_io, BufferMap, ClipboardPort,
-    CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle, ControlPush, ControlPushInbox,
-    ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort, DiscoverFlight, DiscoverKind,
-    DiscoverMenu, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan, Highlighter,
-    IdeError, LanguageCatalog, LayoutState, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState,
-    NotifyWatch, OpenBuffer, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog,
-    Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec, StdFs, SystemClock, TabId, TabStrip,
-    TierStrip, TreeExpansion, TreeNode, WatchPort, WireTier, WorkspaceRoot,
+    advertised_control_socket, spawn_control_io, spawn_lsp_io, spawn_tree_io, BufferMap,
+    ClipboardPort, CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle, ControlPush,
+    ControlPushInbox, ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort, DiscoverFlight,
+    DiscoverKind, DiscoverMenu, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
+    Highlighter, IdeError, LanguageCatalog, LayoutState, LspIoEvent, LspIoHandle, LspIoRequest,
+    LspSessionState, NotifyWatch, OpenBuffer, PackageTierMap, PendingDialog, PendingDiscover,
+    ProofStatus, RunLog, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec, StdFs,
+    SystemClock, TabId, TabStrip, TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent,
+    TreeIoHandle, TreeIoRequest, TreeNode, WatchPort, WireTier, WorkspaceRoot,
 };
 use std::sync::mpsc;
 
@@ -129,6 +130,8 @@ pub struct PocIdeApp {
     catalog: LanguageCatalog,
     tiers: PackageTierMap,
     discover_flight: DiscoverFlight,
+    tree_io: TreeIoHandle,
+    tree_flight: TreeExpandFlight,
     status: String,
     run_log: RunLog,
     pending_discover: Option<PendingDiscover>,
@@ -184,6 +187,8 @@ impl PocIdeApp {
             catalog: LanguageCatalog::new(),
             tiers: PackageTierMap::new(),
             discover_flight: DiscoverFlight::idle(),
+            tree_io: spawn_tree_io(),
+            tree_flight: TreeExpandFlight::idle(),
             status: String::new(),
             run_log,
             pending_discover: None,
@@ -231,6 +236,7 @@ impl PocIdeApp {
                 }
                 let watch_err = self.watch.watch_root(root.as_path()).err();
                 self.spawn_lsp(&root);
+                self.tree_flight = TreeExpandFlight::idle();
                 self.expansion = TreeExpansion::for_root(&root);
                 self.root = Some(root);
                 self.tree = Some(tree);
@@ -357,6 +363,81 @@ impl PocIdeApp {
             root.as_path().to_path_buf(),
             self.serve_spawn.clone(),
         ));
+    }
+
+    fn poll_tree_inbox(&mut self) {
+        let events = self.tree_io.poll();
+        for ev in events {
+            self.handle_tree_event(ev);
+        }
+    }
+
+    fn handle_tree_event(&mut self, ev: TreeIoEvent) {
+        let path = ev.path().to_path_buf();
+        self.tree_flight.finish(&path);
+        match ev {
+            TreeIoEvent::Expanded { listing } => {
+                if let Some(tree) = &mut self.tree {
+                    match tree.apply_listing(&listing) {
+                        Ok(()) => {
+                            let n = tree
+                                .find(&path)
+                                .map(|node| node.compact_tail().children().len())
+                                .unwrap_or(0);
+                            self.run_log.log_tree_expand(&path, n, None);
+                            let expand_row = tree
+                                .find(&path)
+                                .and_then(CompactChain::from_node)
+                                .map(|chain| chain.path() == path)
+                                .unwrap_or(true);
+                            if expand_row {
+                                if let Err(e) = self.expansion.expand(&path, tree) {
+                                    self.status = e.to_string();
+                                }
+                            }
+                            let _ = self.watch.watch(&path);
+                        }
+                        Err(e) => {
+                            self.run_log.log_tree_expand(&path, 0, Some(&e.to_string()));
+                            self.status = e.to_string();
+                        }
+                    }
+                }
+            }
+            TreeIoEvent::Failed { error, .. } => {
+                self.run_log.log_tree_expand(&path, 0, Some(&error));
+                self.status = error;
+            }
+        }
+    }
+
+    fn queue_tree_expand(&mut self, path: PathBuf) {
+        if !self.tree_flight.can_expand(&path) {
+            return;
+        }
+        if let Some(tree) = &self.tree {
+            if !tree.needs_compact_listing(&path) {
+                self.run_log.log_tree_expand(
+                    &path,
+                    tree.find(&path)
+                        .map(|node| node.compact_tail().children().len())
+                        .unwrap_or(0),
+                    None,
+                );
+                if let Some(tree) = &self.tree {
+                    if let Err(e) = self.expansion.expand(&path, tree) {
+                        self.status = e.to_string();
+                    }
+                }
+                let _ = self.watch.watch(&path);
+                return;
+            }
+        }
+        self.tree_flight.begin(&path);
+        if let Err(e) = self.tree_io.submit(TreeIoRequest::expand(&path)) {
+            self.tree_flight.finish(&path);
+            self.status = e.to_string();
+        }
     }
 
     fn poll_lsp_inbox(&mut self) {
@@ -663,7 +744,11 @@ impl eframe::App for PocIdeApp {
         self.apply_pending_dialog();
         self.poll_lsp_inbox();
         self.poll_control_inbox();
-        if self.lsp_session.is_connecting() || self.discover_flight.is_in_flight() {
+        self.poll_tree_inbox();
+        if self.lsp_session.is_connecting()
+            || self.discover_flight.is_in_flight()
+            || !self.tree_flight.is_empty()
+        {
             ui.ctx().request_repaint();
         }
         let already: Vec<PathBuf> = self
@@ -794,7 +879,13 @@ impl eframe::App for PocIdeApp {
                     let menu = self.discover_menu();
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(tree) = self.tree.as_ref() {
-                            let shown = show_nodes(ui, tree.children(), &self.expansion, menu);
+                            let shown = show_nodes(
+                                ui,
+                                tree.children(),
+                                &self.expansion,
+                                &self.tree_flight,
+                                menu,
+                            );
                             clicked = shown.clicked;
                             discover = shown.discover;
                             became_expanded = shown.became_expanded;
@@ -807,33 +898,8 @@ impl eframe::App for PocIdeApp {
                     for path in became_collapsed {
                         self.expansion.collapse(&path);
                     }
-                    if let Some(tree) = &mut self.tree {
-                        for path in became_expanded {
-                            match tree.load_compact_chain(&path, &self.fs) {
-                                Ok(()) => {
-                                    let n = tree
-                                        .find(&path)
-                                        .map(|node| node.compact_tail().children().len())
-                                        .unwrap_or(0);
-                                    self.run_log.log_tree_expand(&path, n, None);
-                                    let expand_row = tree
-                                        .find(&path)
-                                        .and_then(CompactChain::from_node)
-                                        .map(|chain| chain.path() == path)
-                                        .unwrap_or(true);
-                                    if expand_row {
-                                        if let Err(e) = self.expansion.expand(&path, tree) {
-                                            self.status = e.to_string();
-                                        }
-                                    }
-                                    let _ = self.watch.watch(&path);
-                                }
-                                Err(e) => {
-                                    self.run_log.log_tree_expand(&path, 0, Some(&e.to_string()));
-                                    self.status = e.to_string();
-                                }
-                            }
-                        }
+                    for path in became_expanded {
+                        self.queue_tree_expand(path);
                     }
                     if let Some(path) = clicked {
                         self.open_path(&path);
@@ -893,7 +959,7 @@ impl eframe::App for PocIdeApp {
                         let outcome = show_editor(
                             ui,
                             buf,
-                            &self.highlighter,
+                            &mut self.highlighter,
                             &mut self.clipboard,
                             editor_menu,
                         );
@@ -965,6 +1031,7 @@ fn show_nodes(
     ui: &mut egui::Ui,
     nodes: &[TreeNode],
     expansion: &TreeExpansion,
+    flight: &TreeExpandFlight,
     menu: DiscoverMenu,
 ) -> ShowTree {
     let mut clicked = None;
@@ -977,13 +1044,26 @@ fn show_nodes(
                 continue;
             };
             let path = chain.path();
-            let open = expansion.is_expanded(path);
+            let loading = flight.is_loading(path);
+            let open = expansion.is_expanded(path) || loading;
             let tail = node.compact_tail();
             let response = egui::CollapsingHeader::new(chain.display_name())
                 .id_salt(path)
                 .default_open(false)
                 .open(Some(open))
-                .show(ui, |ui| show_nodes(ui, tail.children(), expansion, menu));
+                .show(ui, |ui| {
+                    if loading {
+                        ui.label(TreeExpandFlight::loading_label());
+                        ShowTree {
+                            clicked: None,
+                            discover: None,
+                            became_expanded: Vec::new(),
+                            became_collapsed: Vec::new(),
+                        }
+                    } else {
+                        show_nodes(ui, tail.children(), expansion, flight, menu)
+                    }
+                });
             if let Some(inner) = response.body_returned {
                 if clicked.is_none() {
                     clicked = inner.clicked;
@@ -994,7 +1074,7 @@ fn show_nodes(
                 became_expanded.extend(inner.became_expanded);
                 became_collapsed.extend(inner.became_collapsed);
             }
-            if response.header_response.clicked() {
+            if response.header_response.clicked() && !loading {
                 if open {
                     became_collapsed.push(path.to_path_buf());
                 } else {
@@ -1025,15 +1105,16 @@ struct EditorOutcome {
 fn show_editor(
     ui: &mut egui::Ui,
     buffer: &mut OpenBuffer,
-    highlighter: &Highlighter,
+    highlighter: &mut Highlighter,
     clipboard: &mut impl ClipboardPort,
     menu: DiscoverMenu,
 ) -> EditorOutcome {
     let path = buffer.path().to_path_buf();
+    let generation = buffer.generation();
     let mut text = buffer.text();
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
         let s = buf.as_str();
-        let spans = highlighter.highlight(&path, s);
+        let spans = highlighter.highlight(&path, s, generation);
         let job = layout_job_from_spans(s, &spans, wrap_width);
         ui.fonts_mut(|f| f.layout_job(job))
     };

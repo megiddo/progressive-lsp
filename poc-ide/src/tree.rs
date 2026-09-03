@@ -1,5 +1,6 @@
 //! `WorkspaceRoot` value object, `FileTree` / `TreeNode` Composite,
-//! [`CompactChain`] (compact single-child directory view), and
+//! [`CompactChain`] (compact single-child directory view),
+//! [`ExpandChainCommand`] / [`CompactChainListing`], and
 //! [`TreeExpansion`] (collapsed by default).
 
 use std::collections::BTreeSet;
@@ -205,6 +206,19 @@ impl TreeNode {
         }
     }
 
+    fn apply_listed_children(&mut self, listed: Vec<TreeNode>) -> Result<(), IdeError> {
+        match self {
+            Self::File { path, .. } => Err(IdeError::NotADirectory(path.clone())),
+            Self::Directory {
+                children: Some(_), ..
+            } => Ok(()),
+            Self::Directory { children, .. } => {
+                *children = Some(listed);
+                Ok(())
+            }
+        }
+    }
+
     /// Command: list this directory's **immediate** children. Already-loaded
     /// directories are a no-op (do not re-walk). Files are [`IdeError::NotADirectory`].
     pub fn load_children(&mut self, fs: &(impl FsPort + ?Sized)) -> Result<(), IdeError> {
@@ -329,6 +343,29 @@ impl FileTree {
         }
         Ok(())
     }
+
+    /// Apply a worker listing onto this Composite. Does not call [`FsPort`].
+    pub fn apply_listing(&mut self, listing: &CompactChainListing) -> Result<(), IdeError> {
+        if listing.path() == self.root.as_path() {
+            return Ok(());
+        }
+        for (dir, children) in listing.levels() {
+            match self.find_mut(dir) {
+                None => return Err(IdeError::NotFound(dir.clone())),
+                Some(node) => node.apply_listed_children(children.clone())?,
+            }
+        }
+        Ok(())
+    }
+
+    /// True when `path` still needs a compact-chain listing (unloaded tail).
+    pub fn needs_compact_listing(&self, path: &Path) -> bool {
+        match self.find(path) {
+            None => true,
+            Some(node) if node.is_file() => false,
+            Some(node) => !node.compact_tail().is_loaded(),
+        }
+    }
 }
 
 /// View of a Composite directory chain that can be shown as `a/b/c`.
@@ -391,6 +428,79 @@ impl CompactChain {
 
     pub fn len(&self) -> usize {
         self.names.len()
+    }
+}
+
+/// Command: list a compact single-child directory chain via [`FsPort`].
+/// Does not mutate [`FileTree`]. The UI applies [`CompactChainListing`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpandChainCommand {
+    path: PathBuf,
+}
+
+impl ExpandChainCommand {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn apply(&self, fs: &(impl FsPort + ?Sized)) -> Result<CompactChainListing, IdeError> {
+        let mut current = self.path.clone();
+        let mut levels = Vec::new();
+        loop {
+            let children = list_immediate(&current, fs)?;
+            let next = if children.len() == 1 && children[0].is_dir() {
+                Some(children[0].path().to_path_buf())
+            } else {
+                None
+            };
+            levels.push((current, children));
+            match next {
+                Some(p) => current = p,
+                None => break,
+            }
+        }
+        Ok(CompactChainListing {
+            path: self.path.clone(),
+            levels,
+        })
+    }
+}
+
+/// DTO: listed children for each directory in a compact chain. No [`FsPort`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactChainListing {
+    path: PathBuf,
+    levels: Vec<(PathBuf, Vec<TreeNode>)>,
+}
+
+impl CompactChainListing {
+    pub fn empty(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            levels: Vec::new(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn levels(&self) -> &[(PathBuf, Vec<TreeNode>)] {
+        &self.levels
+    }
+
+    pub fn children_count(&self) -> usize {
+        self.levels.last().map(|(_, kids)| kids.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.levels.is_empty()
     }
 }
 
@@ -1371,5 +1481,35 @@ mod tests {
             .unwrap_err()
             .is_io());
         assert!(!tree.find(Path::new("/ws/a")).unwrap().is_loaded());
+    }
+
+    #[test]
+    fn expand_chain_command_and_apply_listing_graft_without_second_walk() {
+        let spy = CountingFs::wrap(chain_fs());
+        let root = WorkspaceRoot::from_canonical("/ws").unwrap();
+        let mut tree = FileTree::load(&root, &spy).unwrap();
+        assert!(tree.needs_compact_listing(Path::new("/ws/a")));
+        assert!(tree.needs_compact_listing(Path::new("/ws/missing")));
+        let after_load = spy.read_dir_count();
+        let listing = ExpandChainCommand::new("/ws/a").apply(&spy).unwrap();
+        assert_eq!(ExpandChainCommand::new("/ws/a").path(), Path::new("/ws/a"));
+        assert!(!listing.is_empty());
+        assert_eq!(listing.path(), Path::new("/ws/a"));
+        assert!(listing.children_count() >= 1);
+        tree.apply_listing(&listing).unwrap();
+        assert!(!tree.needs_compact_listing(Path::new("/ws/a")));
+        assert!(!tree.needs_compact_listing(Path::new("/ws/a/b/c/file.rs")));
+        assert!(tree.find(Path::new("/ws/a/b/c")).unwrap().is_loaded());
+        let after_apply = spy.read_dir_count();
+        tree.apply_listing(&listing).unwrap();
+        assert_eq!(spy.read_dir_count(), after_apply);
+        assert!(after_apply > after_load);
+        tree.apply_listing(&CompactChainListing::empty("/ws"))
+            .unwrap();
+        assert!(tree
+            .apply_listing(&ExpandChainCommand::new("/ws/a/b").apply(&spy).unwrap())
+            .is_ok());
+        assert!(CompactChainListing::empty("/missing").is_empty());
+        assert_eq!(CompactChainListing::empty("/missing").children_count(), 0);
     }
 }

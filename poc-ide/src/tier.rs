@@ -742,4 +742,67 @@ mod tests {
             .is_none());
         assert!(fake.sent().is_empty());
     }
+
+    #[test]
+    fn discover_menu_disables_navigate_and_f12_until_lsp_ready() {
+        let mut fs = MemFs::new();
+        fs.add_file("/ws/Main.java", "class Main {}").unwrap();
+        let mut tabs = TabStrip::new();
+        let mut buffers = BufferMap::new();
+        buffers.open("/ws/Main.java", &fs).unwrap();
+        tabs.open("/ws/Main.java");
+
+        for lsp in [
+            LspSessionState::Idle,
+            LspSessionState::Connecting,
+            LspSessionState::Failed,
+        ] {
+            let blocked = menu(
+                "java",
+                lsp,
+                DiscoverFlight::idle(),
+                IngestState::Done,
+                Some(WireTier::Syntax),
+            );
+            for kind in [
+                DiscoverKind::Definition,
+                DiscoverKind::Implementation,
+                DiscoverKind::References,
+            ] {
+                assert!(
+                    !blocked.item(kind).can_submit(),
+                    "{lsp:?} must disable {kind:?} (Navigate / F12)"
+                );
+                assert_eq!(
+                    blocked.item(kind).label("Go to Definition"),
+                    "connecting language server"
+                );
+                assert!(
+                    blocked.to_io_request(kind, &tabs, &buffers).is_none(),
+                    "F12 {kind:?} must not queue IO until Ready"
+                );
+            }
+        }
+
+        let ready = menu(
+            "java",
+            LspSessionState::Ready,
+            DiscoverFlight::idle(),
+            IngestState::Done,
+            Some(WireTier::Syntax),
+        );
+        assert!(ready.item(DiscoverKind::Definition).can_submit());
+        assert!(ready
+            .to_io_request(DiscoverKind::Definition, &tabs, &buffers)
+            .is_some());
+        assert_ne!(
+            ready
+                .item(DiscoverKind::Definition)
+                .label("Go to Definition"),
+            "connecting language server"
+        );
+        assert!(!LspSessionState::Idle.is_ready());
+        assert!(!LspSessionState::Failed.is_ready());
+        assert!(LspSessionState::Ready.is_ready());
+    }
 }
