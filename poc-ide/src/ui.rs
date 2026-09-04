@@ -9,14 +9,15 @@ use poc_ide::{
     advertised_control_socket, spawn_control_io, spawn_lsp_io, spawn_runtime_io, spawn_tree_io,
     BufferMap, ClipboardPort, CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle,
     ControlPush, ControlPushInbox, ControlSocketPath, CursorOffsets, DialogAction, DialogOutcome,
-    DialogPort, DiscoverFlight, DiscoverKind, DiscoverMenu, DiskEvent, DiskWatch, EditCommand,
-    FileTree, FsPort, HighlightSpan, Highlighter, HostOs, IdeError, LanguageCatalog, LaunchJournal,
-    LayoutState, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState, NotifyWatch, OpenBuffer,
-    OpenMode, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent,
-    RuntimeIoHandle, RuntimeIoRequest, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec,
-    StatusModal, StatusModalKind, StdFs, SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind,
-    TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent, TreeIoHandle, TreeIoRequest, TreeNode,
-    WatchPort, WireTier, WorkspaceRoot, PLAIN_TEXT_RGB,
+    DialogPort, DiscoverFlight, DiscoverKind, DiscoverMenu, DiskEvent, DiskWatch, DockerRunPlan,
+    EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, HostOs, IdeError, LanguageCatalog,
+    LaunchJournal, LayoutState, LspIoAttach, LspIoEvent, LspIoHandle, LspIoRequest,
+    LspSessionState, NotifyWatch, OpenBuffer, OpenMode, PackageTierMap, PendingDialog,
+    PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent, RuntimeIoHandle, RuntimeIoRequest,
+    Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec, StatusModal, StatusModalKind, StdFs,
+    SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind, TierStrip, TreeExpandFlight,
+    TreeExpansion, TreeIoEvent, TreeIoHandle, TreeIoRequest, TreeNode, WatchPort, WireTier,
+    WorkspaceRoot, PLAIN_TEXT_RGB,
 };
 use std::sync::mpsc;
 
@@ -404,10 +405,22 @@ impl PocIdeApp {
         self.shutdown_lsp();
         self.lsp_session = self.lsp_session.begin_connect();
         self.run_log.log_lsp("initialize_start", None);
-        self.lsp_io = Some(spawn_lsp_io(
-            root.as_path().to_path_buf(),
-            self.serve_spawn.clone(),
-        ));
+        let attach = if self.open_mode == OpenMode::Container {
+            self.serve_mode = ServeMode::StockStdio;
+            match DockerRunPlan::new("docker", root.as_path()) {
+                Ok(plan) => LspIoAttach::Container(plan),
+                Err(e) => {
+                    self.lsp_session = self.lsp_session.finish_err();
+                    self.lsp_error = Some(e.to_string());
+                    self.status = e.to_string();
+                    return;
+                }
+            }
+        } else {
+            self.serve_mode = ServeMode::ControlSocket;
+            LspIoAttach::Native(self.serve_spawn.clone())
+        };
+        self.lsp_io = Some(spawn_lsp_io(root.as_path().to_path_buf(), attach));
     }
 
     fn poll_tree_inbox(&mut self) {

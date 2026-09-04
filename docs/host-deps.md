@@ -50,7 +50,7 @@ Allowed **project** compilers on PATH for **accuracy**, not for our libc: `rustc
 
 ## poc-ide container host (HOST-0+)
 
-The **editor** process on Darwin/Windows may invoke the host `docker` CLI (`DockerRuntime` Adapter) to probe / inspect a local runtime image. That CLI is a **host tool**, not a shipped ELF and not a `DT_NEEDED` of `progressive-lsp`. Tests inject `FakeRuntime` or a scripted CLI; they never talk to a Docker daemon, registry, or AWS. `DockerRuntime::start` (`docker run` attach) stays unwired until HOST-5. The **runtime image** `progressive-lsp-runtime:local` is **our artifact** (HOST-4: `xtask runtime-image` copies prebuilt HOST-2 core + HOST-3 slim ELFs into `/opt/plsp`; `FROM scratch`; no rustc/cargo/clang/LLVM/zig/go in that image). The serve binary inside the image remains musl-static ([above](#runtime-host-deps-for-our-binaries)).
+The **editor** process on Darwin/Windows may invoke the host `docker` CLI (`DockerRuntime` Adapter) to probe / inspect a local runtime image. That CLI is a **host tool**, not a shipped ELF and not a `DT_NEEDED` of `progressive-lsp`. Tests inject `FakeRuntime` or a scripted CLI; they never talk to a Docker daemon, registry, or AWS. `DockerRuntime::start` validates a `DockerRunPlan` and does not exec; poc-ide `StdioLsp::from_command` is the single `docker run -i --rm` attach (HOST-5; stdio only, no mux). The **runtime image** `progressive-lsp-runtime:local` is **our artifact** (HOST-4: `xtask runtime-image` copies prebuilt HOST-2 core + HOST-3 slim ELFs into `/opt/plsp`; `FROM scratch`; no rustc/cargo/clang/LLVM/zig/go in that image). The serve binary inside the image remains musl-static ([above](#runtime-host-deps-for-our-binaries)).
 
 ## Build-time (CI / xtask)
 

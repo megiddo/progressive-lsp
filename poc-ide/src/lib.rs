@@ -59,8 +59,8 @@ pub use lsp::{
 };
 pub use lsp_io::{
     classify_notification, dispatch_lsp_io, notifications_to_events, pump_lsp_io, run_lsp_io_ready,
-    spawn_lsp_io, DiscoverFlight, LogMessageEvent, LspIoEvent, LspIoHandle, LspIoMailbox,
-    LspIoRequest, LspProgressKind, ProgressEvent,
+    spawn_lsp_io, DiscoverFlight, LogMessageEvent, LspIoAttach, LspIoEvent, LspIoHandle,
+    LspIoMailbox, LspIoRequest, LspProgressKind, ProgressEvent,
 };
 pub use open_mode::{parse_launch_args, HostOs, LaunchFlags, OpenMode, T3HostOffer};
 pub use ports::{
@@ -70,8 +70,8 @@ pub use ports::{
 };
 pub use proof::ProofStatus;
 pub use runtime::{
-    run_launch, run_launch_reporting, DockerRuntime, FakeRuntime, LaunchJournal, LaunchStep,
-    RuntimeInfo, RuntimePort, RuntimeSession, StatusModal, StatusModalKind, StepState,
+    run_launch, run_launch_reporting, DockerRunPlan, DockerRuntime, FakeRuntime, LaunchJournal,
+    LaunchStep, RuntimeInfo, RuntimePort, RuntimeSession, StatusModal, StatusModalKind, StepState,
     RUNTIME_IMAGE,
 };
 pub use runtime_io::{
@@ -189,6 +189,8 @@ mod tests {
         let _ = RuntimeIoRequest::launch("/ws");
         let _ = spawn_runtime_io;
         let _ = RUNTIME_IMAGE;
+        let _ = DockerRunPlan::new("docker", "/ws");
+        let _ = LspIoAttach::Native(ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap());
         let _ = ServeMode::StockStdio;
         let _ = ServeMode::ControlSocket;
         let _ = ServeMode::default();

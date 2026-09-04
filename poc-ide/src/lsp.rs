@@ -351,7 +351,7 @@ impl StdioLsp {
         Self::from_command(cmd)
     }
 
-    fn from_command(mut cmd: Command) -> Result<Self, IdeError> {
+    pub fn from_command(mut cmd: Command) -> Result<Self, IdeError> {
         let child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 IdeError::MissingBinary

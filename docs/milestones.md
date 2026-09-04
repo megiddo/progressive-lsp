@@ -1113,6 +1113,38 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 - `DockerRuntime.start` remains unwired. Heavy packs remain HOST-7.
 
+## HOST-5 — docker run stdio attach
+
+**Status: SIGNED OFF** on branch `host5`. Parent is `host4` (`67ca485`). Do not open `host6` from this branch. Do not mux client / `serve --mux`. Do not build clangd/tsgo/gopls/zls. Do not rebuild the runtime image. Container LSP is **stdio only** (`ServeMode::StockStdio`). Unix sockets through Docker Desktop are forbidden. Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted CLI / `DockerRunPlan` argv only). No real ty/clangd download. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** `DockerRunPlan` + `DockerRuntime::start` validates the plan (does not exec); poc-ide `LspIoAttach::Container` → `StdioLsp::from_command` is the single `docker run -i --rm`; bind-mount `$WS:$WS`; working directory `$WS`; image `progressive-lsp-runtime:local`; `serve --prefix /opt/plsp`. No local Darwin serve on container open. Not mux. Not full packs. HOST-5 exit is attach + initialize over stdio, not a full T3 hover green.
+
+**Exit**
+
+- [x] `DockerRunPlan` is a value object (docker binary, `-i --rm`, `-v WS:WS`, `-w WS`, image, `serve --prefix /opt/plsp`). Darwin unit tests name the pattern and cover the plan without exec. Never `-t`.
+- [x] `DockerRuntime::start` validates the plan and returns `RuntimeSession`. It does not `docker run`. Empty workspace / missing absolute docker binary fail closed.
+- [x] Container open attaches `StdioLsp` to that docker Command + `StockStdio`. Native open still uses `SpawnSpec` + `ControlSocket`. Never two serves.
+- [x] FakeRuntime still drives the journal. Scripted CLI covers probe/inspect. `DockerRunPlan` tests do not start a daemon. No `thread::sleep`.
+- [x] Docs: branching `host4 └── host5`; `host6`–`host7` still future. host-deps: attach is plan → stdio; docker CLI remains a host tool; tests still FakeRuntime.
+
+**Sign-off checklist (HOST-5)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p poc-ide --lib -- --test-threads=1` (216 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.50%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff vs `67ca485` **19 caught / 23 scored (82.6%)**, 1 unviable, 4 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `DockerRunPlan`, `LspIoAttach`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inspect `DockerRunPlan` argv and inject `FakeRuntime` / a scripted CLI; they never start a Docker daemon.
+- HOST-5 proof is attach + initialize over stdio, not a cargo test and not a T3 hover. First live T3 on mounted source is later (Python/ty or PHP/phpantom).
+- Live `docker run -i --rm` initialize on this Darwin host: **attempted and succeeded**. Image `progressive-lsp-runtime:local` (`sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8`, linux/arm64, ENTRYPOINT `/opt/plsp/bin/progressive-lsp`, CMD `serve --prefix /opt/plsp`). One-shot `docker run -i --rm -v $WS:$WS -w $WS` (no `-t`) answered `initialize` with `serverInfo.name=progressive-lsp` and `experimental.progressiveLsp` `{version:v1, socket:null, mux:false}`. Not a cargo test. Not a T3 hover.
+- Heavy packs remain HOST-7. Mux remains HOST-6.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

@@ -246,16 +246,18 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `OpenMode` | Strategy | `native` vs `container`; `for_host` forces native on Linux; T3 offered for native-on-Linux or container; never two LSP processes |
 | `T3HostOffer` | Value object | `Offered` vs `NeedsContainer`; strip skip + discover `open folder in container` |
 | `LaunchFlags` / `parse_launch_args` | DTO + parser | `--folder` / `--file` / `--container` / `--control-socket`; tests parse strings |
-| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS |
+| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS. `start` validates [`DockerRunPlan`] and does not exec; `StdioLsp::from_command` is the single `docker run` |
+| `DockerRunPlan` | Value object | docker binary + `run -i --rm` + `-v WS:WS` + `-w WS` + image `progressive-lsp-runtime:local` + `serve --prefix /opt/plsp`; never `-t`; never `--mux`; empty / relative workspace and missing absolute docker binary fail closed; Darwin unit tests name the pattern and cover the plan without exec |
 | `RuntimeInfo` | Value object / DTO | `available` + platform string; `is_linux_pack_platform` is `linux/arm64` / `linux/amd64` (and `aarch64`/`x86_64` aliases); empty platform is not available |
-| `RuntimeSession` | Value object | Workspace path of a started container; tests never hold a live Docker id |
+| `RuntimeSession` | Value object | Workspace path of a validated container plan; Clone; does not own Child; tests never hold a live Docker id |
 | `LaunchJournal` / `LaunchStep` / `StepState` | Value objects | Ordered `pending`/`running`/`ok`/`fail`/`skipped`; container plan: probe → platform → image → mount → start → T3 preflight |
 | `StatusModal` / `StatusModalKind` | Value object | Closed or open T1/T2/T3/container; Close does not cancel work |
 | `RuntimeIoRequest` / `RuntimeIoEvent` / `RuntimeIoMailbox` / `RuntimeIoHandle` | Command + Event mailbox | UI submits launch; worker yields `Progress` then `Finished` journal; tests `pump_runtime_io` / `FakeRuntime` |
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen`. `discover_offers` is method × min tier × ceiling from the language matrix; Java has no T3 offers; C# ceiling is T1/T2 |
 | `WireTier` | Value object | `syntax` / `graph` / `types`; unknown parse → `None`; `meets` is `>=` |
 | `DiscoverOffer` | Value object | One LSP method + `min_tier` + language `ceiling`; Java/C# ceiling is `graph`; typed-only methods have `min_tier == types` |
-| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `serve_args` never includes `--mux` (`pending_mux`) |
+| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `serve_args` never includes `--mux` (`pending_mux`); container attach is `StockStdio` |
+| `LspIoAttach` | Strategy | `Native(ServeSpawn)` vs `Container(DockerRunPlan)`; native keeps `ControlSocket`; container is `StockStdio` + docker Command; one process |
 | `ControlSocketPath` | Value object | CLI path wins; else `$PREFIX/run/poc-ide.sock`; else `$HOME/.progressivelsp/run/poc-ide.sock`; else `{temp}/poc-ide.sock`; tests inject prefix / home / temp — never require `$HOME` |
 | `ServeWalPath` | Value object | Unique `{log_dir}/serve-{unix_ms}-{pid}.sqlite` the IDE sets on `PROGRESSIVE_LSP_LOG`; tests inject dirs + FakeClock |
 | `ServeSpawn` | Value object | Child argv + `PROGRESSIVE_LSP_LOG_LEVEL=debug` + optional `PROGRESSIVE_LSP_LOG`; `fn build_serve_command` is a function (not a type) that applies this onto `std::process::Command` — tests inspect env/argv and do not spawn a live serve; stderr is piped, never inherited |

@@ -25,7 +25,7 @@ poc-ide/                     workspace member; not a musl artifact
   src/layout.rs             LayoutState (left panel width)
   src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite, CompactChain, ExpandChainCommand, CompactChainListing, TreeExpansion, PendingDialog (`OpenFolderInContainer`)
   src/open_mode.rs          HostOs, OpenMode, T3HostOffer, LaunchFlags
-  src/runtime.rs            RuntimePort, FakeRuntime, DockerRuntime, LaunchJournal, StatusModal
+  src/runtime.rs            RuntimePort, FakeRuntime, DockerRuntime, DockerRunPlan, LaunchJournal, StatusModal
   src/runtime_io.rs         RuntimeIoRequest / RuntimeIoEvent mailbox; launch worker
   src/tabs.rs               TabStrip, TabId
   src/buffer.rs             OpenBuffer, BufferMap, Selection, DirtyFlag
@@ -37,7 +37,7 @@ poc-ide/                     workspace member; not a musl artifact
   src/language.rs            LanguageCatalog, ServeMode, ControlSocketPath, DiscoverOffer, WireTier
   src/tier.rs               TierStrip, TierCell, PackageTierMap, DiscoverMenu
   src/lsp.rs                LspClient Facade, LspLocation, SpawnSpec, ServeSpawn, StdioLsp
-  src/lsp_io.rs             LspIoRequest Command, LspIoEvent, ProgressEvent, DiscoverFlight, LspIoMailbox
+  src/lsp_io.rs             LspIoAttach Strategy, LspIoRequest Command, LspIoEvent, ProgressEvent, DiscoverFlight, LspIoMailbox
   src/control.rs             ControlClient Adapter, UnixControl, ControlPushInbox Observer
   src/console.rs             ProtocolConsole Facade, TranscriptEntry (lib + unit tests; not wired in the bin)
   src/watch.rs              DiskWatch Observer, NotifyWatch
@@ -128,7 +128,7 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 - Center: `TabStrip` rendered with a thin custom tab bar in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on this workspace’s rustc). Same `TabStrip` tests.
 - Editor: `egui::ScrollArea::both` around `egui::TextEdit::multiline` + syntect layouter from `Highlighter` tokens (cached by path + rope generation; layouter rebuilds only on edit; lines do not wrap so the area can scroll horizontally). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References from `DiscoverMenu` (honest labels; not a static three-item enabled list). Clicks and keyboard F12 queue `LspIoRequest` only when the item is enabled (`LspSessionState::Ready` and the rest of `DiscoverMenu`); jump runs when the inbox yields. Navigate / F12 stay disabled with `connecting language server` until Ready. Save / disk conflict modal stays; it does not block the rest of the shell.
 - Status strip: three **buttons** T1 / T2 / T3 (`processing` / `done` / `not supported` / `skipped` / `n/a`). Click opens `StatusModal` with that tier’s journal. Folder open starts workspace ingest in `initialize`; the strip paints T1/T2 from that ingest with no file focused. Opening a file is not required to start T2. A focused language with no T2 (Rust/CSS) stays T2 `n/a`. T3 stays `n/a` until a language is known. Native open on non-Linux skips T3 (`open folder in container`). Java T3 is `not supported` until bytecode T3 lands. Stub refuse is `skipped`, not `done`.
-- File menu: **Open Folder…** is native serve (Linux: T1/T2/T3; elsewhere T1/T2). Non-Linux also offers **Open Folder in Container…**, which launches one Linux serve host and opens a **Container launch** modal with live preflight/launch steps. Tests use `FakeRuntime` (no Docker daemon). `DockerRuntime::start` is not wired yet (attach is a later slice).
+- File menu: **Open Folder…** is native serve (Linux: T1/T2/T3; elsewhere T1/T2). Non-Linux also offers **Open Folder in Container…**, which launches one Linux serve host and opens a **Container launch** modal with live preflight/launch steps. Tests use `FakeRuntime` (no Docker daemon). Container attach is `DockerRunPlan` → `StdioLsp::from_command` (`docker run -i --rm`, bind-mount identity, `StockStdio`). Native attach is unchanged (`ControlSocket`). Never two serves. Mux is host6.
 - Modal: `egui::Modal` / `Window` for `ConflictModal` and `StatusModal`.
 - No bottom protocol console. Debug is `RunLog` sqlite, not a hand-typed inspector. RunLog stays a separate schema from the serve WAL.
 - Footer (`ProofStatus`): binary basename, log level, RunLog path, serve WAL path (or “WAL not open yet”), last discover (`definition L23:88 → 0 locations`) from RunLog discover rows.

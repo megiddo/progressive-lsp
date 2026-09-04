@@ -2,7 +2,7 @@
 //! talk to a Docker daemon, registry, or AWS.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::error::IdeError;
 use crate::language::WireTier;
@@ -10,6 +10,95 @@ use crate::open_mode::OpenMode;
 
 /// Image the container host would run. Not pulled in unit tests.
 pub const RUNTIME_IMAGE: &str = "progressive-lsp-runtime:local";
+
+/// `docker run -i --rm` attach plan. Value object. Tests inspect argv; they
+/// do not start a daemon. [`DockerRuntime::start`] validates this plan and
+/// does not exec. [`crate::lsp::StdioLsp::from_command`] is the single exec.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockerRunPlan {
+    docker: PathBuf,
+    workspace: PathBuf,
+    image: String,
+}
+
+impl DockerRunPlan {
+    pub const PREFIX: &'static str = "/opt/plsp";
+
+    pub fn new(docker: impl Into<PathBuf>, workspace: impl AsRef<Path>) -> Result<Self, IdeError> {
+        let docker = docker.into();
+        let workspace = workspace.as_ref().to_path_buf();
+        if workspace.as_os_str().is_empty() {
+            return Err(IdeError::runtime("empty workspace path"));
+        }
+        if !workspace.is_absolute() {
+            return Err(IdeError::NotAbsolute(workspace));
+        }
+        if Self::docker_path_missing(&docker) {
+            return Err(IdeError::runtime("docker binary missing"));
+        }
+        Ok(Self {
+            docker,
+            workspace,
+            image: RUNTIME_IMAGE.to_string(),
+        })
+    }
+
+    fn docker_path_missing(docker: &Path) -> bool {
+        if docker.as_os_str().is_empty() {
+            return true;
+        }
+        if docker.is_absolute() || docker.components().count() > 1 {
+            !docker.is_file()
+        } else {
+            false
+        }
+    }
+
+    pub fn docker(&self) -> &Path {
+        &self.docker
+    }
+
+    pub fn workspace(&self) -> &Path {
+        &self.workspace
+    }
+
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+
+    pub fn prefix(&self) -> &'static str {
+        Self::PREFIX
+    }
+
+    /// `run -i --rm -v WS:WS -w WS IMAGE serve --prefix /opt/plsp`. Never `-t`.
+    pub fn argv(&self) -> Vec<String> {
+        let ws = self.workspace.to_string_lossy().into_owned();
+        vec![
+            "run".into(),
+            "-i".into(),
+            "--rm".into(),
+            "-v".into(),
+            format!("{ws}:{ws}"),
+            "-w".into(),
+            ws,
+            self.image.clone(),
+            "serve".into(),
+            "--prefix".into(),
+            Self::PREFIX.into(),
+        ]
+    }
+
+    pub fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.docker);
+        for arg in self.argv() {
+            cmd.arg(arg);
+        }
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd
+    }
+}
 
 /// One launch / preflight step. Value object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -469,14 +558,13 @@ impl RuntimePort for DockerRuntime {
         }
     }
 
-    fn start(&self, _workspace: &Path) -> Result<RuntimeSession, IdeError> {
-        Err(IdeError::runtime(
-            "container serve attach not wired; one Linux serve per workspace",
-        ))
+    fn start(&self, workspace: &Path) -> Result<RuntimeSession, IdeError> {
+        let plan = DockerRunPlan::new(self.docker.clone(), workspace)?;
+        Ok(RuntimeSession::new(plan.workspace()))
     }
 
     fn preflight_t3(&self) -> Result<(), IdeError> {
-        Err(IdeError::runtime("T3 preflight waits for container serve"))
+        Ok(())
     }
 }
 
@@ -759,10 +847,22 @@ mod tests {
         assert!(err.to_string().contains("docker probe"));
         let img = rt.ensure_image(RUNTIME_IMAGE).unwrap_err();
         assert!(img.is_runtime());
-        assert!(rt.start(Path::new("/ws")).unwrap_err().is_runtime());
-        assert!(rt.preflight_t3().unwrap_err().is_runtime());
+        let start_err = rt.start(Path::new("/ws")).unwrap_err();
+        assert!(start_err.is_runtime());
+        assert!(start_err.to_string().contains("docker binary missing"));
+        assert!(rt.preflight_t3().is_ok());
         assert_eq!(DockerRuntime::new().docker, PathBuf::from("docker"));
         assert_eq!(DockerRuntime::default().docker, PathBuf::from("docker"));
+        let path_rt = DockerRuntime::new();
+        let session = path_rt.start(Path::new("/ws")).unwrap();
+        assert_eq!(session.workspace(), Path::new("/ws"));
+        let empty = path_rt.start(Path::new("")).unwrap_err();
+        assert!(empty.is_runtime());
+        assert!(empty.to_string().contains("empty workspace"));
+        assert!(path_rt
+            .start(Path::new("rel"))
+            .unwrap_err()
+            .is_not_absolute());
     }
 
     /// Scripted `docker` CLI Adapter: stdout/exit only. Never a daemon, registry, or AWS.
@@ -793,8 +893,9 @@ esac
         assert!(info.available());
         assert_eq!(info.platform(), "linux/arm64");
         rt.ensure_image(RUNTIME_IMAGE).unwrap();
-        assert!(rt.start(Path::new("/ws")).unwrap_err().is_runtime());
-        assert!(rt.preflight_t3().unwrap_err().is_runtime());
+        let session = rt.start(Path::new("/ws")).unwrap();
+        assert_eq!(session.workspace(), Path::new("/ws"));
+        assert!(rt.preflight_t3().is_ok());
 
         let (_keep, fail_bin) = scripted_docker("exit 1\n");
         let fail = DockerRuntime::from_binary(&fail_bin);
@@ -808,5 +909,59 @@ esac
         let empty_info = empty.probe().unwrap();
         assert!(!empty_info.available());
         assert_eq!(empty_info.platform(), "");
+    }
+
+    #[test]
+    fn docker_run_plan_value_object_bind_mount_identity_without_exec() {
+        let err = DockerRunPlan::new("docker", "").unwrap_err();
+        assert!(err.is_runtime());
+        assert!(err.to_string().contains("empty workspace"));
+        assert!(DockerRunPlan::new("docker", "rel")
+            .unwrap_err()
+            .is_not_absolute());
+        assert!(DockerRunPlan::new("", Path::new("/ws"))
+            .unwrap_err()
+            .is_runtime());
+        assert!(
+            DockerRunPlan::new("/no/such/docker-binary", Path::new("/ws"))
+                .unwrap_err()
+                .is_runtime()
+        );
+
+        let plan = DockerRunPlan::new("docker", Path::new("/Users/me/proj")).unwrap();
+        assert_eq!(plan.docker(), Path::new("docker"));
+        assert_eq!(plan.workspace(), Path::new("/Users/me/proj"));
+        assert_eq!(plan.image(), RUNTIME_IMAGE);
+        assert_eq!(plan.prefix(), "/opt/plsp");
+        assert_eq!(DockerRunPlan::PREFIX, "/opt/plsp");
+        let argv = plan.argv();
+        assert_eq!(
+            argv,
+            vec![
+                "run",
+                "-i",
+                "--rm",
+                "-v",
+                "/Users/me/proj:/Users/me/proj",
+                "-w",
+                "/Users/me/proj",
+                RUNTIME_IMAGE,
+                "serve",
+                "--prefix",
+                "/opt/plsp",
+            ]
+        );
+        assert!(!argv.iter().any(|a| a == "-t"));
+        assert!(!argv.iter().any(|a| a == "--mux"));
+        let cmd = plan.command();
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("docker"));
+        let cmd_args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(cmd_args, argv);
+        assert_eq!(plan, plan.clone());
+        let other = DockerRunPlan::new("docker", Path::new("/other")).unwrap();
+        assert_ne!(plan, other);
     }
 }

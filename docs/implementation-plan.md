@@ -66,7 +66,8 @@ main   # after log11 merge
                                 └── host1   # PackAdapter Linux Command spawn
                                       └── host2  # musl core ELF extract both triples
                                             └── host3  # slim pack jobs both triples
-                                                  └── host4  # runtime image (do not start host5)
+                                                  └── host4  # runtime image
+                                                        └── host5  # docker run attach (do not start host6)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -714,6 +715,27 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan`, `PackImageCopy`; `DockerPort` `tag_image` row updated
 
+## HOST-5 (`host5` branch)
+
+**Status: SIGNED OFF** on `host5`. Parent is `host4` (`67ca485`). Do not open `host6` from this branch. Do not mux client / `serve --mux`. Do not build clangd/tsgo/gopls/zls. Do not rebuild the runtime image except to *reference* `progressive-lsp-runtime:local`. Container LSP is stdio only (`ServeMode::StockStdio`). Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted CLI / `DockerRunPlan` argv). `RunLog` stays a separate schema from the serve WAL. Allocator-matrix mimalloc placeholders stay (no matching CI arch winner).
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| HOST-5.1 | `DockerRunPlan` value object + `DockerRuntime::start` validates (no exec) | host4 | **SIGNED OFF.** Darwin unit tests name the pattern. `run -i --rm -v WS:WS -w WS` + image `progressive-lsp-runtime:local` + `serve --prefix /opt/plsp`. Never `-t`. Empty / relative workspace and missing absolute docker binary fail closed. |
+| HOST-5.2 | `LspIoAttach` + `StdioLsp::from_command` is the single exec | HOST-5.1 | **SIGNED OFF.** Container → docker Command + `StockStdio`. Native unchanged (`ControlSocket`). `start` does not `docker run`; one Linux serve. No Darwin `progressive-lsp` on container open. |
+| HOST-5.3 | Docs sign-off | HOST-5.2 | **SIGNED OFF.** milestones HOST-5; branching `host4 └── host5`; `host6`–`host7` still future. host-deps: attach is plan → stdio; tests still FakeRuntime. Live initialize proof recorded in milestones (not a cargo test). |
+
+**Sign-off checklist (HOST-5)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test -p poc-ide --lib -- --test-threads=1` (216 passed)
+- [x] 95% llvm-cov on crates that exist — **96.50%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff vs `67ca485` **19 caught / 23 scored (82.6%)**, 1 unviable, 4 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (no shipped ELF change)
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `DockerRunPlan`, `LspIoAttach`
+
 ## HOST-3 sign-off recap (do not reopen)
 
 **Sign-off checklist (HOST-3)**
@@ -760,4 +782,4 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
-9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`.
+9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not open `host6` until HOST-5 is signed off. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`. Do not mux client on `host5`.

@@ -8,7 +8,7 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 
 | Capability | How |
 |---|---|
-| Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog`. Non-Linux: **Open Folder…** is native T1/T2; **Open Folder in Container…** is one Linux serve (T1/T2/T3) with a launch modal. Linux: Open Folder is the full host. |
+| Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog`. Non-Linux: **Open Folder…** is native T1/T2; **Open Folder in Container…** is one Linux serve (T1/T2/T3) with a launch modal and HOST-5 `docker run -i --rm` stdio attach (`DockerRunPlan`). Linux: Open Folder is the full host. |
 | T1/T2/T3 strip | Buttons. Click opens `StatusModal` + `LaunchJournal`. Native non-Linux T3 is `skipped` (`open folder in container`). Java T3 is `not supported` until in-process bytecode. Stub refuse is `skipped`, not `done`. |
 | Tree, tabs, editor, resizable left panel | Domain `FileTree` + `CompactChain` + `TabStrip` + `LayoutState`; eframe `SidePanel` in the bin. Single-child dir chains render as `a/b/c`. |
 | Syntax highlighting | `Highlighter` Adapter + `HighlightCache` over **syntect** (egui layouter in the bin; keyed by path + rope generation) |

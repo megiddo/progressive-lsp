@@ -13,6 +13,7 @@ use crate::error::IdeError;
 use crate::language::ServeMode;
 use crate::lsp::{LspClient, LspLocation, ProgressiveLspCap, ServeSpawn, SpawnSpec, StdioLsp};
 use crate::ports::LspTransport;
+use crate::runtime::DockerRunPlan;
 
 const METHOD_PROGRESS: &str = "$/progress";
 const METHOD_LOG_MESSAGE: &str = "window/logMessage";
@@ -507,23 +508,60 @@ fn emit_stdio_sideband(client: &mut LspClient<StdioLsp>, ev_tx: &mpsc::Sender<Ls
     }
 }
 
+/// Native Darwin/Linux serve vs container `docker run` stdio. Strategy.
+/// Container is [`ServeMode::StockStdio`]; native keeps [`ServeMode::ControlSocket`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LspIoAttach {
+    Native(ServeSpawn),
+    Container(DockerRunPlan),
+}
+
+impl LspIoAttach {
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::Native(_))
+    }
+
+    pub fn is_container(&self) -> bool {
+        matches!(self, Self::Container(_))
+    }
+
+    pub fn serve_mode(&self) -> ServeMode {
+        match self {
+            Self::Native(_) => ServeMode::ControlSocket,
+            Self::Container(_) => ServeMode::StockStdio,
+        }
+    }
+}
+
+fn open_stdio_from_attach(attach: &LspIoAttach) -> Result<(StdioLsp, ServeMode), IdeError> {
+    let mode = attach.serve_mode();
+    let transport = match attach {
+        LspIoAttach::Native(spawn) => {
+            let spec = SpawnSpec::resolve()?;
+            StdioLsp::spawn_plan(&spec, spawn)?
+        }
+        LspIoAttach::Container(plan) => StdioLsp::from_command(plan.command())?,
+    };
+    Ok((transport, mode))
+}
+
 /// One named thread owns child stdin/stdout and the stderr drain.
-pub fn spawn_lsp_io(root: PathBuf, spawn: ServeSpawn) -> LspIoHandle {
+pub fn spawn_lsp_io(root: PathBuf, attach: LspIoAttach) -> LspIoHandle {
     let (handle, req_rx, ev_tx) = LspIoHandle::pair();
     let _ = std::thread::Builder::new()
         .name("poc-ide-lsp".into())
-        .spawn(move || run_stdio_lsp_io(root, spawn, req_rx, ev_tx));
+        .spawn(move || run_stdio_lsp_io(root, attach, req_rx, ev_tx));
     handle
 }
 
 fn run_stdio_lsp_io(
     root: PathBuf,
-    spawn: ServeSpawn,
+    attach: LspIoAttach,
     req_rx: mpsc::Receiver<LspIoRequest>,
     ev_tx: mpsc::Sender<LspIoEvent>,
 ) {
-    let spec = match SpawnSpec::resolve() {
-        Ok(s) => s,
+    let (transport, mode) = match open_stdio_from_attach(&attach) {
+        Ok(pair) => pair,
         Err(e) => {
             let _ = ev_tx.send(LspIoEvent::Failed {
                 method: "initialize".into(),
@@ -532,17 +570,7 @@ fn run_stdio_lsp_io(
             return;
         }
     };
-    let transport = match StdioLsp::spawn_plan(&spec, &spawn) {
-        Ok(t) => t,
-        Err(e) => {
-            let _ = ev_tx.send(LspIoEvent::Failed {
-                method: "initialize".into(),
-                error: e.to_string(),
-            });
-            return;
-        }
-    };
-    let mut client = LspClient::new(transport).with_mode(ServeMode::ControlSocket);
+    let mut client = LspClient::new(transport).with_mode(mode);
     match client.initialize(&root) {
         Ok(()) => {
             emit_stdio_sideband(&mut client, &ev_tx);
@@ -1077,5 +1105,38 @@ mod tests {
         assert!(mailbox.is_empty());
         let debug = format!("{:?}", LspIoMailbox::new());
         assert!(debug.contains("LspIoMailbox"));
+    }
+
+    #[test]
+    fn lsp_io_attach_strategy_container_is_stock_stdio_without_darwin_resolve() {
+        let native =
+            LspIoAttach::Native(ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap());
+        assert!(native.is_native());
+        assert!(!native.is_container());
+        assert_eq!(native.serve_mode(), ServeMode::ControlSocket);
+        assert_ne!(
+            native.serve_mode(),
+            ServeMode::StockStdio,
+            "native attach keeps ControlSocket even if ServeSpawn was stock"
+        );
+
+        let plan = DockerRunPlan::new("docker", std::path::Path::new("/ws")).unwrap();
+        let container = LspIoAttach::Container(plan.clone());
+        assert!(container.is_container());
+        assert!(!container.is_native());
+        assert_eq!(container.serve_mode(), ServeMode::StockStdio);
+        assert_eq!(container, LspIoAttach::Container(plan));
+        assert_ne!(container, native);
+
+        let missing = DockerRunPlan::new("/no/such/docker-host5", std::path::Path::new("/ws"));
+        assert!(missing.unwrap_err().is_runtime());
+
+        let true_bin = std::path::Path::new("/usr/bin/true");
+        if true_bin.is_file() {
+            let plan = DockerRunPlan::new(true_bin, std::path::Path::new("/ws")).unwrap();
+            let (lsp, mode) = open_stdio_from_attach(&LspIoAttach::Container(plan)).unwrap();
+            assert_eq!(mode, ServeMode::StockStdio);
+            drop(lsp);
+        }
     }
 }
