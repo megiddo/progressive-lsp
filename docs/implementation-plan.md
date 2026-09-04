@@ -62,7 +62,8 @@ main   # after log11 merge
         └── poc-lsp-async   # LSP/control IO threads (do not start from poc-proof-log)
               └── poc-tier-status
                     └── poc-no-stall
-                          └── host0   # native vs container File menu; T3HostOffer; RuntimePort (do not start host1)
+                          └── host0   # native vs container File menu; T3HostOffer; RuntimePort
+                                └── host1   # PackAdapter Linux Command spawn (do not start host2)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -645,6 +646,29 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `HostOs`, `OpenMode`, `T3HostOffer`, `LaunchFlags`, `RuntimePort`, `FakeRuntime`, `DockerRuntime`, `RuntimeInfo`, `RuntimeSession`, `LaunchJournal`, `LaunchStep`, `StepState`, `StatusModal`, `RuntimeIo*`, `file_uri`
 
+## HOST-1 (`host1` branch)
+
+**Status: SIGNED OFF** on `host1`. Parent is `host0` (`1d33445`). Do not open `host2` from this branch. Do not build runtime images, `docker run` attach, mux client, or pack *builds*. Tests never talk to a Docker daemon, registry, or AWS. No real ty/clangd download (`FakeEngineAdapter` / fixture bytes / `RecordingSpawnPort` only). `RunLog` stays a separate schema from the serve WAL.
+
+Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6). Not HOST-1.x.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| HOST-1.1 | `SpawnPlan` value object (argv, cwd, env, `ChildIo`) | host0 | **SIGNED OFF.** Darwin unit tests cover the Linux plan without `Command`. Production plan is `lsp_with_stderr_pipe`. |
+| HOST-1.2 | Linux `Command` spawn via `SpawnPort`; stub + Darwin refuse | HOST-1.1 | **SIGNED OFF.** Stub message unchanged. Non-Linux `EngineError::Spawn` (“not this OS”). `RecordingSpawnPort` is would-have-spawned. Hash mismatch still no spawn. Supervisor degrades T1/T2 if spawn fails. |
+| HOST-1.3 | Docs sign-off | HOST-1.2 | **SIGNED OFF.** milestones HOST-1; branching `host0 └── host1`; `host2`–`host7` still future. PackAdapter row: Command on Linux; refuse stub + Darwin. |
+
+**Sign-off checklist (HOST-1)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — crate-scoped `--test-threads=1` (engine lib 41; composition-root lib 73)
+- [x] 95% llvm-cov on crates that exist — **95.99%** lines
+- [x] 80% mutants on listed crates that changed — engine in-diff **26 caught / 26 scored (100%)**, 13 unviable
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `SpawnPlan`, `SpawnPort`, `CommandSpawnPort`, `RecordingSpawnPort`; PackAdapter / `ChildIo` rows updated
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -665,4 +689,4 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
-9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not implement PackAdapter `Command` spawn on `host0`.
+9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not implement PackAdapter `Command` spawn on `host0`.

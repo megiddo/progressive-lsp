@@ -11,7 +11,8 @@ pub mod resolve;
 pub mod supervisor;
 
 pub use adapter::{
-    ChildHandle, ChildIo, EngineAdapter, EngineBinary, EngineMessage, ReadyKind, SpawnCtx,
+    ChildHandle, ChildIo, CommandSpawnPort, EngineAdapter, EngineBinary, EngineMessage, ReadyKind,
+    RecordingSpawnPort, SpawnCtx, SpawnPlan, SpawnPort,
 };
 pub use backoff::{can_respawn, BackoffPolicy};
 pub use capabilities::EngineCapabilities;
@@ -67,6 +68,21 @@ mod tests {
         let _ = PackAdapter::python();
         let _ = PackAdapter::clangd();
         let _ = ChildIo::lsp_with_stderr_pipe();
+        let _ = SpawnPlan::from_spawn_ctx(&SpawnCtx {
+            workspace: std::path::PathBuf::from("/w"),
+            language: progressive_lsp_core::LanguageId::new("python"),
+            package: progressive_lsp_core::PackageId::new("p"),
+            argv: Vec::new(),
+            cwd: std::path::PathBuf::from("/w"),
+            env: Default::default(),
+            binary: EngineBinary {
+                pack_name: "python".into(),
+                path: std::path::PathBuf::from("/ty"),
+                sha256: [0; 32],
+            },
+        });
+        let _ = RecordingSpawnPort::new();
+        let _ = CommandSpawnPort;
         let _ = FakeEngineAdapter::ty();
         let _ = FakeEngineAdapter::clangd();
         assert!(slim_pack_names().len() < full_pack_names().len());

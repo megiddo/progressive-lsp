@@ -225,7 +225,7 @@ Investigation: engine packs speak LSP on **stdout**. Logs are stderr and/or a si
 | `ConfigWarnAdapter` | Adapter | `ConfigLoad.warnings` | first-party | Unknown keys emit `warn` + `operation=config` |
 | `CliUsageAdapter` | Adapter | `--help` / usage | first-party | **Also** writes stderr (IT-1.7) |
 
-**Engine children (when `PackAdapter` actually spawns)**
+**Engine children (HOST-1: Linux `Command`; Darwin / stub still refuse)**
 
 Pipe stderr; do **not** inherit it. Do **not** set `--log-file` into `$PREFIX/log/` unless using `LogFileTailAdapter` (zls/biome). Prefer stderr capture + existing env allowlist.
 
@@ -348,7 +348,7 @@ This table **is** the definition. After the last LOG-N, a silent class here is a
 | Hook `ScriptSandbox` | `ScriptHost` | warn | `script` | first-party | LOG-6 | `FakeLog` |
 | `on_watch` drop path | `ScriptHost` | debug | `watch` | first-party | LOG-6 | `FakeLog` |
 
-Serve composition root **must not drop** `EngineSupervisor`. Pass `Arc<dyn LogPort>` like `ClockPort`, `with_supervisor` on `WorkspaceSession` / `ServeHost`, and `try_spawn` registered packs after initialize has a workspace root so the stub refuse is a sqlite row. **Do not** start `std::process::Command`.
+Serve composition root **must not drop** `EngineSupervisor`. Pass `Arc<dyn LogPort>` like `ClockPort`, `with_supervisor` on `WorkspaceSession` / `ServeHost`, and `try_spawn` registered packs after initialize has a workspace root so the stub refuse is a sqlite row. HOST-1 lands Linux `Command` spawn (`ChildIo::lsp_with_stderr_pipe`). Darwin / stub still refuse; LOG the refuse. Do **not** exec musl ELFs or host clangd on Darwin.
 
 ### LOG-7 — Protocol, control socket, install hash
 
@@ -404,7 +404,7 @@ Insert `EngineResolver` as the first `ResolverChain` step when a supervisor is a
 | `window/logMessage` / `$/logTrace` | `LspLogMessageAdapter` | mapped | `spawn` | third-party | LOG-10 | `FakeLog` |
 | `NullStderrAdapter` on prod pack spawn | forbidden | — | — | — | LOG-3 (keep) | unit assert |
 
-`ChildHandle` still has no live OS `Read`. LOG-10 tests `attach_if_stderr_pipe` + `FakeChildStderr::drain`. When `PackAdapter` later owns a real pipe, attach without a new Adapter type. **Do not** implement `Command` spawn on this WP. **Never** attach an Adapter to child stdout.
+LOG-10 tests `attach_if_stderr_pipe` + `FakeChildStderr::drain`. HOST-1 Linux `Command` leaves an OS stderr pipe on `ChildHandle`; attach without a new Adapter type. Darwin still has no live OS `Read`. **Never** attach an Adapter to child stdout.
 
 ### LOG-11 — Operational Err hygiene
 

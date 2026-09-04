@@ -960,6 +960,39 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - Tests never talk to a Docker daemon. `DockerRuntime` uses a missing binary or a scripted CLI.
 - No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
 
+## HOST-1 — PackAdapter Linux Command spawn
+
+**Status: SIGNED OFF** on branch `host1`. Parent is `host0` (`1d33445`). Do not open `host2` from this branch. Do not build runtime images. Do not `docker run` attach. Do not mux client. Do not pack *builds* (ty/RA musl jobs). Tests never talk to a Docker daemon, registry, or AWS. No real ty/clangd download (`FakeEngineAdapter` / fixture bytes / `RecordingSpawnPort` only). `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** `PackAdapter` Linux `Command` spawn; stub bytes still refuse exec; Darwin / non-Linux still refuse (`EngineError::Spawn`, reserved / not this OS); production spawn uses `ChildIo::lsp_with_stderr_pipe`; `SpawnPlan` value object so Darwin tests cover the Linux plan without `Command`; `RecordingSpawnPort` is would-have-spawned. Serve already holds the supervisor and `try_spawn`s (LOG-6) — not HOST-1.x. Not runtime image. Not attach. Not mux. Not pack builds.
+
+**Exit**
+
+- [x] After stub check, Linux `std::process::Command` pipes stdin/stdout for LSP and stderr for `ChildStderrAdapter` (`ChildIo::lsp_with_stderr_pipe`). Never `NullStderrAdapter`. Never a log Adapter on stdout.
+- [x] Stub bytes still refuse exec (unchanged message). Hash mismatch still no spawn.
+- [x] Darwin / non-Linux still refuse exec of non-stub real bytes (`EngineError::Spawn`, reserved / not this OS). This laptop does not exec musl ELFs or host clangd.
+- [x] `SpawnPlan` (argv, cwd, env, `ChildIo`) is a value object. Darwin unit tests name the pattern and cover the Linux plan without `Command`.
+- [x] LOG-10 attach-when-Read works when a real stderr pipe exists on Linux (`ChildHandle::has_os_stderr`); tests still use `FakeChildStderr`.
+- [x] Supervisor still degrades T1/T2 if spawn fails.
+- [x] Docs: PackAdapter row (Command on Linux; refuse stub + Darwin); branching `host0 └── host1`; `host2`–`host7` still future.
+
+**Sign-off checklist (HOST-1)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (engine lib 41; composition-root lib 73)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.99%** lines
+- [x] 80% mutants on listed crates that changed — engine in-diff **26 caught / 26 scored (100%)**, 13 unviable
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `SpawnPlan`, `SpawnPort`, `CommandSpawnPort`, `RecordingSpawnPort`; PackAdapter / `ChildIo` updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- Tests never talk to a Docker daemon. No real ty/clangd download. `RecordingSpawnPort` is not a musl green.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

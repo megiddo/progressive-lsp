@@ -97,7 +97,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `BackoffPolicy` | Strategy | Delay doubles then caps; `can_respawn` uses `ClockPort.unix_ms` |
 | `SpawnTweak` / `SpawnDecision` | Command / DTO | Only allowlisted argv/cwd/env apply; Abort spawn skips the engine |
 | `EngineHooks` / `ScriptHookBridge` / `NoopHooks` | Port / Adapter | Supervisor does not hard-code Rhai; tests inject Abort/Noop |
-| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec (CI/Docker builds real musl ELFs); `EngineError::Spawn` refuse is logged by the supervisor (LOG-6); do not implement `Command` on the logging stack |
+| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec; Darwin / non-Linux `EngineError::Spawn` (“not this OS”); Linux `Command` via `CommandSpawnPort` + `ChildIo::lsp_with_stderr_pipe`; tests inject `RecordingSpawnPort` (would-have-spawned, no exec) |
 | `EngineMessage` | Event / DTO | Forwarded didChange/watch recorded on `ChildHandle` inbox |
 | `PythonLanguageFactory` / `RustLanguageFactory` | Abstract Factory | `language_id` is stable; T3 only when supervisor ready (Rust also requires sysroot) |
 | `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
@@ -161,7 +161,9 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | `CliUsageAdapter` | Adapter | `--help` / usage; first-party; **also** writes stderr (IT-1.7); `LogPort::warn` with `operation=cli` |
 | `NullStderrAdapter` | Adapter | `stderr(Stdio::null())`; **Forbidden** on production pack spawn |
 | `InheritStderrAdapter` | Adapter | `stderr(Stdio::inherit())`; operator/CI harness bins only — never `serve` |
-| `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter`; LOG-10 attaches `ChildStderrAdapter` when a `Read` exists (tests: `FakeChildStderr`); `ChildHandle` may still lack live OS pipes until `PackAdapter` `Command` lands |
+| `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter`; LOG-10 attaches `ChildStderrAdapter` when a `Read` exists (tests: `FakeChildStderr`; Linux `Command` leaves an OS stderr pipe on `ChildHandle`) |
+| `SpawnPlan` | Value object | argv + cwd + env + `ChildIo` for the Linux `Command`; Darwin unit tests assert the plan without `Command`; production plan is always `lsp_with_stderr_pipe` |
+| `SpawnPort` / `CommandSpawnPort` / `RecordingSpawnPort` | Port + Adapter / test double | Production Port is Linux `Command` (stdin/stdout/stderr piped); Darwin / non-Linux refuse; tests inject `RecordingSpawnPort` so “would have spawned” does not exec |
 | `FakeChildStderr` | Test double | Bounded line source (`STDERR_DRAIN_CAP`) for `ChildStderrAdapter`; overflow drops oldest so stderr cannot stall LSP |
 
 ## Patterns we do not use (v1)

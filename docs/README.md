@@ -45,4 +45,4 @@ This directory is the **source of truth** for the product. Implement from these 
 4. Shipped ELFs: no dynamic interpreter, no `DT_NEEDED` ([host-deps.md](host-deps.md)).
 5. Stock LSP clients must work with stdio only. Do not put FilesSince on `$/` methods in v1 ([lsp-contract.md](lsp-contract.md)).
 6. LOG orchestrators pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. poc-ide `RunLog` is a separate schema.
-7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` from `host0`.
+7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host2` from `host1`.
