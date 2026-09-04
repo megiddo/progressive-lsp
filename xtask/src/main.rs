@@ -40,6 +40,7 @@ fn print_help() {
     eprintln!(
         "\
 xtask musl [--target TRIPLE] [--both]
+  Core ELF only. Extracts to target/musl/<triple>/progressive-lsp then check-static.
 xtask check-static <ELF>...
 xtask bench-alloc
 xtask bench-perf

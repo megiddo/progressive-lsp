@@ -993,6 +993,42 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - Tests never talk to a Docker daemon. No real ty/clangd download. `RecordingSpawnPort` is not a musl green.
 - No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
 
+## HOST-2 — musl core ELF extract both triples
+
+**Status: SIGNED OFF** on branch `host2`. Parent is `host1` (`b9490b6`). Do not open `host3` from this branch. Do not build engine pack binaries. Do not build the runtime image. Do not `docker run` attach. Do not mux client. Crate tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real ty/clangd download. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Real musl **core** ELFs for `x86_64-unknown-linux-musl` (`linux/amd64`) and `aarch64-unknown-linux-musl` (`linux/arm64`) via `xtask musl`; `docker build --output` extract to `target/musl/<triple>/progressive-lsp`; `check-static` after extract; `MuslBuildPlan` + `DockerPort` / `RecordingDockerPort`. Not engine packs. Not runtime image. Not attach. Not mux. Allocator-matrix placeholders stay mimalloc.
+
+**Exit**
+
+- [x] `xtask musl` extracts a named `progressive-lsp` ELF under `target/musl/<triple>/` for both triples (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
+- [x] After a successful extract, `xtask check-static` on that ELF (no `PT_INTERP`, no `DT_NEEDED`, rusqlite must not pull `libdl`). Mach-O still refused.
+- [x] `MuslBuildPlan` is a value object (triple, docker platform, dockerfile, dest, `RUST_TARGET`). Darwin unit tests name the pattern and cover the plan without docker.
+- [x] `RecordingDockerPort` is would-have-built (no daemon). Production is `CommandDockerPort`. Tests never start docker.
+- [x] `docker/rust-musl.Dockerfile` still builds only `--bin progressive-lsp`. PR CI must not compile LLVM. Do not commit musl ELFs.
+- [x] Docs: branching `host1 └── host2`; `host3`–`host7` still future. host-deps / testing dest convention.
+
+**Sign-off checklist (HOST-2)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (37 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — crate tests use fixture ELFs (including `libdl` fail-closed / Mach-O refuse). Real dest ELFs: **PASS** `aarch64-unknown-linux-musl` and **PASS** `x86_64-unknown-linux-musl` (`target/musl/<triple>/progressive-lsp`, `cargo xtask musl --both` on this Darwin host with Docker Desktop). Darwin: do not fake musl greens; these are extracted musl ELFs, not Mach-O.
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `MuslBuildPlan`, `DockerPort`, `CommandDockerPort`, `RecordingDockerPort`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-2 proof on this Darwin host (Docker Desktop 29.2.0): `cargo xtask musl --both` extracted both core ELFs and `check-static` **PASS**ed:
+  - `target/musl/aarch64-unknown-linux-musl/progressive-lsp` — ELF 64-bit LSB executable, ARM aarch64, statically linked (~22 MiB)
+  - `target/musl/x86_64-unknown-linux-musl/progressive-lsp` — ELF 64-bit LSB pie executable, x86-64, static-pie linked (~22 MiB)
+  That is **not** a cargo test. qemu/`linux/amd64` succeeded here; a missing daemon on another Darwin machine is still a recorded gap, not a Mach-O green.
+- Extract dest is gitignored under `target/`. Do not commit musl ELFs.
+- Engine pack builds remain HOST-3. Runtime image remains HOST-4.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

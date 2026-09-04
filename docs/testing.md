@@ -56,6 +56,8 @@ musl default malloc is **unacceptable**. Go/Zig/C# keep their own heaps (not in 
 
 `xtask check-static` fails if a shipped ELF has a dynamic interpreter **or** any `DT_NEEDED`. Same bar for musl and glibc-static. Go packs: `CGO_ENABLED=0`. After rusqlite is linked (LOG-2+), fail closed if sqlite pulls `libdl` as `DT_NEEDED`.
 
+`xtask musl` dest convention (HOST-2): `target/musl/<triple>/progressive-lsp` for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`. Production extract is `docker build --output` (`CommandDockerPort`). Crate tests cover [`MuslBuildPlan`](design-patterns.md) + `RecordingDockerPort` without a Docker daemon; that fixture ELF is **not** a musl green. Do not run `check-static` on a Darwin Mach-O and call it green. After a real extract, run `xtask check-static` on those dest paths (orchestrator proof, not a cargo test). Missing daemon / qemu/amd64 fail is a documented gap.
+
 ## Performance budgets (publish numbers in M5 benches)
 
 | Path | Target | M5 recorded |

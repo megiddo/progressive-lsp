@@ -164,6 +164,8 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter`; LOG-10 attaches `ChildStderrAdapter` when a `Read` exists (tests: `FakeChildStderr`; Linux `Command` leaves an OS stderr pipe on `ChildHandle`) |
 | `SpawnPlan` | Value object | argv + cwd + env + `ChildIo` for the Linux `Command`; Darwin unit tests assert the plan without `Command`; production plan is always `lsp_with_stderr_pipe` |
 | `SpawnPort` / `CommandSpawnPort` / `RecordingSpawnPort` | Port + Adapter / test double | Production Port is Linux `Command` (stdin/stdout/stderr piped); Darwin / non-Linux refuse; tests inject `RecordingSpawnPort` so “would have spawned” does not exec |
+| `MuslBuildPlan` | Value object | triple + docker platform (`linux/amd64` / `linux/arm64`) + dockerfile + dest `target/musl/<triple>/progressive-lsp` + `RUST_TARGET`; Darwin unit tests name the pattern and cover both triples without docker; unknown triple / missing dockerfile fail closed |
+| `DockerPort` / `CommandDockerPort` / `RecordingDockerPort` | Port + Adapter / test double | Production Port is `docker build --output type=local` (BuildKit extract of the core ELF only); tests inject `RecordingDockerPort` so “would have built” writes a fixture ELF — not a musl green, no daemon |
 | `FakeChildStderr` | Test double | Bounded line source (`STDERR_DRAIN_CAP`) for `ChildStderrAdapter`; overflow drops oldest so stderr cannot stall LSP |
 
 ## Patterns we do not use (v1)

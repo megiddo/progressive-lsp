@@ -216,7 +216,7 @@ fn i64_at(data: &[u8], off: usize, be: bool) -> Result<i64, StaticLinkError> {
 }
 
 /// Minimal ELF64 LE: one PT_LOAD, no PT_INTERP, no PT_DYNAMIC.
-#[allow(dead_code)]
+/// [`crate::musl::RecordingDockerPort`] writes this so dest exists without docker.
 pub fn fixture_static_elf64() -> Vec<u8> {
     let mut e = vec![0u8; 128];
     e[0..4].copy_from_slice(ELF_MAGIC);
