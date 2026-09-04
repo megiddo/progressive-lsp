@@ -74,6 +74,15 @@ main   # after log11 merge
         └── poc-lsp-async
               └── poc-tier-status
                     └── poc-no-stall
+                          └── host0          # native vs container File menu; T3HostOffer; RuntimePort
+                                # future (do not open from host0):
+                                └── host1    # PackAdapter Linux Command spawn
+                                      └── host2  # musl core ELFs
+                                            └── host3  # slim pack jobs
+                                                  └── host4  # runtime image
+                                                        └── host5  # docker run attach
+                                                              └── host6  # mux client
+                                                                    └── host7  # full flavor packs
 ```
 
 ## Rules
@@ -81,10 +90,10 @@ main   # after log11 merge
 1. **Scope:** a branch contains that milestone’s work packages only ([implementation-plan.md](implementation-plan.md)). No extra language packs on `m1`.
 2. **Sign-off before stacking the next branch:** [milestones.md](milestones.md) exit **and** [testing.md](testing.md) hygiene (95% on crates that exist; 80% mutants on listed crates for that milestone; no `sleep` in the **unit** suite; `check-static` if a bin changed). Integration tests ([../integration/README.md](../integration/README.md)) are a separate harness (containers/deadlines allowed there only).
 3. **Tests are not deferred to `m6`.** Write them on the milestone branch.
-4. **Merge to `main`:** sequential (`docs-0`, then `m0`, …) or rebase the stack. Either way **do not open `mN+1` / `pdN+1` / `ideN+1` / `logN+1` until the previous is signed off**. `log5` may start only after `log4` is signed off (it is).
+4. **Merge to `main`:** sequential (`docs-0`, then `m0`, …) or rebase the stack. Either way **do not open `mN+1` / `pdN+1` / `ideN+1` / `logN+1` / `hostN+1` until the previous is signed off**. `log5` may start only after `log4` is signed off (it is). `host1` may start only after `host0` is signed off.
 5. **Spikes:** `spike/*` or notes. A spike that ships `DT_NEEDED` does not merge. Hygiene applies on merge to a milestone branch.
 6. **Docs drift:** if implementation must change a locked decision, update `docs/` on the same branch and keep the set internally consistent.
 
 ## Suggested branch names
 
-`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` signed off; `log5`–`log11` stacked on `log4` (current `main`, not `poc-no-console`). Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.
+`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` signed off; `log5`–`log11` stacked on `log4` (current `main`, not `poc-no-console`). POC-proof: `poc-proof-log` → `poc-no-stall` signed off. Host stack: `host0` on `poc-no-stall`; `host1`–`host7` listed as future only — do not open `host1` from `host0`. Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.

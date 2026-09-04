@@ -48,6 +48,10 @@ If phpactor: still a **static** ELF (static php), documented here. Host `php` is
 
 Allowed **project** compilers on PATH for **accuracy**, not for our libc: `rustc` sysroot, `go`, `zig`. Absence is degrade-to-T2, not a dynamic link of our ELF.
 
+## poc-ide container host (HOST-0+)
+
+The **editor** process on Darwin/Windows may invoke the host `docker` CLI (`DockerRuntime` Adapter) to probe / inspect a local runtime image. That CLI is a **host tool**, not a shipped ELF and not a `DT_NEEDED` of `progressive-lsp`. Tests inject `FakeRuntime` or a scripted CLI; they never talk to a Docker daemon, registry, or AWS. `DockerRuntime::start` (`docker run` attach) is unwired on HOST-0. The serve binary inside the image remains musl-static ([above](#runtime-host-deps-for-our-binaries)).
+
 ## Build-time (CI / xtask)
 
 Rust pinned toolchain, musl cc, optionally Go/Zig/PHP **in a pinned container** to **build packs**. Those toolchains are not runtime deps of the core. PR CI does not compile LLVM/clangd/tsgo from scratch; use content-addressed artifact cache keyed by upstream git SHA.

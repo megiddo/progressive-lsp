@@ -2,7 +2,7 @@
 
 An in-tree **proof-of-concept editor** that consumes `progressive-lsp`. It is **not** the language-intelligence product. The server still does not own pixels, git, SSH, or a PTY. This sample exists so we can open a folder, edit buffers, and exercise both stock LSP and `progressive.v1` against a real UI.
 
-Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [agent-context.md](agent-context.md), [proof-agent-context.md](proof-agent-context.md), [../consumer.md](../consumer.md), [../lsp-contract.md](../lsp-contract.md), [../user/progressive-v1-api.md](../user/progressive-v1-api.md).
+Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [agent-context.md](agent-context.md), [proof-agent-context.md](proof-agent-context.md), [../host/agent-context.md](../host/agent-context.md), [../consumer.md](../consumer.md), [../lsp-contract.md](../lsp-contract.md), [../user/progressive-v1-api.md](../user/progressive-v1-api.md).
 
 ## What it must do
 
@@ -46,4 +46,4 @@ Bare `cargo run -p poc-ide` is **not** the supported proof launch: it does not r
 
 ## Milestones
 
-Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log` … `poc-discover-log`, then LOG-0–LOG-11, then the POC-proof stack `poc-proof-log` → `poc-lsp-async` → `poc-tier-status` → `poc-no-stall` (not IDE-6, not `log12`). Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md). Proof orchestrators: [proof-agent-context.md](proof-agent-context.md).
+Stacked on current `main` (not on `pd4` / `m6` history). Branches: `ide0` → `ide5`, then post-IDE-5 slices `poc-log` … `poc-discover-log`, then LOG-0–LOG-11, then the POC-proof stack `poc-proof-log` → `poc-lsp-async` → `poc-tier-status` → `poc-no-stall` (not IDE-6, not `log12`). Host stack starts at `host0` on `poc-no-stall` ([host/agent-context.md](../host/agent-context.md)); do not reopen POC-proof WPs. Exits: [../milestones.md](../milestones.md). Work packages: [../implementation-plan.md](../implementation-plan.md). Patterns: [../design-patterns.md](../design-patterns.md). Hygiene: [../testing.md](../testing.md). Proof orchestrators: [proof-agent-context.md](proof-agent-context.md).

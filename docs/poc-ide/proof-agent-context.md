@@ -40,7 +40,7 @@ Children that only implement one WP also get that WP id from [../implementation-
 
 1. **Last branch clean.** `git checkout` the parent. Working tree must be clean. Last commit is the signed-off parent (for `poc-proof-log`, parent is current `main` after log11 merge, commit `a0f10a2`). If dirty, stop and report.
 2. **Stack.** `git checkout PARENT_BRANCH && git checkout -b BRANCH`. Confirm with `git sl`. This repo uses **git-branchless**. Do not stack `poc-proof-log` on `log11` or `poc-discover-log` history — only on current `main`. Do not install Graphite.
-3. **Implement** that milestone’s WPs only (spawn children if needed). `poc-no-stall` is the last POC-proof slice — do not open a follow-on branch.
+3. **Implement** that milestone’s WPs only (spawn children if needed). `poc-no-stall` is the last POC-proof slice — do not reopen POC-proof WPs. The allowed next stack is `host0` (not a POC-proof follow-on).
 4. **Pattern hygiene.** Every new type is a row in [../design-patterns.md](../design-patterns.md). No manager/helper/util layers. Invariant tests name the pattern.
 5. **Validate patterns.** If a type has no pattern, refactor or delete it. Do not leave Ad-hoc.
 6. **Testing hygiene.** [../testing.md](../testing.md): 95% llvm-cov on crates that exist (ignore `xtask/`, `/src/main.rs$`, `tree-sitter`, `poc-ide/src/ui.rs`); 80% mutants on listed crates that changed; no `thread::sleep`; `cargo test -- --test-threads=1` (or crate-scoped plus composition-root if the workspace is too heavy — say what you ran). Darwin: do not fake musl greens. `check-static` N/A unless the musl ELF story changed.

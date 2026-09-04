@@ -903,7 +903,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 ## poc-no-stall — highlight cache + tree expand worker + F12 until Ready
 
-**Status: SIGNED OFF** on branch `poc-no-stall`. Parent is `poc-tier-status` (`2ac3992`). This is the last POC-proof slice. Do not open a follow-on branch. Do not implement PackAdapter `Command` spawn. `RunLog` stays a separate schema from the serve WAL.
+**Status: SIGNED OFF** on branch `poc-no-stall`. Parent is `poc-tier-status` (`2ac3992`). This is the last POC-proof slice. Do not reopen POC-proof WPs. The allowed next stack is `host0` (HOST-0). Do not implement PackAdapter `Command` spawn from this branch. `RunLog` stays a separate schema from the serve WAL.
 
 **Scope:** Highlight cache keyed by path + rope generation; tree expand `read_dir` on a worker (header may look open, children `loading…`); Navigate / F12 disabled until `LspSessionState::Ready`. Not PackAdapter spawn. Not merging RunLog with the serve WAL.
 
@@ -926,6 +926,38 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 **Darwin / CI notes**
 
 - Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
+
+## HOST-0 — native vs container open + RuntimePort
+
+**Status: SIGNED OFF** on branch `host0`. Parent is `poc-no-stall` (`63507ff`). Do not open `host1` from this branch. Do not implement PackAdapter `Command` spawn. Do not `docker run` attach. Do not build musl images. Do not mux client. Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted docker CLI only). `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Native vs container File menu; `T3HostOffer`; `LaunchJournal` / `StatusModal`; `RuntimePort` + `FakeRuntime`; `DockerRuntime` probe/image only (`start` still unwired); core `file_uri`; host stack docs. Not PackAdapter `Command`. Not runtime image. Not mux.
+
+**Exit**
+
+- [x] Non-Linux File menu: **Open Folder…** (native T1/T2) and **Open Folder in Container…** (one Linux serve). Linux has no container item; native open is the full host.
+- [x] `T3HostOffer::NeedsContainer` paints T3 `skipped` / discover `open folder in container` on native non-Linux. Never two LSP processes.
+- [x] T1/T2/T3 strip buttons open `StatusModal` + `LaunchJournal`. Close does not cancel work.
+- [x] Container launch journal is probe → platform → image → mount → start → T3 preflight. Tests inject `FakeRuntime`. `DockerRuntime::start` errors (attach is a later slice).
+- [x] Core `path_to_file_uri` / `path_from_file_uri` percent-encode the same as poc-ide; incoming `file:` URIs decode before index lookup.
+- [x] Host stack docs: [host/agent-context.md](host/agent-context.md), branching `poc-no-stall └── host0` with `host1`–`host7` listed as future.
+
+**Sign-off checklist (HOST-0)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (poc-ide lib 214; composition-root lib 73; core 74)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.99%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **129 caught / 140 scored (92.14%)**, 61 unviable, 10 missed, 1 timeout; core in-diff **46 caught / 50 scored (92.00%)**, 4 unviable, 1 missed, 3 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `HostOs`, `OpenMode`, `T3HostOffer`, `LaunchFlags`, `RuntimePort`, `FakeRuntime`, `DockerRuntime`, `RuntimeInfo`, `RuntimeSession`, `LaunchJournal`, `LaunchStep`, `StepState`, `StatusModal`, `RuntimeIo*`, `file_uri` / `path_to_file_uri`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- Tests never talk to a Docker daemon. `DockerRuntime` uses a missing binary or a scripted CLI.
 - No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)

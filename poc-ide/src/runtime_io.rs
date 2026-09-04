@@ -143,6 +143,25 @@ pub fn dispatch_runtime_io(runtime: &dyn RuntimePort, req: RuntimeIoRequest) -> 
     }
 }
 
+/// Emit `Progress` then `Finished` for one launch. Tests collect into a Vec;
+/// the named thread uses this so `fn ui` can paint `running` without `thread::sleep`.
+fn emit_launch(
+    runtime: &dyn RuntimePort,
+    workspace: &Path,
+    mut emit: impl FnMut(RuntimeIoEvent) -> bool,
+) {
+    let mut journal = LaunchJournal::container_plan();
+    if !emit(RuntimeIoEvent::Progress {
+        journal: journal.clone(),
+    }) {
+        return;
+    }
+    run_launch_reporting(runtime, workspace, &mut journal, |j| {
+        let _ = emit(RuntimeIoEvent::Progress { journal: j.clone() });
+    });
+    let _ = emit(RuntimeIoEvent::Finished { journal });
+}
+
 pub fn pump_runtime_io(mailbox: &mut RuntimeIoMailbox, runtime: &dyn RuntimePort) {
     for req in mailbox.take_requests() {
         mailbox.push_event(dispatch_runtime_io(runtime, req));
@@ -163,21 +182,7 @@ fn run_runtime_io(req_rx: mpsc::Receiver<RuntimeIoRequest>, ev_tx: mpsc::Sender<
     while let Ok(req) = req_rx.recv() {
         match req {
             RuntimeIoRequest::Launch { workspace } => {
-                let mut journal = LaunchJournal::container_plan();
-                if ev_tx
-                    .send(RuntimeIoEvent::Progress {
-                        journal: journal.clone(),
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                run_launch_reporting(&runtime, &workspace, &mut journal, |j| {
-                    let _ = ev_tx.send(RuntimeIoEvent::Progress { journal: j.clone() });
-                });
-                if ev_tx.send(RuntimeIoEvent::Finished { journal }).is_err() {
-                    return;
-                }
+                emit_launch(&runtime, &workspace, |ev| ev_tx.send(ev).is_ok());
             }
         }
     }
@@ -224,5 +229,23 @@ mod tests {
         assert!(evs[0].journal().is_failed());
         drop(req_rx);
         assert!(handle.submit(RuntimeIoRequest::launch("/x")).is_err());
+
+        let mut events = Vec::new();
+        emit_launch(&FakeRuntime::ready(), Path::new("/ws"), |ev| {
+            events.push(ev);
+            true
+        });
+        assert!(events.len() >= 2);
+        assert!(!events[0].is_finished());
+        assert!(events.last().unwrap().is_finished());
+        assert!(events.last().unwrap().journal().all_ok());
+
+        let mut stopped = Vec::new();
+        emit_launch(&FakeRuntime::ready(), Path::new("/ws"), |ev| {
+            stopped.push(ev);
+            false
+        });
+        assert_eq!(stopped.len(), 1);
+        assert!(!stopped[0].is_finished());
     }
 }

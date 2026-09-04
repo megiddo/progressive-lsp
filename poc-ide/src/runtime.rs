@@ -667,6 +667,16 @@ mod tests {
         assert_eq!(native_skip.steps()[0].state(), StepState::Skipped);
         let native_wait = LaunchJournal::native_t3_from_wire(None, IngestState::Running);
         assert_eq!(native_wait.steps()[0].state(), StepState::Pending);
+        let native_not_started = LaunchJournal::native_t3_from_wire(None, IngestState::NotStarted);
+        assert_eq!(native_not_started.steps()[0].state(), StepState::Pending);
+        assert_eq!(native_not_started.steps()[0].detail(), Some("not started"));
+
+        let mut unknown = LaunchJournal::new();
+        unknown.start("missing");
+        unknown.ok("missing", "x");
+        unknown.fail("missing", "y");
+        unknown.skip("missing", "z");
+        assert!(unknown.is_empty());
     }
 
     #[test]
@@ -753,5 +763,50 @@ mod tests {
         assert!(rt.preflight_t3().unwrap_err().is_runtime());
         assert_eq!(DockerRuntime::new().docker, PathBuf::from("docker"));
         assert_eq!(DockerRuntime::default().docker, PathBuf::from("docker"));
+    }
+
+    /// Scripted `docker` CLI Adapter: stdout/exit only. Never a daemon, registry, or AWS.
+    #[cfg(unix)]
+    fn scripted_docker(body: &str) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("docker");
+        std::fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, bin)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_runtime_adapter_scripted_cli_never_talks_to_daemon() {
+        let (_keep, ok_bin) = scripted_docker(
+            r#"
+case "$1" in
+  version) echo "linux/arm64"; exit 0 ;;
+  image) exit 0 ;;
+  *) exit 1 ;;
+esac
+"#,
+        );
+        let rt = DockerRuntime::from_binary(&ok_bin);
+        let info = rt.probe().unwrap();
+        assert!(info.available());
+        assert_eq!(info.platform(), "linux/arm64");
+        rt.ensure_image(RUNTIME_IMAGE).unwrap();
+        assert!(rt.start(Path::new("/ws")).unwrap_err().is_runtime());
+        assert!(rt.preflight_t3().unwrap_err().is_runtime());
+
+        let (_keep, fail_bin) = scripted_docker("exit 1\n");
+        let fail = DockerRuntime::from_binary(&fail_bin);
+        let missing = fail.probe().unwrap();
+        assert!(!missing.available());
+        assert_eq!(missing.platform(), "");
+        assert!(fail.ensure_image(RUNTIME_IMAGE).unwrap_err().is_runtime());
+
+        let (_keep, empty_bin) = scripted_docker("echo; exit 0\n");
+        let empty = DockerRuntime::from_binary(&empty_bin);
+        let empty_info = empty.probe().unwrap();
+        assert!(!empty_info.available());
+        assert_eq!(empty_info.platform(), "");
     }
 }
