@@ -30,7 +30,7 @@ zeds-dead-host stays thin: SSH, mux, file tree, git, PTY, IDE config remain **th
 
 ## In-tree POC editor
 
-`poc-ide/` is a native egui sample that speaks stock stdio LSP and, optionally, `progressive.v1`. It is how we exercise this repo’s contracts in a folder-shaped UI. It is **not** zeds-dead and **not** a shipped musl artifact. On non-Linux, **Open Folder…** is a native T1/T2 serve; **Open Folder in Container…** is one Linux `progressive-lsp serve` for T1/T2/T3 (`RuntimePort` / `FakeRuntime` in tests; HOST-5 attaches `StdioLsp` to `docker run -i --rm` stdio via `DockerRunPlan`, never a second Darwin serve). Linux native open is the full host. Never two serves. See [poc-ide/README.md](poc-ide/README.md).
+`poc-ide/` is a native egui sample that speaks stock stdio LSP and, optionally, `progressive.v1`. It is how we exercise this repo’s contracts in a folder-shaped UI. It is **not** zeds-dead and **not** a shipped musl artifact. On non-Linux, **Open Folder…** is a native T1/T2 serve; **Open Folder in Container…** is one Linux `progressive-lsp serve --mux` for T1/T2/T3 (`RuntimePort` / `FakeRuntime` in tests; HOST-6 attaches `MuxStdio` to `docker run -i --rm` stdio via `DockerRunPlan`, never a second Darwin serve). Linux native open is the full host. Never two serves. See [poc-ide/README.md](poc-ide/README.md).
 
 ## Bootstrap
 

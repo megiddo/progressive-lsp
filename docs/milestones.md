@@ -1145,6 +1145,37 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - Live `docker run -i --rm` initialize on this Darwin host: **attempted and succeeded**. Image `progressive-lsp-runtime:local` (`sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8`, linux/arm64, ENTRYPOINT `/opt/plsp/bin/progressive-lsp`, CMD `serve --prefix /opt/plsp`). One-shot `docker run -i --rm -v $WS:$WS -w $WS` (no `-t`) answered `initialize` with `serverInfo.name=progressive-lsp` and `experimental.progressiveLsp` `{version:v1, socket:null, mux:false}`. Not a cargo test. Not a T3 hover.
 - Heavy packs remain HOST-7. Mux remains HOST-6.
 
+## HOST-6 — poc-ide mux client on container stdio
+
+**Status: SIGNED OFF** on branch `host6`. Parent is `host5` (`b46ad0f`). Do not open `host7` from this branch. Do not build clangd/tsgo/gopls/zls. Do not rebuild the runtime image. Container LSP + control share one stdio (`ServeMode::Mux`, `serve --prefix /opt/plsp --mux`). Native Darwin open keeps `ServeMode::ControlSocket` (real Unix socket on the Mac is fine). Unix sockets through Docker Desktop remain forbidden. Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted CLI / `DockerRunPlan` argv / pair mux frames). No real ty/clangd download. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** `ServeMode::Mux` + `MuxStdio` Adapter reuse protocol `MuxFrame` (`u8 channel | u32be length | payload`, 16 MiB cap). Channel 0 = opaque JSON-RPC body matching `LspFacade::serve_mux`. Channel 1 = the same length-prefixed Envelope as `ControlClient` on a Unix socket. `DockerRunPlan` includes `--mux`. `advertised_control` returns `ControlAttach::Mux` when mux is selected; `pending_mux` only when mux is advertised but not selected. `experimental.progressiveLsp.mux` true and `socket` null on container mux. One docker process. Not full packs.
+
+**Exit**
+
+- [x] `ServeMode::Mux` argv is `serve --mux`. Container `DockerRunPlan` is `serve --prefix /opt/plsp --mux`. Darwin unit tests name the pattern. Never `-t`. Never a second serve.
+- [x] `MuxStdio` / `MuxLsp` / `MuxControl` encode/decode protocol `MuxFrame`. Unknown channel and payload > 16 MiB fail closed. Pair / Cursor tests. No `thread::sleep`. No docker daemon.
+- [x] `advertised_control` + `ControlAttach::Mux` replace `pending_mux` on the selected mux path. Native `ControlSocket` still uses `advertised_control_socket`.
+- [x] Docs: branching `host5 └── host6`; `host7` still future. host-deps: container attach is mux stdio; docker CLI remains a host tool; tests still FakeRuntime.
+
+**Sign-off checklist (HOST-6)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p poc-ide --lib -- --test-threads=1` (225 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.95%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff vs `b46ad0f` **31 caught / 31 scored (100%)**, 42 unviable, 0 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `ServeMode::Mux`, `MuxStdio`, `MuxLsp`, `MuxControl`, `ControlAttach`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inspect `DockerRunPlan` argv and inject `FakeRuntime` / a scripted CLI / in-memory mux frames; they never start a Docker daemon.
+- HOST-6 proof is mux initialize (`mux: true`, `socket: null`), not a cargo test and not a T3 hover. First live T3 on mounted source is later (Python/ty or PHP/phpantom).
+- Live `docker run -i --rm … serve --prefix /opt/plsp --mux` initialize: **attempted and succeeded**. Image `progressive-lsp-runtime:local` (`sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8`, linux/arm64, ENTRYPOINT `/opt/plsp/bin/progressive-lsp`). One-shot `docker run -i --rm -v $WS:$WS -w $WS` (no `-t`) with `serve --prefix /opt/plsp --mux` answered a channel-0 mux-framed `initialize` with `serverInfo.name=progressive-lsp` and `experimental.progressiveLsp` `{version:v1, socket:null, mux:true}`. Not a cargo test. Not a T3 hover.
+- Heavy packs remain HOST-7.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

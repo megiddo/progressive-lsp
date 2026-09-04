@@ -19,6 +19,7 @@ pub mod layout;
 pub mod log;
 pub mod lsp;
 pub mod lsp_io;
+pub mod mux;
 pub mod open_mode;
 pub mod ports;
 pub mod proof;
@@ -35,9 +36,9 @@ pub use child_stderr::{ChildStderrDrain, STDERR_DRAIN_CAP};
 pub use conflict::{ConflictChoice, ConflictModal};
 pub use console::{ProtocolConsole, TranscriptEntry, TranscriptKind, STOCK_LSP_METHODS};
 pub use control::{
-    advertised_control_socket, pump_control_io, request_control_status, spawn_control_io,
-    ControlClient, ControlIoEvent, ControlIoHandle, ControlPush, ControlPushInbox, UnixControl,
-    CONTROL_UNARY_METHODS,
+    advertised_control, advertised_control_socket, pump_control_io, request_control_status,
+    spawn_control_io, spawn_mux_control_io, ControlAttach, ControlClient, ControlIoEvent,
+    ControlIoHandle, ControlPush, ControlPushInbox, UnixControl, CONTROL_UNARY_METHODS,
 };
 pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
@@ -62,6 +63,7 @@ pub use lsp_io::{
     spawn_lsp_io, DiscoverFlight, LogMessageEvent, LspIoAttach, LspIoEvent, LspIoHandle,
     LspIoMailbox, LspIoRequest, LspProgressKind, ProgressEvent,
 };
+pub use mux::{MuxControl, MuxLsp, MuxStdio};
 pub use open_mode::{parse_launch_args, HostOs, LaunchFlags, OpenMode, T3HostOffer};
 pub use ports::{
     ClipboardPort, ClockPort, ControlTransport, DialogPort, DiskEvent, DiskEventKind,
@@ -193,7 +195,10 @@ mod tests {
         let _ = LspIoAttach::Native(ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap());
         let _ = ServeMode::StockStdio;
         let _ = ServeMode::ControlSocket;
+        let _ = ServeMode::Mux;
         let _ = ServeMode::default();
+        let _ = ControlAttach::Mux;
+        let _ = MuxStdio::from_pair(Vec::<u8>::new(), std::io::Cursor::new(Vec::<u8>::new()));
         let _ = ControlSocketPath::from_path("/tmp/poc-ide.sock");
         let _ = ServeWalPath::new("/tmp", 1, 1);
         let _ = ServeSpawn::new(ServeMode::StockStdio, None, None);
@@ -249,6 +254,7 @@ mod tests {
         assert!(LanguageCatalog::new().skips_did_open("/ws/a.txt"));
         assert!(!ServeMode::StockStdio.is_control_socket());
         assert!(ServeMode::ControlSocket.is_control_socket());
+        assert!(ServeMode::Mux.is_mux());
         assert_eq!(ServeMode::default(), ServeMode::ControlSocket);
         assert_eq!(STDERR_DRAIN_CAP, 1024);
         assert_eq!(CHILD_LOG_LEVEL, "debug");

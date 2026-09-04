@@ -152,13 +152,14 @@ impl DiscoverOffer {
     }
 }
 
-/// Stock stdio vs control-socket. Default is [`ServeMode::ControlSocket`] with
-/// an owned [`ControlSocketPath`]. [`ServeMode::StockStdio`] stays an explicit
-/// variant. `--mux` is `pending_mux` and is never an argv.
+/// Stock stdio vs control-socket vs mux. Default is [`ServeMode::ControlSocket`]
+/// with an owned [`ControlSocketPath`]. [`ServeMode::StockStdio`] stays an
+/// explicit variant. [`ServeMode::Mux`] is the container Strategy (`serve --mux`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ServeMode {
     StockStdio,
     ControlSocket,
+    Mux,
 }
 
 /// Value object. CLI path, else `$PREFIX/run/poc-ide.sock`, else temp.
@@ -234,10 +235,15 @@ impl ServeMode {
         matches!(self, Self::ControlSocket)
     }
 
+    pub fn is_mux(self) -> bool {
+        matches!(self, Self::Mux)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::StockStdio => "stock-stdio",
             Self::ControlSocket => "control-socket",
+            Self::Mux => "mux",
         }
     }
 
@@ -245,14 +251,16 @@ impl ServeMode {
         match s {
             "stock-stdio" => Some(Self::StockStdio),
             "control-socket" => Some(Self::ControlSocket),
+            "mux" => Some(Self::Mux),
             _ => None,
         }
     }
 
-    /// `progressive-lsp` argv. Never includes `--mux`.
+    /// `progressive-lsp` argv. [`ServeMode::Mux`] is `serve --mux`.
     pub fn serve_args(self, control_socket: Option<&Path>) -> Result<Vec<String>, IdeError> {
         match self {
             Self::StockStdio => Ok(vec!["serve".into()]),
+            Self::Mux => Ok(vec!["serve".into(), "--mux".into()]),
             Self::ControlSocket => {
                 let path = control_socket.ok_or_else(IdeError::control_socket_missing)?;
                 Ok(vec![
@@ -427,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn serve_mode_strategy_stock_stdio_vs_control_socket() {
+    fn serve_mode_strategy_stock_stdio_vs_control_socket_vs_mux() {
         assert!(ServeMode::StockStdio.is_stock_stdio());
         assert!(!ServeMode::StockStdio.is_control_socket());
         assert_eq!(ServeMode::StockStdio.as_str(), "stock-stdio");
@@ -440,10 +448,27 @@ mod tests {
             ServeMode::parse("control-socket"),
             Some(ServeMode::ControlSocket)
         );
-        assert_eq!(ServeMode::parse("mux"), None);
+        assert_eq!(ServeMode::parse("mux"), Some(ServeMode::Mux));
+        assert!(ServeMode::Mux.is_mux());
+        assert!(!ServeMode::StockStdio.is_mux());
+        assert!(!ServeMode::ControlSocket.is_mux());
+        assert!(!ServeMode::Mux.is_stock_stdio());
+        assert!(!ServeMode::Mux.is_control_socket());
+        assert_eq!(ServeMode::Mux.as_str(), "mux");
+        assert_ne!(ServeMode::Mux.as_str(), "");
+        assert_ne!(ServeMode::StockStdio.as_str(), "");
         assert_eq!(ServeMode::parse(""), None);
         assert_eq!(ServeMode::parse("StockStdio"), None);
         assert_ne!(ServeMode::StockStdio, ServeMode::ControlSocket);
+        assert_ne!(ServeMode::Mux, ServeMode::ControlSocket);
+
+        let mux = ServeMode::Mux.serve_args(None).unwrap();
+        assert_eq!(mux, vec!["serve", "--mux"]);
+        let mux_ignores_socket = ServeMode::Mux
+            .serve_args(Some(Path::new("/tmp/x.sock")))
+            .unwrap();
+        assert_eq!(mux_ignores_socket, vec!["serve", "--mux"]);
+        assert_eq!(mux.iter().filter(|a| *a == "--mux").count(), 1);
 
         let stock = ServeMode::StockStdio.serve_args(None).unwrap();
         assert_eq!(stock, vec!["serve"]);

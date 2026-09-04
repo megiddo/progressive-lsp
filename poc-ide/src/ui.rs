@@ -6,18 +6,18 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, spawn_control_io, spawn_lsp_io, spawn_runtime_io, spawn_tree_io,
-    BufferMap, ClipboardPort, CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle,
-    ControlPush, ControlPushInbox, ControlSocketPath, CursorOffsets, DialogAction, DialogOutcome,
-    DialogPort, DiscoverFlight, DiscoverKind, DiscoverMenu, DiskEvent, DiskWatch, DockerRunPlan,
-    EditCommand, FileTree, FsPort, HighlightSpan, Highlighter, HostOs, IdeError, LanguageCatalog,
-    LaunchJournal, LayoutState, LspIoAttach, LspIoEvent, LspIoHandle, LspIoRequest,
-    LspSessionState, NotifyWatch, OpenBuffer, OpenMode, PackageTierMap, PendingDialog,
-    PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent, RuntimeIoHandle, RuntimeIoRequest,
-    Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec, StatusModal, StatusModalKind, StdFs,
-    SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind, TierStrip, TreeExpandFlight,
-    TreeExpansion, TreeIoEvent, TreeIoHandle, TreeIoRequest, TreeNode, WatchPort, WireTier,
-    WorkspaceRoot, PLAIN_TEXT_RGB,
+    advertised_control_socket, spawn_control_io, spawn_lsp_io, spawn_mux_control_io,
+    spawn_runtime_io, spawn_tree_io, BufferMap, ClipboardPort, CompactChain, ConflictChoice,
+    ControlIoEvent, ControlIoHandle, ControlPush, ControlPushInbox, ControlSocketPath,
+    CursorOffsets, DialogAction, DialogOutcome, DialogPort, DiscoverFlight, DiscoverKind,
+    DiscoverMenu, DiskEvent, DiskWatch, DockerRunPlan, EditCommand, FileTree, FsPort,
+    HighlightSpan, Highlighter, HostOs, IdeError, LanguageCatalog, LaunchJournal, LayoutState,
+    LspIoAttach, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState, NotifyWatch, OpenBuffer,
+    OpenMode, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent,
+    RuntimeIoHandle, RuntimeIoRequest, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec,
+    StatusModal, StatusModalKind, StdFs, SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind,
+    TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent, TreeIoHandle, TreeIoRequest, TreeNode,
+    WatchPort, WireTier, WorkspaceRoot, PLAIN_TEXT_RGB,
 };
 use std::sync::mpsc;
 
@@ -406,7 +406,7 @@ impl PocIdeApp {
         self.lsp_session = self.lsp_session.begin_connect();
         self.run_log.log_lsp("initialize_start", None);
         let attach = if self.open_mode == OpenMode::Container {
-            self.serve_mode = ServeMode::StockStdio;
+            self.serve_mode = ServeMode::Mux;
             match DockerRunPlan::new("docker", root.as_path()) {
                 Ok(plan) => LspIoAttach::Container(plan),
                 Err(e) => {
@@ -639,6 +639,20 @@ impl PocIdeApp {
     fn connect_control(&mut self, cap: Option<&poc_ide::ProgressiveLspCap>) {
         self.control_io = None;
         self.control_error = None;
+        if self.serve_mode.is_mux() {
+            match self.lsp_io.as_ref().and_then(|h| h.take_mux_control()) {
+                Some(ctl) => {
+                    self.control_io = Some(spawn_mux_control_io(ctl));
+                    self.control_error = None;
+                }
+                None => {
+                    let err = IdeError::control("mux control missing");
+                    self.run_log.log_control_connect_error(&err.to_string());
+                    self.control_error = Some(err.to_string());
+                }
+            }
+            return;
+        }
         if !self.serve_mode.is_control_socket() {
             return;
         }

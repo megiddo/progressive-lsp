@@ -70,7 +70,7 @@ impl DockerRunPlan {
         Self::PREFIX
     }
 
-    /// `run -i --rm -v WS:WS -w WS IMAGE serve --prefix /opt/plsp`. Never `-t`.
+    /// `run -i --rm -v WS:WS -w WS IMAGE serve --prefix /opt/plsp --mux`. Never `-t`.
     pub fn argv(&self) -> Vec<String> {
         let ws = self.workspace.to_string_lossy().into_owned();
         vec![
@@ -85,6 +85,7 @@ impl DockerRunPlan {
             "serve".into(),
             "--prefix".into(),
             Self::PREFIX.into(),
+            "--mux".into(),
         ]
     }
 
@@ -949,10 +950,14 @@ esac
                 "serve",
                 "--prefix",
                 "/opt/plsp",
+                "--mux",
             ]
         );
         assert!(!argv.iter().any(|a| a == "-t"));
-        assert!(!argv.iter().any(|a| a == "--mux"));
+        assert_eq!(argv.iter().filter(|a| *a == "--mux").count(), 1);
+        assert!(argv
+            .windows(4)
+            .any(|w| { w == ["serve", "--prefix", "/opt/plsp", "--mux"] }));
         let cmd = plan.command();
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("docker"));
         let cmd_args: Vec<String> = cmd

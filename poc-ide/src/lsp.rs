@@ -420,6 +420,27 @@ impl StdioLsp {
     pub fn notification_len(&self) -> usize {
         self.notifications.len()
     }
+
+    /// Hand pipes to [`crate::mux::MuxStdio`]. Child ownership moves with the parts.
+    pub(crate) fn into_io_parts(
+        mut self,
+    ) -> (
+        Option<Child>,
+        Box<dyn Write + Send>,
+        Box<dyn BufRead + Send>,
+        Option<Arc<ChildStderrDrain>>,
+        Option<JoinHandle<()>>,
+    ) {
+        let child = self.child.take();
+        let writer = std::mem::replace(&mut self.writer, Box::new(std::io::sink()));
+        let reader = std::mem::replace(
+            &mut self.reader,
+            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        );
+        let stderr_drain = self.stderr_drain.take();
+        let stderr_thread = self.stderr_thread.take();
+        (child, writer, reader, stderr_drain, stderr_thread)
+    }
 }
 
 impl std::fmt::Debug for StdioLsp {
@@ -1242,6 +1263,9 @@ mod tests {
         let stock = ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap();
         assert_eq!(stock.args(), &["serve"]);
         assert!(stock.serve_wal_path().is_none());
+        let mux = ServeSpawn::new(ServeMode::Mux, None, None).unwrap();
+        assert_eq!(mux.args(), &["serve", "--mux"]);
+        assert!(mux.control_socket().is_none());
     }
 
     #[test]

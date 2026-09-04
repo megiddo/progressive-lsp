@@ -19,8 +19,50 @@ use progressive_lsp_control::{
 };
 
 use crate::error::IdeError;
+use crate::language::ServeMode;
 use crate::lsp::ProgressiveLspCap;
+use crate::mux::MuxControl;
 use crate::ports::ControlTransport;
+
+/// How control attaches after initialize. Strategy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ControlAttach {
+    Socket(String),
+    Mux,
+}
+
+impl ControlAttach {
+    pub fn is_mux(&self) -> bool {
+        matches!(self, Self::Mux)
+    }
+
+    pub fn is_socket(&self) -> bool {
+        matches!(self, Self::Socket(_))
+    }
+
+    pub fn socket(&self) -> Option<&str> {
+        match self {
+            Self::Socket(path) => Some(path.as_str()),
+            Self::Mux => None,
+        }
+    }
+}
+
+/// Socket path, mux attach, or `pending_mux` when mux is advertised but not selected.
+pub fn advertised_control(
+    cap: &ProgressiveLspCap,
+    mode: ServeMode,
+) -> Result<ControlAttach, IdeError> {
+    if mode.is_mux() {
+        return Ok(ControlAttach::Mux);
+    }
+    if cap.mux() {
+        return Err(IdeError::pending_mux());
+    }
+    cap.socket()
+        .map(|p| ControlAttach::Socket(p.to_string()))
+        .ok_or_else(IdeError::control_socket_missing)
+}
 
 /// Unary RPC names from the user API table. Case-sensitive. Never `$/`.
 pub const CONTROL_UNARY_METHODS: &[&str] = &[
@@ -320,7 +362,8 @@ impl ControlTransport for UnixControl {
     }
 }
 
-/// Advertised socket after `initialize`. `--mux` stays `pending_mux`.
+/// Advertised Unix socket after `initialize`. Mux still `pending_mux` here
+/// because this path cannot attach channel 1; use [`advertised_control`].
 pub fn advertised_control_socket(cap: &ProgressiveLspCap) -> Result<&str, IdeError> {
     if cap.mux() {
         return Err(IdeError::pending_mux());
@@ -555,6 +598,37 @@ pub fn spawn_control_io(socket: String) -> ControlIoHandle {
     handle
 }
 
+/// Same control IO loop on mux channel 1. Does not open a Unix socket.
+pub fn spawn_mux_control_io(transport: MuxControl) -> ControlIoHandle {
+    let (handle, tx) = ControlIoHandle::pair();
+    let _ = std::thread::Builder::new()
+        .name("poc-ide-control".into())
+        .spawn(move || run_mux_control_io_thread(transport, tx));
+    handle
+}
+
+fn run_mux_control_io_thread(transport: MuxControl, tx: mpsc::Sender<ControlIoEvent>) {
+    let mut client = ControlClient::new(transport);
+    if tx.send(ControlIoEvent::Connected).is_err() {
+        return;
+    }
+    match request_control_status(&mut client) {
+        Ok((index, tiers)) => {
+            if tx.send(ControlIoEvent::IndexStatus(index)).is_err() {
+                return;
+            }
+            if tx.send(ControlIoEvent::TierStatus(tiers)).is_err() {
+                return;
+            }
+        }
+        Err(e) => {
+            let _ = tx.send(ControlIoEvent::Failed(e.to_string()));
+            return;
+        }
+    }
+    run_control_io_ready(&mut client, tx);
+}
+
 fn run_control_io_thread(socket: String, tx: mpsc::Sender<ControlIoEvent>) {
     let mut client = match ControlClient::<UnixControl>::connect(&socket) {
         Ok(c) => {
@@ -670,6 +744,28 @@ mod tests {
         )
         .unwrap_err()
         .is_pending_mux());
+        let mux_selected = advertised_control(&cap(None, true), ServeMode::Mux).unwrap();
+        assert!(mux_selected.is_mux());
+        assert!(!mux_selected.is_socket());
+        assert!(mux_selected.socket().is_none());
+        assert_eq!(mux_selected, ControlAttach::Mux);
+        let mux_even_if_server_lied =
+            advertised_control(&cap(Some("/tmp/ok.sock"), false), ServeMode::Mux).unwrap();
+        assert!(mux_even_if_server_lied.is_mux());
+        assert!(
+            advertised_control(&cap(Some("/tmp/ok.sock"), true), ServeMode::ControlSocket)
+                .unwrap_err()
+                .is_pending_mux()
+        );
+        let sock = advertised_control(&cap(Some("/tmp/ok.sock"), false), ServeMode::ControlSocket)
+            .unwrap();
+        assert!(sock.is_socket());
+        assert!(!sock.is_mux());
+        assert_eq!(sock.socket(), Some("/tmp/ok.sock"));
+        assert!(advertised_control(&cap(None, false), ServeMode::StockStdio)
+            .unwrap_err()
+            .is_control_socket_missing());
+        assert_eq!(format!("{:?}", ControlAttach::Mux).contains("Mux"), true);
         assert!(CONTROL_UNARY_METHODS.contains(&METHOD_FILES_SINCE));
         assert!(!CONTROL_UNARY_METHODS
             .iter()
@@ -1210,5 +1306,24 @@ mod tests {
         assert_eq!(pushes.len(), 1);
         assert_eq!(pushes[0].request_id, 0);
         assert_eq!(pushes[0].method, METHOD_WATCH_BATCH);
+    }
+
+    #[test]
+    fn run_mux_control_io_thread_emits_connected_and_status_without_sleep() {
+        let index = Envelope::reply(METHOD_INDEX_STATUS, 1, IndexStatusResponse::default());
+        let tiers = Envelope::reply(METHOD_TIER_STATUS, 2, TierStatusResponse::default());
+        let mut stream = crate::mux::encode_control_envelope(&index).unwrap();
+        stream.extend_from_slice(&crate::mux::encode_control_envelope(&tiers).unwrap());
+        let ctl = MuxControl::from_pair(Vec::<u8>::new(), std::io::Cursor::new(stream));
+        let (tx, rx) = mpsc::channel();
+        run_mux_control_io_thread(ctl, tx);
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(matches!(events.first(), Some(ControlIoEvent::Connected)));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ControlIoEvent::IndexStatus(_))));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ControlIoEvent::TierStatus(_))));
     }
 }

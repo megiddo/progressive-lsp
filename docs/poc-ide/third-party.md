@@ -47,7 +47,9 @@ Record the chosen exact versions in `poc-ide/Cargo.toml` on IDE-1. This file sta
 
 **IDE-4 pins:** `lsp-types` **0.97.0**, `serde` / `serde_json` workspace **1.0**. Content-Length framing is copied into `StdioLsp` — no `integration/harness` or `progressive-lsp-plugin` / `-resolve` / `-index` dep. Still no `egui_dock` or `walkdir`. `ControlSocket` is an unused `ServeMode` variant until IDE-5.
 
-**IDE-5 pins:** `progressive-lsp-control` (workspace). Consumer MAY depend. Lib still no egui. `--mux` is `pending_mux` — do not silently retest the socket as mux. Still no `egui_dock` or `walkdir`.
+**IDE-5 pins:** `progressive-lsp-control` (workspace). Consumer MAY depend. Lib still no egui. `--mux` was `pending_mux` until HOST-6. Still no `egui_dock` or `walkdir`.
+
+**HOST-6 pins:** `progressive-lsp-protocol` (workspace) for `MuxFrame` only. Container open uses `serve --mux` on the same stdio as LSP. Do not invent a second framing. Still no `egui_dock` or `walkdir`.
 
 **poc-log pin** (post-IDE-5 slice on `main`, not IDE-6): `rusqlite` **=0.40.2** with `bundled`. Share this pin with `progressive-lsp-log` (LOG-2+). Two schemas: poc-ide `RunLog` (`events` category/event/payload) vs server WAL `LogRecord`. Do not merge. The amalgamation is an **our-artifact** (static C in the ELF), not a host `.so`. **Supersedes** “rusqlite is poc-ide only — never musl server crates.”
 

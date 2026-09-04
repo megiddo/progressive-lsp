@@ -12,6 +12,7 @@ use crate::discover::DiscoverKind;
 use crate::error::IdeError;
 use crate::language::ServeMode;
 use crate::lsp::{LspClient, LspLocation, ProgressiveLspCap, ServeSpawn, SpawnSpec, StdioLsp};
+use crate::mux::{MuxControl, MuxLsp, MuxStdio};
 use crate::ports::LspTransport;
 use crate::runtime::DockerRunPlan;
 
@@ -331,10 +332,25 @@ impl LspIoMailbox {
 }
 
 /// UI-facing channel ends. `submit` / `poll` never call [`LspTransport::request`].
-#[derive(Debug)]
 pub struct LspIoHandle {
     tx: mpsc::Sender<LspIoRequest>,
     rx: mpsc::Receiver<LspIoEvent>,
+    mux_control: std::sync::Arc<std::sync::Mutex<Option<MuxControl>>>,
+}
+
+impl std::fmt::Debug for LspIoHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LspIoHandle")
+            .field(
+                "has_mux_control",
+                &self
+                    .mux_control
+                    .lock()
+                    .map(|s| s.is_some())
+                    .unwrap_or(false),
+            )
+            .finish()
+    }
 }
 
 impl LspIoHandle {
@@ -345,10 +361,22 @@ impl LspIoHandle {
             Self {
                 tx: req_tx,
                 rx: ev_rx,
+                mux_control: std::sync::Arc::new(std::sync::Mutex::new(None)),
             },
             req_rx,
             ev_tx,
         )
+    }
+
+    pub fn mux_control_slot(&self) -> std::sync::Arc<std::sync::Mutex<Option<MuxControl>>> {
+        std::sync::Arc::clone(&self.mux_control)
+    }
+
+    pub fn take_mux_control(&self) -> Option<MuxControl> {
+        self.mux_control
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
     }
 
     pub fn submit(&self, req: LspIoRequest) -> Result<(), IdeError> {
@@ -508,8 +536,8 @@ fn emit_stdio_sideband(client: &mut LspClient<StdioLsp>, ev_tx: &mpsc::Sender<Ls
     }
 }
 
-/// Native Darwin/Linux serve vs container `docker run` stdio. Strategy.
-/// Container is [`ServeMode::StockStdio`]; native keeps [`ServeMode::ControlSocket`].
+/// Native Darwin/Linux serve vs container `docker run` mux stdio. Strategy.
+/// Container is [`ServeMode::Mux`]; native keeps [`ServeMode::ControlSocket`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LspIoAttach {
     Native(ServeSpawn),
@@ -528,29 +556,40 @@ impl LspIoAttach {
     pub fn serve_mode(&self) -> ServeMode {
         match self {
             Self::Native(_) => ServeMode::ControlSocket,
-            Self::Container(_) => ServeMode::StockStdio,
+            Self::Container(_) => ServeMode::Mux,
         }
     }
 }
 
-fn open_stdio_from_attach(attach: &LspIoAttach) -> Result<(StdioLsp, ServeMode), IdeError> {
+enum OpenedAttach {
+    Native(StdioLsp),
+    Mux { lsp: MuxLsp, control: MuxControl },
+}
+
+fn open_from_attach(attach: &LspIoAttach) -> Result<(OpenedAttach, ServeMode), IdeError> {
     let mode = attach.serve_mode();
-    let transport = match attach {
+    match attach {
         LspIoAttach::Native(spawn) => {
             let spec = SpawnSpec::resolve()?;
-            StdioLsp::spawn_plan(&spec, spawn)?
+            Ok((
+                OpenedAttach::Native(StdioLsp::spawn_plan(&spec, spawn)?),
+                mode,
+            ))
         }
-        LspIoAttach::Container(plan) => StdioLsp::from_command(plan.command())?,
-    };
-    Ok((transport, mode))
+        LspIoAttach::Container(plan) => {
+            let (lsp, control) = MuxStdio::from_command(plan.command())?.split();
+            Ok((OpenedAttach::Mux { lsp, control }, mode))
+        }
+    }
 }
 
 /// One named thread owns child stdin/stdout and the stderr drain.
 pub fn spawn_lsp_io(root: PathBuf, attach: LspIoAttach) -> LspIoHandle {
     let (handle, req_rx, ev_tx) = LspIoHandle::pair();
+    let slot = handle.mux_control_slot();
     let _ = std::thread::Builder::new()
         .name("poc-ide-lsp".into())
-        .spawn(move || run_stdio_lsp_io(root, attach, req_rx, ev_tx));
+        .spawn(move || run_stdio_lsp_io(root, attach, req_rx, ev_tx, slot));
     handle
 }
 
@@ -559,8 +598,9 @@ fn run_stdio_lsp_io(
     attach: LspIoAttach,
     req_rx: mpsc::Receiver<LspIoRequest>,
     ev_tx: mpsc::Sender<LspIoEvent>,
+    mux_slot: std::sync::Arc<std::sync::Mutex<Option<MuxControl>>>,
 ) {
-    let (transport, mode) = match open_stdio_from_attach(&attach) {
+    let (opened, mode) = match open_from_attach(&attach) {
         Ok(pair) => pair,
         Err(e) => {
             let _ = ev_tx.send(LspIoEvent::Failed {
@@ -570,27 +610,34 @@ fn run_stdio_lsp_io(
             return;
         }
     };
-    let mut client = LspClient::new(transport).with_mode(mode);
-    match client.initialize(&root) {
-        Ok(()) => {
-            emit_stdio_sideband(&mut client, &ev_tx);
-            if ev_tx
-                .send(LspIoEvent::Initialized {
-                    cap: client.progressive_cap().cloned(),
-                })
-                .is_err()
-            {
-                return;
+    match opened {
+        OpenedAttach::Native(transport) => {
+            run_opened_stdio(
+                LspClient::new(transport).with_mode(mode),
+                root,
+                req_rx,
+                ev_tx,
+            );
+        }
+        OpenedAttach::Mux { lsp, control } => {
+            if let Ok(mut slot) = mux_slot.lock() {
+                *slot = Some(control);
             }
+            run_opened_mux(LspClient::new(lsp).with_mode(mode), root, req_rx, ev_tx);
         }
-        Err(e) => {
-            emit_stdio_sideband(&mut client, &ev_tx);
-            let _ = ev_tx.send(LspIoEvent::Failed {
-                method: "initialize".into(),
-                error: e.to_string(),
-            });
-            return;
-        }
+    }
+}
+
+fn run_opened_stdio(
+    mut client: LspClient<StdioLsp>,
+    root: PathBuf,
+    req_rx: mpsc::Receiver<LspIoRequest>,
+    ev_tx: mpsc::Sender<LspIoEvent>,
+) {
+    if !emit_initialized(&mut client, &root, &ev_tx, |c, tx| {
+        emit_stdio_sideband(c, tx)
+    }) {
+        return;
     }
     while let Ok(req) = req_rx.recv() {
         let shutdown = matches!(req, LspIoRequest::Shutdown);
@@ -602,6 +649,75 @@ fn run_stdio_lsp_io(
         }
         if shutdown {
             return;
+        }
+    }
+}
+
+fn run_opened_mux(
+    mut client: LspClient<MuxLsp>,
+    root: PathBuf,
+    req_rx: mpsc::Receiver<LspIoRequest>,
+    ev_tx: mpsc::Sender<LspIoEvent>,
+) {
+    if !emit_initialized(&mut client, &root, &ev_tx, |c, tx| emit_mux_sideband(c, tx)) {
+        return;
+    }
+    while let Ok(req) = req_rx.recv() {
+        let shutdown = matches!(req, LspIoRequest::Shutdown);
+        for ev in dispatch_lsp_io(&mut client, req) {
+            emit_mux_sideband(&mut client, &ev_tx);
+            if ev_tx.send(ev).is_err() {
+                return;
+            }
+        }
+        if shutdown {
+            return;
+        }
+    }
+}
+
+fn emit_initialized<T, F>(
+    client: &mut LspClient<T>,
+    root: &std::path::Path,
+    ev_tx: &mpsc::Sender<LspIoEvent>,
+    mut sideband: F,
+) -> bool
+where
+    T: LspTransport,
+    F: FnMut(&mut LspClient<T>, &mpsc::Sender<LspIoEvent>),
+{
+    match client.initialize(root) {
+        Ok(()) => {
+            sideband(client, ev_tx);
+            ev_tx
+                .send(LspIoEvent::Initialized {
+                    cap: client.progressive_cap().cloned(),
+                })
+                .is_ok()
+        }
+        Err(e) => {
+            sideband(client, ev_tx);
+            let _ = ev_tx.send(LspIoEvent::Failed {
+                method: "initialize".into(),
+                error: e.to_string(),
+            });
+            false
+        }
+    }
+}
+
+fn emit_mux_sideband(client: &mut LspClient<MuxLsp>, ev_tx: &mpsc::Sender<LspIoEvent>) {
+    let notes = client.transport_mut().take_notifications();
+    for ev in notifications_to_events(&notes) {
+        if ev_tx.send(ev).is_err() {
+            return;
+        }
+    }
+    if let Some(drain) = client.transport().stderr_drain() {
+        for line in drain.drain() {
+            if ev_tx.send(LspIoEvent::ChildStderr { line }).is_err() {
+                return;
+            }
         }
     }
 }
@@ -1108,7 +1224,7 @@ mod tests {
     }
 
     #[test]
-    fn lsp_io_attach_strategy_container_is_stock_stdio_without_darwin_resolve() {
+    fn lsp_io_attach_strategy_container_is_mux_without_darwin_resolve() {
         let native =
             LspIoAttach::Native(ServeSpawn::new(ServeMode::StockStdio, None, None).unwrap());
         assert!(native.is_native());
@@ -1116,7 +1232,7 @@ mod tests {
         assert_eq!(native.serve_mode(), ServeMode::ControlSocket);
         assert_ne!(
             native.serve_mode(),
-            ServeMode::StockStdio,
+            ServeMode::Mux,
             "native attach keeps ControlSocket even if ServeSpawn was stock"
         );
 
@@ -1124,7 +1240,7 @@ mod tests {
         let container = LspIoAttach::Container(plan.clone());
         assert!(container.is_container());
         assert!(!container.is_native());
-        assert_eq!(container.serve_mode(), ServeMode::StockStdio);
+        assert_eq!(container.serve_mode(), ServeMode::Mux);
         assert_eq!(container, LspIoAttach::Container(plan));
         assert_ne!(container, native);
 
@@ -1134,9 +1250,138 @@ mod tests {
         let true_bin = std::path::Path::new("/usr/bin/true");
         if true_bin.is_file() {
             let plan = DockerRunPlan::new(true_bin, std::path::Path::new("/ws")).unwrap();
-            let (lsp, mode) = open_stdio_from_attach(&LspIoAttach::Container(plan)).unwrap();
-            assert_eq!(mode, ServeMode::StockStdio);
-            drop(lsp);
+            let (opened, mode) = open_from_attach(&LspIoAttach::Container(plan)).unwrap();
+            assert_eq!(mode, ServeMode::Mux);
+            assert!(matches!(opened, OpenedAttach::Mux { .. }));
         }
+
+        let (handle, _req, _ev) = LspIoHandle::pair();
+        assert!(handle.take_mux_control().is_none());
+        {
+            let slot = handle.mux_control_slot();
+            *slot.lock().unwrap() = Some(MuxControl::from_pair(
+                Vec::<u8>::new(),
+                std::io::Cursor::new(Vec::<u8>::new()),
+            ));
+        }
+        assert!(handle.take_mux_control().is_some());
+        assert!(handle.take_mux_control().is_none());
+        assert!(format!("{:?}", handle).contains("LspIoHandle"));
+    }
+
+    #[test]
+    fn emit_initialized_and_mux_sideband_pair_without_sleep() {
+        let mut ok = FakeLsp::new();
+        ok.script("initialize", init_result());
+        let mut client = LspClient::new(ok);
+        let (tx, rx) = mpsc::channel();
+        assert!(emit_initialized(
+            &mut client,
+            std::path::Path::new("/ws"),
+            &tx,
+            |_, _| {}
+        ));
+        let evs: Vec<_> = rx.try_iter().collect();
+        assert!(matches!(evs.as_slice(), [LspIoEvent::Initialized { .. }]));
+
+        let mut failing = FakeLsp::new();
+        failing.script_error("initialize", IdeError::lsp("init failed"));
+        let mut bad = LspClient::new(failing);
+        let (fail_tx, fail_rx) = mpsc::channel();
+        assert!(!emit_initialized(
+            &mut bad,
+            std::path::Path::new("/ws"),
+            &fail_tx,
+            |_, _| {}
+        ));
+        assert!(matches!(
+            fail_rx.try_recv().unwrap(),
+            LspIoEvent::Failed { .. }
+        ));
+
+        let note = progress_json();
+        let init = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "capabilities": {
+                    "experimental": {
+                        "progressiveLsp": { "version": "v1", "socket": null, "mux": true }
+                    }
+                }
+            }
+        });
+        let mut stream = crate::mux::encode_lsp_json(&note).unwrap();
+        stream.extend_from_slice(&crate::mux::encode_lsp_json(&init).unwrap());
+        let mut mux_client = LspClient::new(MuxLsp::from_pair(
+            Vec::<u8>::new(),
+            std::io::Cursor::new(stream),
+        ));
+        mux_client.initialize("/ws").unwrap();
+        let (side_tx, side_rx) = mpsc::channel();
+        emit_mux_sideband(&mut mux_client, &side_tx);
+        let side: Vec<_> = side_rx.try_iter().collect();
+        assert!(side.iter().any(LspIoEvent::is_progress));
+    }
+
+    #[test]
+    fn run_opened_mux_and_stdio_initialize_then_shutdown_without_sleep() {
+        let init = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "capabilities": {
+                    "experimental": {
+                        "progressiveLsp": { "version": "v1", "socket": null, "mux": true }
+                    }
+                }
+            }
+        });
+        let shutdown = json!({"jsonrpc":"2.0","id":2,"result":null});
+        let mut mux_stream = crate::mux::encode_lsp_json(&init).unwrap();
+        mux_stream.extend_from_slice(&crate::mux::encode_lsp_json(&shutdown).unwrap());
+        let mux_client = LspClient::new(MuxLsp::from_pair(
+            Vec::<u8>::new(),
+            std::io::Cursor::new(mux_stream),
+        ))
+        .with_mode(ServeMode::Mux);
+        let (req_tx, req_rx) = mpsc::channel();
+        let (ev_tx, ev_rx) = mpsc::channel();
+        req_tx.send(LspIoRequest::Shutdown).unwrap();
+        drop(req_tx);
+        run_opened_mux(mux_client, std::path::PathBuf::from("/ws"), req_rx, ev_tx);
+        let mux_events: Vec<_> = ev_rx.try_iter().collect();
+        assert!(mux_events
+            .iter()
+            .any(|e| matches!(e, LspIoEvent::Initialized { .. })));
+        assert!(mux_events
+            .iter()
+            .any(|e| matches!(e, LspIoEvent::ShutdownDone)));
+
+        let stdio_init = crate::lsp::encode_message(serde_json::to_vec(&init).unwrap());
+        let stdio_shutdown = crate::lsp::encode_message(serde_json::to_vec(&shutdown).unwrap());
+        let mut stdio_stream = stdio_init;
+        stdio_stream.extend_from_slice(&stdio_shutdown);
+        let stdio_client = LspClient::new(StdioLsp::from_pair(
+            Vec::<u8>::new(),
+            std::io::Cursor::new(stdio_stream),
+        ));
+        let (s_req_tx, s_req_rx) = mpsc::channel();
+        let (s_ev_tx, s_ev_rx) = mpsc::channel();
+        s_req_tx.send(LspIoRequest::Shutdown).unwrap();
+        drop(s_req_tx);
+        run_opened_stdio(
+            stdio_client,
+            std::path::PathBuf::from("/ws"),
+            s_req_rx,
+            s_ev_tx,
+        );
+        let stdio_events: Vec<_> = s_ev_rx.try_iter().collect();
+        assert!(stdio_events
+            .iter()
+            .any(|e| matches!(e, LspIoEvent::Initialized { .. })));
+        assert!(stdio_events
+            .iter()
+            .any(|e| matches!(e, LspIoEvent::ShutdownDone)));
     }
 }

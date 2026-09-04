@@ -246,8 +246,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `OpenMode` | Strategy | `native` vs `container`; `for_host` forces native on Linux; T3 offered for native-on-Linux or container; never two LSP processes |
 | `T3HostOffer` | Value object | `Offered` vs `NeedsContainer`; strip skip + discover `open folder in container` |
 | `LaunchFlags` / `parse_launch_args` | DTO + parser | `--folder` / `--file` / `--container` / `--control-socket`; tests parse strings |
-| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS. `start` validates [`DockerRunPlan`] and does not exec; `StdioLsp::from_command` is the single `docker run` |
-| `DockerRunPlan` | Value object | docker binary + `run -i --rm` + `-v WS:WS` + `-w WS` + image `progressive-lsp-runtime:local` + `serve --prefix /opt/plsp`; never `-t`; never `--mux`; empty / relative workspace and missing absolute docker binary fail closed; Darwin unit tests name the pattern and cover the plan without exec |
+| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS. `start` validates [`DockerRunPlan`] and does not exec; `MuxStdio::from_command` is the single container `docker run` |
+| `DockerRunPlan` | Value object | docker binary + `run -i --rm` + `-v WS:WS` + `-w WS` + image `progressive-lsp-runtime:local` + `serve --prefix /opt/plsp --mux`; never `-t`; empty / relative workspace and missing absolute docker binary fail closed; Darwin unit tests name the pattern and cover the plan without exec |
 | `RuntimeInfo` | Value object / DTO | `available` + platform string; `is_linux_pack_platform` is `linux/arm64` / `linux/amd64` (and `aarch64`/`x86_64` aliases); empty platform is not available |
 | `RuntimeSession` | Value object | Workspace path of a validated container plan; Clone; does not own Child; tests never hold a live Docker id |
 | `LaunchJournal` / `LaunchStep` / `StepState` | Value objects | Ordered `pending`/`running`/`ok`/`fail`/`skipped`; container plan: probe → platform → image → mount → start → T3 preflight |
@@ -256,8 +256,10 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen`. `discover_offers` is method × min tier × ceiling from the language matrix; Java has no T3 offers; C# ceiling is T1/T2 |
 | `WireTier` | Value object | `syntax` / `graph` / `types`; unknown parse → `None`; `meets` is `>=` |
 | `DiscoverOffer` | Value object | One LSP method + `min_tier` + language `ceiling`; Java/C# ceiling is `graph`; typed-only methods have `min_tier == types` |
-| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `serve_args` never includes `--mux` (`pending_mux`); container attach is `StockStdio` |
-| `LspIoAttach` | Strategy | `Native(ServeSpawn)` vs `Container(DockerRunPlan)`; native keeps `ControlSocket`; container is `StockStdio` + docker Command; one process |
+| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket` vs `Mux`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `Mux` argv is `serve --mux`; container attach is `Mux` |
+| `LspIoAttach` | Strategy | `Native(ServeSpawn)` vs `Container(DockerRunPlan)`; native keeps `ControlSocket`; container is `Mux` + docker Command (`serve --prefix /opt/plsp --mux`); one process |
+| `MuxStdio` / `MuxLsp` / `MuxControl` | Adapter | One stdio pipe, protocol `MuxFrame` (`u8` + `u32be` + payload). Channel 0 = opaque JSON-RPC body (same as `serve_mux`, no Content-Length wrapper). Channel 1 = length-prefixed Envelope. Unknown channel and payload > 16 MiB fail closed. Pair / Cursor tests; no daemon |
+| `ControlAttach` | Strategy | `Socket(path)` vs `Mux`. `advertised_control(cap, mode)` returns `Mux` when `ServeMode::Mux` is selected. `pending_mux` only when mux is advertised but not selected. `advertised_control_socket` stays socket-only |
 | `ControlSocketPath` | Value object | CLI path wins; else `$PREFIX/run/poc-ide.sock`; else `$HOME/.progressivelsp/run/poc-ide.sock`; else `{temp}/poc-ide.sock`; tests inject prefix / home / temp — never require `$HOME` |
 | `ServeWalPath` | Value object | Unique `{log_dir}/serve-{unix_ms}-{pid}.sqlite` the IDE sets on `PROGRESSIVE_LSP_LOG`; tests inject dirs + FakeClock |
 | `ServeSpawn` | Value object | Child argv + `PROGRESSIVE_LSP_LOG_LEVEL=debug` + optional `PROGRESSIVE_LSP_LOG`; `fn build_serve_command` is a function (not a type) that applies this onto `std::process::Command` — tests inspect env/argv and do not spawn a live serve; stderr is piped, never inherited |
@@ -268,8 +270,8 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
 | `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
 | `LspClient` | Facade | JSON-RPC in; domain locations out; no watch internals |
-| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; `LspClient` never opens it; `ControlClient` does in `ControlSocket` |
-| `ControlTransport` / `UnixControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails |
+| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; `mux` is true on container `--mux`; `LspClient` never opens a socket; `ControlClient` uses Unix socket in `ControlSocket` and `MuxControl` in `Mux` |
+| `ControlTransport` / `UnixControl` / `MuxControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails. `MuxControl` wraps the same inner frame in protocol channel 1 |
 | `FakeControl` | Test double | Same `ControlTransport`; pushes use `request_id == 0` |
 | `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |
 | `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
@@ -281,7 +283,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `DiscoverMenu` / `DiscoverMenuItem` / `MenuDisableReason` | Value objects | Same ground truth for Navigate and context menus; disabled labels are `connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)` / `open folder in container`; `to_io_request` is `None` while disabled so FakeLsp is not called |
 | `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
-| `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
+| `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux` only when mux is advertised but not selected; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
 | `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX`; same codec as core `path_to_file_uri` |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
