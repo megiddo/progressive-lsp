@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use progressive_lsp_core::Tier;
 
-use crate::graph::{prefer_imported, GraphIndex};
+use crate::graph::{prefer_imported, type_ref_matches, GraphIndex};
 use crate::query::{
     Hover, LspLocation, QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, SymbolKind,
 };
@@ -55,8 +55,10 @@ impl HeuristicResolver {
         let imports = self.index.imports_in(&q.file);
         let call = self.index.call_at(&q.file, q.position);
         let arity = call.as_ref().map(|c| c.arity).or(at.arity);
-        let mut preferred: Vec<IndexedSymbol> =
-            prefer_imported(&at.name, &imports, &all).into_iter().cloned().collect();
+        let mut preferred: Vec<IndexedSymbol> = prefer_imported(&at.name, &imports, &all)
+            .into_iter()
+            .cloned()
+            .collect();
         if preferred.is_empty() {
             preferred = all
                 .iter()
@@ -99,9 +101,9 @@ impl HeuristicResolver {
                 .filter(|s| {
                     s.container.as_deref() == Some(container.as_str())
                         || s.fqn == *container
-                        || parents.iter().any(|p| {
-                            s.container.as_deref() == Some(p.as_str()) || s.fqn == *p
-                        })
+                        || parents
+                            .iter()
+                            .any(|p| s.container.as_deref() == Some(p.as_str()) || s.fqn == *p)
                 })
                 .cloned()
                 .collect();
@@ -156,25 +158,36 @@ impl Resolver for HeuristicResolver {
                 if hits.is_empty() {
                     return ResolveOutcome::NotReady;
                 }
-                let locs: Vec<LspLocation> = hits.into_iter().map(|s| s.to_location(tier)).collect();
+                let locs: Vec<LspLocation> =
+                    hits.into_iter().map(|s| s.to_location(tier)).collect();
                 ResolveOutcome::Ready(ResolveResult::locations(tier, locs))
             }
             QueryKind::Implementation => {
                 let Some(at) = self.identifier_at(q) else {
                     return ResolveOutcome::NotReady;
                 };
-                let children: Vec<LspLocation> = self
+                let mut children: Vec<LspLocation> = self
                     .index
                     .all_symbols()
                     .into_iter()
                     .filter(|s| {
-                        self.index
-                            .parents_of(&s.fqn)
-                            .iter()
-                            .any(|p| p == &at.fqn || p == &at.name)
+                        s.kind.is_type()
+                            && self
+                                .index
+                                .parents_of(&s.fqn)
+                                .iter()
+                                .any(|p| type_ref_matches(p, &at.name, &at.fqn))
                     })
                     .map(|s| s.to_location(tier))
                     .collect();
+                if children.is_empty() {
+                    children = self
+                        .lookup(q, &at)
+                        .into_iter()
+                        .filter(|s| s.kind.is_type())
+                        .map(|s| s.to_location(tier))
+                        .collect();
+                }
                 if children.is_empty() {
                     return ResolveOutcome::NotReady;
                 }
@@ -245,7 +258,14 @@ mod tests {
         }
     }
 
-    fn sym(file: &str, name: &str, line: u32, kind: SymbolKind, fqn: &str, arity: Option<u32>) -> IndexedSymbol {
+    fn sym(
+        file: &str,
+        name: &str,
+        line: u32,
+        kind: SymbolKind,
+        fqn: &str,
+        arity: Option<u32>,
+    ) -> IndexedSymbol {
         let range = Range::new(Position::new(line, 0), Position::new(line, 20));
         IndexedSymbol {
             file: FileId::new(file),
@@ -253,17 +273,31 @@ mod tests {
             name: name.into(),
             kind,
             range,
-            selection_range: Range::new(Position::new(line, 0), Position::new(line, name.len() as u32)),
+            selection_range: Range::new(
+                Position::new(line, 0),
+                Position::new(line, name.len() as u32),
+            ),
             arity,
             fqn: fqn.into(),
-            container: Some(fqn.rsplit_once('.').map(|(c, _)| c.to_string()).unwrap_or_default()),
+            container: Some(
+                fqn.rsplit_once('.')
+                    .map(|(c, _)| c.to_string())
+                    .unwrap_or_default(),
+            ),
         }
     }
 
     #[test]
     fn not_ready_until_package_is_graph() {
         let idx = Arc::new(MemGraph {
-            symbols: Mutex::new(vec![sym("A.java", "Lib", 0, SymbolKind::Class, "com.Lib", None)]),
+            symbols: Mutex::new(vec![sym(
+                "A.java",
+                "Lib",
+                0,
+                SymbolKind::Class,
+                "com.Lib",
+                None,
+            )]),
             imports: vec![],
             edges: vec![],
             ready: false,
@@ -271,7 +305,11 @@ mod tests {
             calls: vec![],
         });
         let r = HeuristicResolver::new(idx);
-        let q = ResolveQuery::new(FileId::new("A.java"), Position::new(0, 0), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("A.java"),
+            Position::new(0, 0),
+            QueryKind::Definition,
+        );
         assert!(!r.resolve(&q).is_ready());
     }
 
@@ -372,7 +410,11 @@ mod tests {
             QueryKind::Implementation,
         )) {
             ResolveOutcome::Ready(res) => {
-                assert!(res.locations.iter().any(|l| l.uri.contains("Child.java")), "{:?}", res.locations);
+                assert!(
+                    res.locations.iter().any(|l| l.uri.contains("Child.java")),
+                    "{:?}",
+                    res.locations
+                );
             }
             ResolveOutcome::NotReady => panic!("implementation of Base is Child"),
         }
@@ -408,6 +450,123 @@ mod tests {
         )) {
             ResolveOutcome::NotReady => {}
             ResolveOutcome::Ready(r) => panic!("{r:?}"),
+        }
+    }
+
+    #[test]
+    fn implementation_of_concrete_class_usage_is_the_class() {
+        let idx = Arc::new(MemGraph {
+            symbols: Mutex::new(vec![
+                IndexedSymbol {
+                    file: FileId::new("CacheTest.java"),
+                    uri: "file:///CacheTest.java".into(),
+                    name: "DefaultLocalConfigService".into(),
+                    kind: SymbolKind::Variable,
+                    range: Range::new(Position::new(1, 4), Position::new(1, 29)),
+                    selection_range: Range::new(Position::new(1, 4), Position::new(1, 29)),
+                    arity: None,
+                    fqn: "CacheTest.DefaultLocalConfigService".into(),
+                    container: Some("CacheTest".into()),
+                },
+                IndexedSymbol {
+                    file: FileId::new("Svc.java"),
+                    uri: "file:///Svc.java".into(),
+                    name: "DefaultLocalConfigService".into(),
+                    kind: SymbolKind::Class,
+                    range: Range::new(Position::new(0, 0), Position::new(0, 40)),
+                    selection_range: Range::new(Position::new(0, 13), Position::new(0, 38)),
+                    arity: None,
+                    fqn: "com.DefaultLocalConfigService".into(),
+                    container: None,
+                },
+            ]),
+            imports: vec![],
+            edges: vec![],
+            ready: true,
+            pkg: PackageId::new("src"),
+            calls: vec![],
+        });
+        let r = HeuristicResolver::new(idx);
+        match r.resolve(&ResolveQuery::new(
+            FileId::new("CacheTest.java"),
+            Position::new(1, 10),
+            QueryKind::Implementation,
+        )) {
+            ResolveOutcome::Ready(res) => {
+                assert_eq!(res.tier, Tier::Graph);
+                assert!(
+                    res.locations.iter().any(|l| l.uri.contains("Svc.java")),
+                    "{:?}",
+                    res.locations
+                );
+            }
+            ResolveOutcome::NotReady => panic!("concrete class usage must resolve"),
+        }
+    }
+
+    #[test]
+    fn implementation_matches_generic_implements_edge() {
+        let idx = Arc::new(MemGraph {
+            symbols: Mutex::new(vec![
+                IndexedSymbol {
+                    file: FileId::new("PDFCache.java"),
+                    uri: "file:///PDFCache.java".into(),
+                    name: "KvStoreRouter".into(),
+                    kind: SymbolKind::Variable,
+                    range: Range::new(Position::new(13, 26), Position::new(13, 39)),
+                    selection_range: Range::new(Position::new(13, 26), Position::new(13, 39)),
+                    arity: None,
+                    fqn: "PDFCache.KvStoreRouter".into(),
+                    container: Some("PDFCache".into()),
+                },
+                IndexedSymbol {
+                    file: FileId::new("KvStoreRouter.java"),
+                    uri: "file:///KvStoreRouter.java".into(),
+                    name: "KvStoreRouter".into(),
+                    kind: SymbolKind::Interface,
+                    range: Range::new(Position::new(0, 0), Position::new(0, 20)),
+                    selection_range: Range::new(Position::new(0, 0), Position::new(0, 13)),
+                    arity: None,
+                    fqn: "com.KvStoreRouter".into(),
+                    container: None,
+                },
+                IndexedSymbol {
+                    file: FileId::new("DefaultKvStoreRouter.java"),
+                    uri: "file:///DefaultKvStoreRouter.java".into(),
+                    name: "DefaultKvStoreRouter".into(),
+                    kind: SymbolKind::Class,
+                    range: Range::new(Position::new(0, 0), Position::new(0, 20)),
+                    selection_range: Range::new(Position::new(0, 0), Position::new(0, 20)),
+                    arity: None,
+                    fqn: "com.DefaultKvStoreRouter".into(),
+                    container: None,
+                },
+            ]),
+            imports: vec![],
+            edges: vec![TypeEdge::new(
+                "com.DefaultKvStoreRouter",
+                "KvStoreRouter<K, V>",
+            )],
+            ready: true,
+            pkg: PackageId::new("src"),
+            calls: vec![],
+        });
+        let r = HeuristicResolver::new(idx);
+        match r.resolve(&ResolveQuery::new(
+            FileId::new("PDFCache.java"),
+            Position::new(13, 30),
+            QueryKind::Implementation,
+        )) {
+            ResolveOutcome::Ready(res) => {
+                assert!(
+                    res.locations
+                        .iter()
+                        .any(|l| l.uri.contains("DefaultKvStoreRouter.java")),
+                    "{:?}",
+                    res.locations
+                );
+            }
+            ResolveOutcome::NotReady => panic!("generic implements edge must match"),
         }
     }
 }

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use progressive_lsp_control::IngestState;
 use progressive_lsp_core::{
-    FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort, LogRecord, LogScope,
-    NullLog, PackageId, PrefixLayout, T2Backend, Tier,
+    path_from_file_uri, FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort,
+    LogRecord, LogScope, NullLog, PackageId, PrefixLayout, T2Backend, Tier,
 };
 use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::{
@@ -594,7 +594,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
                 .path(path.to_string_lossy().into_owned())
@@ -610,7 +610,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_change(&self, uri: &str, text: &str) {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
                 .path(path.to_string_lossy().into_owned())
@@ -630,7 +630,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_close(&self, uri: &str) {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
                 .path(path.to_string_lossy().into_owned())
@@ -641,7 +641,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn semantic_tokens(&self, uri: &str) -> Vec<u32> {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let src = self.index.lock().source(&path).unwrap_or("").to_string();
         if src.is_empty() {
             return Vec::new();
@@ -917,6 +917,65 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn encoded_did_open_uri_f12_uses_decoded_file_id() {
+        let session = WorkspaceSession::java_default();
+        let src = "class Tmp { void greet() {} }";
+        session.did_open("file:///tmp/My%20Drive/Tmp.java", "java", src);
+        let col = src.find("greet").expect("greet") as u32;
+        let q = ResolveQuery::new(
+            FileId::from_uri("file:///tmp/My%20Drive/Tmp.java"),
+            Position::new(0, col),
+            QueryKind::Definition,
+        );
+        let r = session.resolve(&q);
+        assert!(
+            !r.locations.is_empty(),
+            "didOpen percent-encoded URI must index the decoded path: {r:?}"
+        );
+        assert!(
+            r.locations.iter().any(|l| l.uri.contains("Tmp.java")),
+            "{r:?}"
+        );
+        let _ = session.semantic_tokens("file:///tmp/My%20Drive/Tmp.java");
+        session.did_change(
+            "file:///tmp/My%20Drive/Tmp.java",
+            "class Tmp { void greet() { int x = 1; } }",
+        );
+        session.did_close("file:///tmp/My%20Drive/Tmp.java");
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn implementation_of_concrete_class_usage_finds_declaration() {
+        let session = WorkspaceSession::java_default();
+        session.did_open(
+            "file:///DefaultLocalConfigService.java",
+            "java",
+            "public class DefaultLocalConfigService {}",
+        );
+        let test_src = concat!(
+            "class CacheTest {\n",
+            "    DefaultLocalConfigService configService = DefaultLocalConfigService.builder();\n",
+            "}\n",
+        );
+        session.did_open("file:///CacheTest.java", "java", test_src);
+        let line = test_src.lines().nth(1).expect("line");
+        let col = line.rfind("DefaultLocalConfigService").expect("rhs") as u32;
+        let r = session.resolve(&ResolveQuery::new(
+            FileId::from_uri("file:///CacheTest.java"),
+            Position::new(1, col),
+            QueryKind::Implementation,
+        ));
+        assert!(
+            r.locations
+                .iter()
+                .any(|l| l.uri.contains("DefaultLocalConfigService.java")),
+            "find implementation on a concrete class usage must jump to the class: {r:?}"
+        );
+    }
+
     #[test]
     fn ingest_never_blocks_did_change_highlighting() {
         let dir = tempfile::tempdir().unwrap();
@@ -1148,6 +1207,38 @@ mod tests {
         session.index_path(Path::new("A.java"), "class A {}");
         assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
         assert!(!workspace.path().join(".progressivelsp/cache").exists());
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn prefix_cache_cold_start_did_open_f12_still_resolves() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let uri = "file:///CacheConfiguration.java";
+        let src = "class Tmp { void greet() {} }";
+        let col = src.find("greet").expect("greet") as u32;
+        {
+            let session = WorkspaceSession::with_prefix_and_t2(&layout, T2Backend::Heuristic);
+            session.did_open(uri, "java", src);
+            let r = session.resolve(&ResolveQuery::new(
+                FileId::from_uri(uri),
+                Position::new(0, col),
+                QueryKind::Definition,
+            ));
+            assert!(!r.locations.is_empty(), "warm F12: {r:?}");
+        }
+        let session = WorkspaceSession::with_prefix_and_t2(&layout, T2Backend::Heuristic);
+        session.did_open(uri, "java", src);
+        let r = session.resolve(&ResolveQuery::new(
+            FileId::from_uri(uri),
+            Position::new(0, col),
+            QueryKind::Definition,
+        ));
+        assert!(
+            !r.locations.is_empty(),
+            "disk cache cold start must still extract symbols for F12: {r:?}"
+        );
     }
 
     #[cfg(feature = "lang-css")]

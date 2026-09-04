@@ -141,8 +141,14 @@ fn find_ident(node: Node) -> Option<Node> {
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -169,7 +175,11 @@ fn encode(toks: &[(u32, u32, u32, u32)]) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in toks {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -244,7 +254,11 @@ mod tests {
         let greet = dir.path().join("src/greet.c");
         let main = dir.path().join("src/main.c");
         std::fs::write(&greet, "int greet(void) { return 1; }\n").unwrap();
-        std::fs::write(&main, "int greet(void);\nint run(void) { return greet(); }\n").unwrap();
+        std::fs::write(
+            &main,
+            "int greet(void);\nint run(void) { return greet(); }\n",
+        )
+        .unwrap();
         let json = format!(
             r#"[{{"directory":"{}","file":"src/greet.c"}},{{"directory":"{}","file":"src/main.c"}}]"#,
             dir.path().display(),
@@ -257,7 +271,9 @@ mod tests {
         );
         let mut svc = IndexService::new();
         svc.ingest_package(
-            &PackageIngest::new("cc", "c").with_file(&greet).with_file(&main),
+            &PackageIngest::new("cc", "c")
+                .with_file(&greet)
+                .with_file(&main),
             &CIndexer,
         );
         let src = std::fs::read_to_string(&main).unwrap();
@@ -281,9 +297,15 @@ mod tests {
             &src,
             &tree,
         );
-        assert!(main_syms.iter().any(|s| s.name == "greet" && s.kind == SymbolKind::Variable));
-        assert!(greet_syms.iter().any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
-        assert!(greet_syms.iter().any(|s| s.name == "greet" && s.kind == SymbolKind::Variable));
+        assert!(main_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Variable));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Variable));
         assert!(greet_syms.iter().all(|s| !s.name.is_empty()));
         let types: Vec<u32> = toks.chunks(5).map(|c| c[3]).collect();
         assert!(types.contains(&5), "function_definition tokens");
@@ -307,7 +329,9 @@ mod tests {
             ResolveOutcome::Ready(r) => {
                 assert_eq!(r.tier, Tier::Syntax);
                 assert!(
-                    r.locations.iter().any(|l| l.uri.contains("greet.c") || l.uri.contains("main.c")),
+                    r.locations
+                        .iter()
+                        .any(|l| l.uri.contains("greet.c") || l.uri.contains("main.c")),
                     "{:?}",
                     r.locations
                 );

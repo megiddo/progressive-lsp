@@ -48,30 +48,134 @@ mod tests {
 
     fn fixture_a_cases() -> [Case; 20] {
         [
-            Case { file: "src/main/java/com/example/app/App.java", needle: "greet", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "Lib", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "baseOnly", expect_uri: "Base.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "one", expect_uri: "Over.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "greet", expect_uri: "Lib.java", kind: QueryKind::Hover },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "run", expect_uri: "App.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/base/Base.java", needle: "Base", expect_uri: "Base.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "Child", expect_uri: "Child.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "two", expect_uri: "Over.java", kind: QueryKind::Hover },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "Lib", expect_uri: "Lib.java", kind: QueryKind::TypeDefinition },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "world", expect_uri: "App.java", kind: QueryKind::References },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "Base", expect_uri: "Base.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "Over", expect_uri: "Over.java", kind: QueryKind::DocumentSymbol },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "App", expect_uri: "App.java", kind: QueryKind::WorkspaceSymbol },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "name", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "extra", expect_uri: "Child.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "callOne", expect_uri: "Over.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "staticGreet", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/base/Base.java", needle: "baseOnly", expect_uri: "Base.java", kind: QueryKind::Hover },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "id", expect_uri: "Lib.java", kind: QueryKind::Definition },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "greet",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "Lib",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "baseOnly",
+                expect_uri: "Base.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "one",
+                expect_uri: "Over.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "greet",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Hover,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "run",
+                expect_uri: "App.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/base/Base.java",
+                needle: "Base",
+                expect_uri: "Base.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "Child",
+                expect_uri: "Child.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "two",
+                expect_uri: "Over.java",
+                kind: QueryKind::Hover,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "Lib",
+                expect_uri: "Lib.java",
+                kind: QueryKind::TypeDefinition,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "world",
+                expect_uri: "App.java",
+                kind: QueryKind::References,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "Base",
+                expect_uri: "Base.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "Over",
+                expect_uri: "Over.java",
+                kind: QueryKind::DocumentSymbol,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "App",
+                expect_uri: "App.java",
+                kind: QueryKind::WorkspaceSymbol,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "name",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "extra",
+                expect_uri: "Child.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "callOne",
+                expect_uri: "Over.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "staticGreet",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/base/Base.java",
+                needle: "baseOnly",
+                expect_uri: "Base.java",
+                kind: QueryKind::Hover,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "id",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
         ]
     }
 
-    fn heuristic_hits(root: &Path, files: &[PathBuf], cases: &[Case]) -> (usize, u128, Option<u64>) {
+    fn heuristic_hits(
+        root: &Path,
+        files: &[PathBuf],
+        cases: &[Case],
+    ) -> (usize, u128, Option<u64>) {
         let mut svc = IndexService::new();
         let mut job = PackageIngest::new("bakeoff", "java");
         for f in files {
@@ -113,7 +217,12 @@ mod tests {
         (hits, elapsed, rss)
     }
 
-    fn tsg_hits(root: &Path, files: &[PathBuf], cases: &[Case], tsg: &StackGraphResolver) -> (usize, u128) {
+    fn tsg_hits(
+        root: &Path,
+        files: &[PathBuf],
+        cases: &[Case],
+        tsg: &StackGraphResolver,
+    ) -> (usize, u128) {
         for f in files {
             if let Ok(src) = std::fs::read_to_string(f) {
                 tsg.index_file(f.to_string_lossy().as_ref(), src);
@@ -130,7 +239,8 @@ mod tests {
                 QueryKind::Definition,
             );
             if let ResolveOutcome::Ready(r) = tsg.resolve(&q) {
-                if r.locations.iter().any(|l| l.uri.contains(case.expect_uri)) || !r.locations.is_empty()
+                if r.locations.iter().any(|l| l.uri.contains(case.expect_uri))
+                    || !r.locations.is_empty()
                 {
                     hits += 1;
                 }
@@ -166,7 +276,10 @@ mod tests {
         let dest = cache.join("junit4");
         let sha = "05fe2a64f59127c02135be22f416e91260d6ede6";
         if dest.join(".plsp-sha").is_file()
-            && std::fs::read_to_string(dest.join(".plsp-sha")).unwrap_or_default().trim() == sha
+            && std::fs::read_to_string(dest.join(".plsp-sha"))
+                .unwrap_or_default()
+                .trim()
+                == sha
         {
             return Ok(dest);
         }
@@ -222,7 +335,11 @@ mod tests {
         let cases = fixture_a_cases();
         let (h_hits, h_us, h_rss) = heuristic_hits(&root, &files, &cases);
         let h_pct = (h_hits * 100) / cases.len();
-        assert!(h_pct >= 95, "fixture A heuristic {h_hits}/{} = {h_pct}%", cases.len());
+        assert!(
+            h_pct >= 95,
+            "fixture A heuristic {h_hits}/{} = {h_pct}%",
+            cases.len()
+        );
 
         let cache = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/pd4-bakeoff");
         std::fs::create_dir_all(&cache).unwrap();
@@ -254,11 +371,36 @@ mod tests {
                 let assert_j = junit.join("src/main/java/junit/framework/Assert.java");
                 let java_files = collect_java(&junit);
                 let b_cases = [
-                    Case { file: "src/main/java/junit/framework/TestCase.java", needle: "TestCase", expect_uri: "TestCase.java", kind: QueryKind::Definition },
-                    Case { file: "src/main/java/junit/framework/TestCase.java", needle: "Assert", expect_uri: "Assert.java", kind: QueryKind::Definition },
-                    Case { file: "src/main/java/junit/framework/Assert.java", needle: "fail", expect_uri: "Assert.java", kind: QueryKind::Definition },
-                    Case { file: "src/main/java/junit/framework/TestCase.java", needle: "runBare", expect_uri: "TestCase.java", kind: QueryKind::Definition },
-                    Case { file: "src/main/java/junit/framework/TestCase.java", needle: "getName", expect_uri: "TestCase.java", kind: QueryKind::Definition },
+                    Case {
+                        file: "src/main/java/junit/framework/TestCase.java",
+                        needle: "TestCase",
+                        expect_uri: "TestCase.java",
+                        kind: QueryKind::Definition,
+                    },
+                    Case {
+                        file: "src/main/java/junit/framework/TestCase.java",
+                        needle: "Assert",
+                        expect_uri: "Assert.java",
+                        kind: QueryKind::Definition,
+                    },
+                    Case {
+                        file: "src/main/java/junit/framework/Assert.java",
+                        needle: "fail",
+                        expect_uri: "Assert.java",
+                        kind: QueryKind::Definition,
+                    },
+                    Case {
+                        file: "src/main/java/junit/framework/TestCase.java",
+                        needle: "runBare",
+                        expect_uri: "TestCase.java",
+                        kind: QueryKind::Definition,
+                    },
+                    Case {
+                        file: "src/main/java/junit/framework/TestCase.java",
+                        needle: "getName",
+                        expect_uri: "TestCase.java",
+                        kind: QueryKind::Definition,
+                    },
                 ];
                 b_n = b_cases.len();
                 let (hh, _, _) = heuristic_hits(&junit, &java_files, &b_cases);
@@ -266,7 +408,8 @@ mod tests {
                 if tsg.loaded() {
                     let tsg_b = match tsg.tsg_source() {
                         Some(src) => {
-                            let r = StackGraphResolver::with_tsg_source(TsgPin::java_upstream(), src);
+                            let r =
+                                StackGraphResolver::with_tsg_source(TsgPin::java_upstream(), src);
                             for f in [&entry, &assert_j] {
                                 if let Ok(s) = std::fs::read_to_string(f) {
                                     r.index_file(f.to_string_lossy().as_ref(), s);

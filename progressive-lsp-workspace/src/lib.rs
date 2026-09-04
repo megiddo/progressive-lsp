@@ -98,7 +98,11 @@ mod tests {
     #[test]
     fn detect_prefers_gradle_then_eclipse() {
         let gradle = tempfile::tempdir().unwrap();
-        std::fs::write(gradle.path().join("settings.gradle.kts"), "include(\"lib\")\n").unwrap();
+        std::fs::write(
+            gradle.path().join("settings.gradle.kts"),
+            "include(\"lib\")\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(gradle.path().join("lib/src/main/java")).unwrap();
         let g = detect_workspace(gradle.path()).unwrap();
         assert_eq!(g.kind, "gradle");
@@ -117,7 +121,11 @@ mod tests {
     #[test]
     fn detect_composer_go_zig() {
         let php = tempfile::tempdir().unwrap();
-        std::fs::write(php.path().join("composer.json"), r#"{"autoload":{"psr-4":{"A\\":"src/"}}}"#).unwrap();
+        std::fs::write(
+            php.path().join("composer.json"),
+            r#"{"autoload":{"psr-4":{"A\\":"src/"}}}"#,
+        )
+        .unwrap();
         std::fs::create_dir_all(php.path().join("src")).unwrap();
         assert_eq!(detect_workspace(php.path()).unwrap().kind, "composer");
 
@@ -134,7 +142,11 @@ mod tests {
         assert_eq!(detect_workspace(cargo.path()).unwrap().kind, "cargo");
 
         let py = tempfile::tempdir().unwrap();
-        std::fs::write(py.path().join("pyproject.toml"), "[project]\nname = \"p\"\n").unwrap();
+        std::fs::write(
+            py.path().join("pyproject.toml"),
+            "[project]\nname = \"p\"\n",
+        )
+        .unwrap();
         assert_eq!(detect_workspace(py.path()).unwrap().kind, "pyproject");
 
         let cc = tempfile::tempdir().unwrap();
@@ -145,7 +157,10 @@ mod tests {
             r#"[{"directory":".","file":"src/a.c"}]"#,
         )
         .unwrap();
-        assert_eq!(detect_workspace(cc.path()).unwrap().kind, "compile_commands");
+        assert_eq!(
+            detect_workspace(cc.path()).unwrap().kind,
+            "compile_commands"
+        );
 
         let cs = tempfile::tempdir().unwrap();
         std::fs::write(cs.path().join("App.csproj"), "<Project></Project>\n").unwrap();

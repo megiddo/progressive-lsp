@@ -17,14 +17,12 @@ pub fn query_with_tsg(
     tsg_source: Option<&str>,
 ) -> Option<ResolveResult> {
     let tsg = tsg_source?;
-    catch_unwind(AssertUnwindSafe(|| query_inner(files, q, tsg))).ok().flatten()
+    catch_unwind(AssertUnwindSafe(|| query_inner(files, q, tsg)))
+        .ok()
+        .flatten()
 }
 
-fn query_inner(
-    files: &[(String, String)],
-    q: &ResolveQuery,
-    tsg: &str,
-) -> Option<ResolveResult> {
+fn query_inner(files: &[(String, String)], q: &ResolveQuery, tsg: &str) -> Option<ResolveResult> {
     let language = tree_sitter_java::LANGUAGE.into();
     let sgl = StackGraphLanguage::from_source(language, "stack-graphs.tsg".into(), tsg).ok()?;
     let mut graph = stack_graphs::graph::StackGraph::new();
@@ -72,7 +70,11 @@ fn query_inner(
                 )
             })
             .unwrap_or_default();
-        locs.push(LspLocation::new(format!("file://{path}"), range, Tier::Graph));
+        locs.push(LspLocation::new(
+            format!("file://{path}"),
+            range,
+            Tier::Graph,
+        ));
     }
     if locs.is_empty() {
         return None;

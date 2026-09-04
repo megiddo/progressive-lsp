@@ -99,7 +99,10 @@ impl LanguageFactory for CppLanguageFactory {
 fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedSymbol>) {
     match node.kind() {
         "function_definition" | "class_specifier" | "struct_specifier" => {
-            if let Some(name_n) = node.child_by_field_name("name").or_else(|| find_ident(node)) {
+            if let Some(name_n) = node
+                .child_by_field_name("name")
+                .or_else(|| find_ident(node))
+            {
                 let name = name_n.utf8_text(src).unwrap_or("").to_string();
                 if !name.is_empty() {
                     let kind = if node.kind() == "function_definition" {
@@ -140,8 +143,14 @@ fn find_ident(node: Node) -> Option<Node> {
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -168,7 +177,11 @@ fn encode(toks: &[(u32, u32, u32, u32)]) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in toks {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -243,7 +256,11 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         let greet = dir.path().join("src/greet.cpp");
         let main = dir.path().join("src/main.cpp");
-        std::fs::write(&greet, "class Greeter { int greet() { return 1; } };\nint helper() { return 2; }\n").unwrap();
+        std::fs::write(
+            &greet,
+            "class Greeter { int greet() { return 1; } };\nint helper() { return 2; }\n",
+        )
+        .unwrap();
         std::fs::write(
             &main,
             "class Greeter { int greet(); };\nint run() { Greeter g; return g.greet(); }\n",
@@ -261,7 +278,9 @@ mod tests {
         );
         let mut svc = IndexService::new();
         svc.ingest_package(
-            &PackageIngest::new("cc", "cpp").with_file(&greet).with_file(&main),
+            &PackageIngest::new("cc", "cpp")
+                .with_file(&greet)
+                .with_file(&main),
             &CppIndexer,
         );
         let src = std::fs::read_to_string(&main).unwrap();
@@ -280,7 +299,8 @@ mod tests {
         let greet_toks = tokens_from_tree(&std::fs::read_to_string(&greet).unwrap(), &{
             let mut gp = tree_sitter::Parser::new();
             gp.set_language(&tree_sitter_language()).unwrap();
-            gp.parse(&std::fs::read_to_string(&greet).unwrap(), None).unwrap()
+            gp.parse(&std::fs::read_to_string(&greet).unwrap(), None)
+                .unwrap()
         });
         let greet_types: Vec<u32> = greet_toks.chunks(5).map(|c| c[3]).collect();
         assert!(greet_types.contains(&1), "class_specifier tokens");
@@ -294,9 +314,15 @@ mod tests {
             &greet_src,
             &greet_tree,
         );
-        assert!(greet_syms.iter().any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class));
-        assert!(greet_syms.iter().any(|s| s.name == "helper" && s.kind == SymbolKind::Method));
-        assert!(greet_syms.iter().any(|s| s.name == "Greeter" && s.kind == SymbolKind::Variable));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "helper" && s.kind == SymbolKind::Method));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Variable));
         assert!(greet_syms.iter().all(|s| !s.name.is_empty()));
         let types: Vec<u32> = toks.chunks(5).map(|c| c[3]).collect();
         assert!(types.contains(&1), "class_specifier tokens on main");
@@ -329,7 +355,10 @@ mod tests {
         let prefix = PrefixLayout::from_path(tmp.path());
         prefix.ensure_dirs().unwrap();
         let fake = FakeEngineAdapter::clangd();
-        fake.set_answers(FakeEngineAdapter::typed_fixture("greet", "file:///greet.cpp"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "greet",
+            "file:///greet.cpp",
+        ));
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         let fake = fake.with_binary(EngineBinary {
             pack_name: "clangd".into(),
@@ -346,7 +375,8 @@ mod tests {
         )
         .unwrap();
         let index = SharedIndex::new(IndexService::new());
-        let factory = CppLanguageFactory::with_graph(Arc::new(index)).with_supervisor(Arc::new(sup));
+        let factory =
+            CppLanguageFactory::with_graph(Arc::new(index)).with_supervisor(Arc::new(sup));
         assert_eq!(factory.resolver_chain().len(), 2);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("main.cpp"),

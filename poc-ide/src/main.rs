@@ -2,12 +2,10 @@
 
 mod ui;
 
-use std::path::PathBuf;
-
-use poc_ide::{ControlSocketPath, RunLog, SystemClock};
+use poc_ide::{parse_launch_args, ControlSocketPath, RunLog, SystemClock};
 
 fn main() -> eframe::Result<()> {
-    let launch = parse_args(std::env::args().skip(1));
+    let launch = parse_launch_args(std::env::args().skip(1));
     let run_log = match RunLog::open_default(SystemClock) {
         Ok(log) => log,
         Err(_) => RunLog::memory(SystemClock).unwrap_or_else(|_| RunLog::unavailable(SystemClock)),
@@ -23,6 +21,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            let open_mode = launch.open_mode();
             Ok(Box::new(ui::PocIdeApp::new(
                 launch.folder,
                 launch.file,
@@ -31,47 +30,8 @@ fn main() -> eframe::Result<()> {
                         .into_path(),
                 ),
                 run_log,
+                open_mode,
             )))
         }),
     )
-}
-
-struct Launch {
-    folder: Option<PathBuf>,
-    file: Option<PathBuf>,
-    control_socket: Option<PathBuf>,
-}
-
-fn parse_args(args: impl Iterator<Item = String>) -> Launch {
-    let mut folder = None;
-    let mut file = None;
-    let mut control_socket = None;
-    let mut args = args.peekable();
-    while let Some(arg) = args.next() {
-        if let Some(value) = arg.strip_prefix("--folder=") {
-            folder = Some(PathBuf::from(value));
-        } else if let Some(value) = arg.strip_prefix("--file=") {
-            file = Some(PathBuf::from(value));
-        } else if let Some(value) = arg.strip_prefix("--control-socket=") {
-            control_socket = Some(PathBuf::from(value));
-        } else if arg == "--folder" {
-            folder = args.next().map(PathBuf::from);
-        } else if arg == "--file" {
-            file = args.next().map(PathBuf::from);
-        } else if arg == "--control-socket" {
-            match args.peek() {
-                Some(next) if !next.starts_with('-') => {
-                    control_socket = args.next().map(PathBuf::from);
-                }
-                _ => {
-                    control_socket = Some(std::env::temp_dir().join("poc-ide-control.sock"));
-                }
-            }
-        }
-    }
-    Launch {
-        folder,
-        file,
-        control_socket,
-    }
 }

@@ -82,13 +82,18 @@ mod tests {
     fn parse_and_detect_cargo() {
         let text = "[package]\nname = \"greet\"\nedition = \"2021\"\n";
         assert_eq!(CargoTomlAdapter::parse_name(text).as_deref(), Some("greet"));
-        assert_eq!(CargoTomlAdapter::parse_edition(text).as_deref(), Some("2021"));
+        assert_eq!(
+            CargoTomlAdapter::parse_edition(text).as_deref(),
+            Some("2021")
+        );
         assert!(CargoTomlAdapter::parse_name("[workspace]\nmembers=[]\n").is_none());
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
         let model = CargoTomlAdapter.detect(dir.path()).unwrap();
         assert_eq!(model.kind, "cargo");
         assert_eq!(model.packages[0].id.as_str(), "app");
-        assert!(CargoTomlAdapter.detect(tempfile::tempdir().unwrap().path()).is_none());
+        assert!(CargoTomlAdapter
+            .detect(tempfile::tempdir().unwrap().path())
+            .is_none());
     }
 }

@@ -11,7 +11,7 @@ pub use dirty::DirtySet;
 pub use ingest::{IngestReport, PackageIngest, ProgressKind, WorkDoneProgress};
 pub use priority::{IndexClass, PriorityIndex};
 pub use service::{
-    count_error_nodes, tree_unparsed, IndexedFile, InputChange, LanguageIndexer, IndexService,
+    count_error_nodes, tree_unparsed, IndexService, IndexedFile, InputChange, LanguageIndexer,
     SharedIndex,
 };
 

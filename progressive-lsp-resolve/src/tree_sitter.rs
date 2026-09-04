@@ -93,6 +93,19 @@ impl TreeSitterResolver {
             .filter(|s| s.name == name || s.fqn.ends_with(&format!(".{name}")) || s.fqn == name)
             .collect()
     }
+
+    fn type_locations(&self, at: &IndexedSymbol, tier: Tier) -> Vec<LspLocation> {
+        let mut locs: Vec<LspLocation> = self
+            .lookup_name(&at.name)
+            .into_iter()
+            .filter(|s| s.kind.is_type())
+            .map(|s| s.to_location(tier))
+            .collect();
+        if locs.is_empty() && at.kind.is_type() {
+            locs.push(at.to_location(tier));
+        }
+        locs
+    }
 }
 
 impl Resolver for TreeSitterResolver {
@@ -175,7 +188,13 @@ impl Resolver for TreeSitterResolver {
                 ResolveOutcome::Ready(ResolveResult::locations(tier, locs))
             }
             QueryKind::Implementation => {
-                ResolveOutcome::Ready(ResolveResult::empty(tier))
+                let Some(at) = self.identifier_at(q) else {
+                    return ResolveOutcome::Ready(ResolveResult::empty(tier));
+                };
+                ResolveOutcome::Ready(ResolveResult::locations(
+                    tier,
+                    self.type_locations(&at, tier),
+                ))
             }
         }
     }
@@ -215,7 +234,14 @@ mod tests {
         }
     }
 
-    fn sym(file: &str, name: &str, line: u32, kind: SymbolKind, fqn: &str, arity: Option<u32>) -> IndexedSymbol {
+    fn sym(
+        file: &str,
+        name: &str,
+        line: u32,
+        kind: SymbolKind,
+        fqn: &str,
+        arity: Option<u32>,
+    ) -> IndexedSymbol {
         let range = Range::new(Position::new(line, 0), Position::new(line, 20));
         IndexedSymbol {
             file: FileId::new(file),
@@ -223,7 +249,10 @@ mod tests {
             name: name.into(),
             kind,
             range,
-            selection_range: Range::new(Position::new(line, 0), Position::new(line, name.len() as u32)),
+            selection_range: Range::new(
+                Position::new(line, 0),
+                Position::new(line, name.len() as u32),
+            ),
             arity,
             fqn: fqn.into(),
             container: None,
@@ -232,7 +261,14 @@ mod tests {
 
     #[test]
     fn indexed_symbol_name_match_and_empty_needle() {
-        let s = sym("A.java", "greet", 1, SymbolKind::Method, "com.Lib.greet", Some(1));
+        let s = sym(
+            "A.java",
+            "greet",
+            1,
+            SymbolKind::Method,
+            "com.Lib.greet",
+            Some(1),
+        );
         assert!(s.matches_name(""));
         assert!(s.matches_name("greet"));
         assert!(s.matches_name("Lib"));
@@ -244,8 +280,22 @@ mod tests {
     #[test]
     fn definition_cross_file_by_name() {
         let idx = MemIndex::new(vec![
-            sym("App.java", "greet", 4, SymbolKind::Method, "app.App.greet", Some(1)),
-            sym("Lib.java", "greet", 2, SymbolKind::Method, "com.example.lib.Lib.greet", Some(1)),
+            sym(
+                "App.java",
+                "greet",
+                4,
+                SymbolKind::Method,
+                "app.App.greet",
+                Some(1),
+            ),
+            sym(
+                "Lib.java",
+                "greet",
+                2,
+                SymbolKind::Method,
+                "com.example.lib.Lib.greet",
+                Some(1),
+            ),
         ]);
         let r = TreeSitterResolver::new(idx);
         let q = ResolveQuery::new(
@@ -267,10 +317,21 @@ mod tests {
     fn type_definition_filters_to_types() {
         let idx = MemIndex::new(vec![
             sym("A.java", "Lib", 0, SymbolKind::Class, "com.Lib", None),
-            sym("A.java", "Lib", 3, SymbolKind::Method, "com.Lib.Lib", Some(0)),
+            sym(
+                "A.java",
+                "Lib",
+                3,
+                SymbolKind::Method,
+                "com.Lib.Lib",
+                Some(0),
+            ),
         ]);
         let r = TreeSitterResolver::new(idx);
-        let q = ResolveQuery::new(FileId::new("A.java"), Position::new(0, 0), QueryKind::TypeDefinition);
+        let q = ResolveQuery::new(
+            FileId::new("A.java"),
+            Position::new(0, 0),
+            QueryKind::TypeDefinition,
+        );
         match r.resolve(&q) {
             ResolveOutcome::Ready(res) => {
                 assert_eq!(res.locations.len(), 1);
@@ -385,6 +446,47 @@ mod tests {
     }
 
     #[test]
+    fn implementation_of_class_usage_finds_declaration() {
+        let usage = IndexedSymbol {
+            file: FileId::new("CacheTest.java"),
+            uri: "file:///CacheTest.java".into(),
+            name: "DefaultLocalConfigService".into(),
+            kind: SymbolKind::Variable,
+            range: Range::new(Position::new(1, 4), Position::new(1, 29)),
+            selection_range: Range::new(Position::new(1, 4), Position::new(1, 29)),
+            arity: None,
+            fqn: "CacheTest.DefaultLocalConfigService".into(),
+            container: Some("CacheTest".into()),
+        };
+        let idx = MemIndex::new(vec![
+            sym(
+                "Svc.java",
+                "DefaultLocalConfigService",
+                0,
+                SymbolKind::Class,
+                "com.DefaultLocalConfigService",
+                None,
+            ),
+            usage,
+        ]);
+        let r = TreeSitterResolver::new(idx);
+        match r.resolve(&ResolveQuery::new(
+            FileId::new("CacheTest.java"),
+            Position::new(1, 10),
+            QueryKind::Implementation,
+        )) {
+            ResolveOutcome::Ready(res) => {
+                assert!(
+                    res.locations.iter().any(|l| l.uri.contains("Svc.java")),
+                    "{:?}",
+                    res.locations
+                );
+            }
+            ResolveOutcome::NotReady => panic!("T1 implementation of a class usage"),
+        }
+    }
+
+    #[test]
     fn empty_index_workspace_symbol() {
         let r = TreeSitterResolver::new(Arc::new(crate::query::EmptyIndex));
         match r.resolve(&ResolveQuery::workspace_symbol("x")) {
@@ -438,8 +540,22 @@ mod tests {
     #[test]
     fn lookup_matches_simple_name_and_fqn_suffix() {
         let idx = MemIndex::new(vec![
-            sym("A.java", "run", 1, SymbolKind::Method, "com.example.app.App.run", Some(0)),
-            sym("B.java", "other", 2, SymbolKind::Method, "com.example.lib.Lib.run", Some(0)),
+            sym(
+                "A.java",
+                "run",
+                1,
+                SymbolKind::Method,
+                "com.example.app.App.run",
+                Some(0),
+            ),
+            sym(
+                "B.java",
+                "other",
+                2,
+                SymbolKind::Method,
+                "com.example.lib.Lib.run",
+                Some(0),
+            ),
         ]);
         let r = TreeSitterResolver::new(idx);
         match r.resolve(&ResolveQuery::new(
@@ -448,7 +564,11 @@ mod tests {
             QueryKind::References,
         )) {
             ResolveOutcome::Ready(res) => {
-                assert_eq!(res.locations.len(), 2, "name or .run suffix must both match");
+                assert_eq!(
+                    res.locations.len(),
+                    2,
+                    "name or .run suffix must both match"
+                );
             }
             ResolveOutcome::NotReady => panic!("ready"),
         }

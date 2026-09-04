@@ -8,14 +8,14 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 
 | Capability | How |
 |---|---|
-| Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog` |
+| Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog`. Non-Linux: **Open Folder…** is native T1/T2; **Open Folder in Container…** is one Linux serve (T1/T2/T3) with a launch modal. Linux: Open Folder is the full host. |
+| T1/T2/T3 strip | Buttons. Click opens `StatusModal` + `LaunchJournal`. Native non-Linux T3 is `skipped` (`open folder in container`). Java T3 is `not supported` until in-process bytecode. Stub refuse is `skipped`, not `done`. |
 | Tree, tabs, editor, resizable left panel | Domain `FileTree` + `CompactChain` + `TabStrip` + `LayoutState`; eframe `SidePanel` in the bin. Single-child dir chains render as `a/b/c`. |
 | Syntax highlighting | `Highlighter` Adapter + `HighlightCache` over **syntect** (egui layouter in the bin; keyed by path + rope generation) |
 | Tree expand | `TreeIoRequest` / `ExpandChainCommand` on a background worker; header may look open with `loading…` until the inbox fills |
 | Background disk edits | `DiskWatch` Observer; dirty buffer → `ConflictModal` (load from disk or keep in memory) |
 | Edit | `EditCommand`: insert, delete, select, cut, copy, paste, open, save |
-| Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` (Navigate, F12, editor and file-tree context menu). Items use `DiscoverOffer` × current tier; disabled labels are honest (`connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)`). |
-| T1/T2/T3 strip | `TierStrip` for the focused file’s package (workspace aggregate fallback). Java T3 is `not supported`; Rust/CSS T2 is `n/a`; Darwin stub refuse is `skipped`, not `done`. |
+| Discovery | Stock LSP `textDocument/definition`, `implementation`, `references` (Navigate, F12, editor and file-tree context menu). Items use `DiscoverOffer` × current tier; disabled labels are honest (`connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)` / `open folder in container`). |
 | Language by extension | `LanguageCatalog` Registry + `DiscoverOffer`; one `progressive-lsp serve` per workspace |
 | Per-run debug log | `RunLog` Repository → sqlite under `~/.progressivelsp/poc-ide-runs/` (or `POC_IDE_LOG_DIR`); one file per process. No hand-typed protocol console in the bin. `ProtocolConsole` stays a lib Facade for Envelope/LSP transcript tests. |
 
@@ -36,6 +36,7 @@ Supported proof launch (builds `progressive-lsp` first so poc-ide does not spawn
 ```text
 cargo xtask poc
 cargo xtask poc -- --folder DIR
+cargo xtask poc -- --folder DIR --container
 cargo xtask poc -- --file PATH
 ```
 

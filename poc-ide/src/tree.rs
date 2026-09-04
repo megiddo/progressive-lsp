@@ -66,11 +66,13 @@ impl WorkspaceRoot {
     }
 }
 
-/// File → Open Folder / Open File. Recorded on click; apply runs the native
-/// dialog after the menu has closed so `rfd` is not invoked mid-layout.
+/// File → Open Folder / Open File / Open Folder in Container. Recorded on
+/// click; apply runs the native dialog after the menu has closed so `rfd` is
+/// not invoked mid-layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialogAction {
     OpenFolder,
+    OpenFolderInContainer,
     OpenFile,
 }
 
@@ -96,6 +98,12 @@ impl PendingDialog {
         }
     }
 
+    pub fn open_folder_in_container() -> Self {
+        Self {
+            action: DialogAction::OpenFolderInContainer,
+        }
+    }
+
     pub fn open_file() -> Self {
         Self {
             action: DialogAction::OpenFile,
@@ -112,10 +120,12 @@ impl PendingDialog {
         fs: &(impl FsPort + ?Sized),
     ) -> Result<DialogOutcome, IdeError> {
         match self.action {
-            DialogAction::OpenFolder => match WorkspaceRoot::open_folder(dialog, fs)? {
-                None => Ok(DialogOutcome::Cancelled),
-                Some(root) => Ok(DialogOutcome::Folder(root)),
-            },
+            DialogAction::OpenFolder | DialogAction::OpenFolderInContainer => {
+                match WorkspaceRoot::open_folder(dialog, fs)? {
+                    None => Ok(DialogOutcome::Cancelled),
+                    Some(root) => Ok(DialogOutcome::Folder(root)),
+                }
+            }
             DialogAction::OpenFile => match WorkspaceRoot::open_file(dialog, fs)? {
                 None => Ok(DialogOutcome::Cancelled),
                 Some((root, path)) => Ok(DialogOutcome::File { root, path }),
@@ -763,8 +773,16 @@ mod tests {
             PendingDialog::open_folder().action(),
             DialogAction::OpenFolder
         );
+        assert_eq!(
+            PendingDialog::open_folder_in_container().action(),
+            DialogAction::OpenFolderInContainer
+        );
         assert_eq!(PendingDialog::open_file().action(), DialogAction::OpenFile);
         assert_ne!(PendingDialog::open_folder(), PendingDialog::open_file());
+        assert_ne!(
+            PendingDialog::open_folder(),
+            PendingDialog::open_folder_in_container()
+        );
         assert_eq!(PendingDialog::open_folder(), PendingDialog::open_folder());
 
         let fs = sample_fs();
@@ -786,6 +804,15 @@ mod tests {
             other => panic!("expected folder, got {other:?}"),
         }
         assert_eq!(dialog.pending_folders(), 0);
+
+        dialog.queue_folder("/ws");
+        match PendingDialog::open_folder_in_container()
+            .apply(&mut dialog, &fs)
+            .unwrap()
+        {
+            DialogOutcome::Folder(root) => assert_eq!(root.as_path(), Path::new("/ws")),
+            other => panic!("expected folder, got {other:?}"),
+        }
 
         dialog.queue_file_cancel();
         assert_eq!(

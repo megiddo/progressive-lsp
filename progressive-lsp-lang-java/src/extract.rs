@@ -2,7 +2,7 @@
 
 use progressive_lsp_core::{FileId, LanguageId};
 use progressive_lsp_index::LanguageIndexer;
-use progressive_lsp_resolve::{IndexedSymbol, Position, Range, SymbolKind};
+use progressive_lsp_resolve::{type_ref_simple, IndexedSymbol, Position, Range, SymbolKind};
 use tree_sitter::{Node, Tree};
 
 use crate::{grammar_id, language_id, tree_sitter_language};
@@ -27,7 +27,12 @@ impl LanguageIndexer for JavaIndexer {
         extract_symbols(file, uri, source, tree)
     }
 
-    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> progressive_lsp_resolve::GraphFacts {
+    fn extract_graph(
+        &self,
+        file: &FileId,
+        source: &str,
+        tree: &Tree,
+    ) -> progressive_lsp_resolve::GraphFacts {
         extract_graph_facts(file, source, tree)
     }
 }
@@ -98,7 +103,10 @@ fn walk(
     out: &mut Vec<IndexedSymbol>,
 ) {
     match node.kind() {
-        "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" => {
+        "class_declaration"
+        | "interface_declaration"
+        | "enum_declaration"
+        | "record_declaration" => {
             let kind = match node.kind() {
                 "interface_declaration" => SymbolKind::Interface,
                 "enum_declaration" => SymbolKind::Enum,
@@ -203,14 +211,20 @@ fn walk_graph(
                 let p = path.trim_end_matches(".*").to_string();
                 facts
                     .imports
-                    .push(progressive_lsp_resolve::ImportDecl::wildcard(file.clone(), p));
+                    .push(progressive_lsp_resolve::ImportDecl::wildcard(
+                        file.clone(),
+                        p,
+                    ));
             } else if !path.is_empty() {
                 facts
                     .imports
                     .push(progressive_lsp_resolve::ImportDecl::new(file.clone(), path));
             }
         }
-        "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" => {
+        "class_declaration"
+        | "interface_declaration"
+        | "enum_declaration"
+        | "record_declaration" => {
             let name = node
                 .child_by_field_name("name")
                 .map(|n| text(n, src))
@@ -220,7 +234,7 @@ fn walk_graph(
                 (_, n) => n.to_string(),
             };
             if let Some(sc) = node.child_by_field_name("superclass") {
-                let parent = text(sc, src).trim().to_string();
+                let parent = type_ref_simple(&text(sc, src));
                 if !parent.is_empty() {
                     facts
                         .edges
@@ -230,7 +244,7 @@ fn walk_graph(
             if let Some(ifaces) = node.child_by_field_name("interfaces") {
                 let raw = text(ifaces, src);
                 for part in raw.split(',') {
-                    let p = part.trim().trim_start_matches("implements").trim();
+                    let p = type_ref_simple(part);
                     if !p.is_empty() {
                         facts
                             .edges
@@ -361,7 +375,9 @@ public class Lib {
         let tree = parse(src);
         let file = FileId::new("Lib.java");
         let syms = extract_symbols(&file, "file:///Lib.java", src, &tree);
-        assert!(syms.iter().any(|s| s.name == "Lib" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Lib" && s.kind == SymbolKind::Class));
         let greet = syms
             .iter()
             .find(|s| s.name == "greet" && s.kind == SymbolKind::Method)
@@ -371,7 +387,12 @@ public class Lib {
         assert_eq!(JavaIndexer.grammar_id(), "tree-sitter-java");
         assert_eq!(JavaIndexer.language_id().as_str(), "java");
         let _ = JavaIndexer.tree_sitter_language();
-        assert_eq!(JavaIndexer.extract(&file, "file:///Lib.java", src, &tree).len(), syms.len());
+        assert_eq!(
+            JavaIndexer
+                .extract(&file, "file:///Lib.java", src, &tree)
+                .len(),
+            syms.len()
+        );
     }
 
     #[test]
@@ -383,8 +404,12 @@ class C { C(int a) {} }
 "#;
         let tree = parse(src);
         let syms = extract_symbols(&FileId::new("X.java"), "file:///X.java", src, &tree);
-        assert!(syms.iter().any(|s| s.kind == SymbolKind::Interface && s.name == "I"));
-        assert!(syms.iter().any(|s| s.kind == SymbolKind::Enum && s.name == "E"));
+        assert!(syms
+            .iter()
+            .any(|s| s.kind == SymbolKind::Interface && s.name == "I"));
+        assert!(syms
+            .iter()
+            .any(|s| s.kind == SymbolKind::Enum && s.name == "E"));
         assert!(syms
             .iter()
             .any(|s| s.kind == SymbolKind::Constructor && s.arity == Some(1)));
@@ -397,7 +422,9 @@ class C { C(int a) {} }
         let syms = extract_symbols(&FileId::new("S.java"), "file:///S.java", src, &tree);
         let solo = syms.iter().find(|s| s.name == "Solo").unwrap();
         assert_eq!(solo.fqn, "Solo");
-        assert!(syms.iter().any(|s| s.kind == SymbolKind::Variable || s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.kind == SymbolKind::Variable || s.kind == SymbolKind::Class));
     }
 
     #[test]
@@ -414,11 +441,66 @@ class C { C(int a) {} }
         let src = "record Point(int x, int y) { void sum(int... xs) {} }";
         let tree = parse(src);
         let syms = extract_symbols(&FileId::new("P.java"), "file:///P.java", src, &tree);
-        assert!(syms.iter().any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
-        let sum = syms.iter().find(|s| s.name == "sum" && s.kind == SymbolKind::Method);
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
+        let sum = syms
+            .iter()
+            .find(|s| s.name == "sum" && s.kind == SymbolKind::Method);
         if let Some(sum) = sum {
             assert_eq!(sum.arity, Some(1));
         }
+    }
+
+    #[test]
+    fn extracts_generic_field_type_at_cursor() {
+        let src = r#"package com.amazon.pdf.client.configuration;
+
+import com.amazon.pdf.client.ClientResolver;
+import lombok.Builder;
+import lombok.Data;
+
+@Data
+@Builder
+public class CacheConfiguration<K, V> {
+
+    protected CacheInterfaceConfiguration<K, V> cacheInterfaceConfiguration;
+
+    protected ClientResolver<K, V> resolver;
+
+    protected ClientConfiguration<K, V> clientConfiguration;
+}
+"#;
+        let tree = parse(src);
+        let file = FileId::new("/tmp/CacheConfiguration.java");
+        let syms = extract_symbols(&file, "file:///tmp/CacheConfiguration.java", src, &tree);
+        let pos = Position::new(10, 32);
+        let hits: Vec<_> = syms
+            .iter()
+            .filter(|s| pos.is_within(s.selection_range))
+            .map(|s| {
+                format!(
+                    "{} {:?} {}:{}-{}:{}",
+                    s.name,
+                    s.kind,
+                    s.selection_range.start.line,
+                    s.selection_range.start.character,
+                    s.selection_range.end.line,
+                    s.selection_range.end.character
+                )
+            })
+            .collect();
+        assert!(
+            hits.iter()
+                .any(|h| h.contains("CacheInterfaceConfiguration")),
+            "cursor L10:32 must hit CacheInterfaceConfiguration, symbols={hits:?} all={:?}",
+            syms.iter()
+                .map(|s| format!(
+                    "{} {:?} L{}:{}",
+                    s.name, s.kind, s.selection_range.start.line, s.selection_range.start.character
+                ))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -427,7 +509,7 @@ class C { C(int a) {} }
 package com.example.app;
 import com.example.lib.Lib;
 import com.example.util.*;
-class Child extends Base implements Face {
+class Child extends Base<T> implements Face<K, V> {
     void run() { Lib.greet("x"); }
 }
 "#;
@@ -437,7 +519,8 @@ class Child extends Base implements Face {
         assert_eq!(facts.package.as_deref(), Some("com.example.app"));
         assert!(facts.imports.iter().any(|i| i.simple == "Lib"));
         assert!(facts.imports.iter().any(|i| i.wildcard));
-        assert!(facts.edges.iter().any(|e| e.parent_fqn.contains("Base")));
+        assert!(facts.edges.iter().any(|e| e.parent_fqn == "Base"));
+        assert!(facts.edges.iter().any(|e| e.parent_fqn == "Face"));
         assert!(facts.calls.iter().any(|c| c.name == "greet"));
         assert_eq!(
             JavaIndexer.extract_graph(&file, src, &tree).imports.len(),

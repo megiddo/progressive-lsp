@@ -35,7 +35,11 @@ impl EngineCapabilities {
     }
 
     pub fn any(self) -> bool {
-        self.definition || self.references || self.hover || self.implementation || self.type_definition
+        self.definition
+            || self.references
+            || self.hover
+            || self.implementation
+            || self.type_definition
     }
 }
 
@@ -88,7 +92,13 @@ mod tests {
         }
         .any());
         let full = EngineCapabilities::types_full();
-        assert!(full.definition && full.references && full.hover && full.implementation && full.type_definition);
+        assert!(
+            full.definition
+                && full.references
+                && full.hover
+                && full.implementation
+                && full.type_definition
+        );
         assert_eq!(full.merge(EngineCapabilities::empty()), full);
     }
 }

@@ -62,8 +62,14 @@ mod tests {
     #[test]
     fn parse_module_and_go() {
         let text = "module example.com/greet\n\ngo 1.22\n";
-        assert_eq!(GoModAdapter::parse_module(text).as_deref(), Some("example.com/greet"));
-        assert_eq!(GoModAdapter::parse_go_directive(text).as_deref(), Some("1.22"));
+        assert_eq!(
+            GoModAdapter::parse_module(text).as_deref(),
+            Some("example.com/greet")
+        );
+        assert_eq!(
+            GoModAdapter::parse_go_directive(text).as_deref(),
+            Some("1.22")
+        );
         assert!(GoModAdapter::parse_module("require x").is_none());
         assert!(GoModAdapter::parse_go_directive("module x").is_none());
         assert!(GoModAdapter::parse_module("module   ").is_none());
@@ -72,11 +78,17 @@ mod tests {
     #[test]
     fn detect_go_mod() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("go.mod"), "module example.com/app\ngo 1.22\n").unwrap();
+        std::fs::write(
+            dir.path().join("go.mod"),
+            "module example.com/app\ngo 1.22\n",
+        )
+        .unwrap();
         let model = GoModAdapter.detect(dir.path()).unwrap();
         assert_eq!(model.kind, "go.mod");
         assert_eq!(model.packages[0].id.as_str(), "example.com/app");
-        assert!(GoModAdapter.detect(tempfile::tempdir().unwrap().path()).is_none());
+        assert!(GoModAdapter
+            .detect(tempfile::tempdir().unwrap().path())
+            .is_none());
     }
 
     #[test]

@@ -14,7 +14,8 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `PluginRegistry` | Factory / Registry | Lookup by `LanguageId` / pack name is deterministic; unknown → `UnsupportedLanguage`, no panic; `with_log` emits `info` `operation=resolve` on `get` fail (LOG-8) |
 | `LanguageFactory` | Abstract Factory | Produces grammar id + resolver chain for one language |
 | `ScriptEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai; watch tests do not hard-code Rhai |
-| `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
+| `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path; `FileId::from_uri` percent-decodes so ingest and resolve share the OS path |
+| `path_to_file_uri` / `path_from_file_uri` | Adapter | Same percent-encoding as poc-ide `file_uri`; spaces and `@` round-trip; incoming `file:` URIs decode before index lookup |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
 | `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info`; `PROGRESSIVE_LSP_LOG_LEVEL` is resolved on `LogLevel`, not in the overlay |
@@ -60,7 +61,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer`; `LogScope` around didOpen/didChange/definition (Context Object); `didClose` debug (LOG-8); `indexer_for` None → once-per-id `info` `operation=resolve`; holds `EngineSupervisor` when serve attaches it (LOG-6); `attach_supervisor` prepends `EngineResolver` (skip-once, never fail the user) |
 | `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
-| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`) |
+| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` remembered on disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`); disk marker does **not** skip extract — only an in-memory symbol hit for that path skips Tree-sitter |
 | `CacheKey` | Value object / identity | Path is `sanitize(grammar)/sanitize(lang)/hex(hash)`; `.`/`..` cannot escape the prefix |
 | `IndexedFile.has_error` / `unparsed_note` | Value object | ERROR/MISSING nodes ⇒ note; server stays up, no panic |
 | `sample_rss_bytes` / `rss_sample_label` | Value object | Darwin/Linux host sample; not an allocator-matrix CI-arch winner |
@@ -80,7 +81,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | Feature `lang-*` | Product variants | Disabled language → Factory missing, not a stub that panics |
 | `PackageIngest` / `IngestReport` | Command | One package per step; `didChange` never waits on remaining packages |
 | `WorkDoneProgress` / `ProgressKind` | Event / DTO | Standard LSP `$/progress` begin/report/end; not a `$/` FilesSince shim |
-| `GraphFacts` / `ImportDecl` / `TypeEdge` / `CallSite` | Value objects | LanguageIndexer Visitor fills them; resolvers do not parse JSON-RPC |
+| `GraphFacts` / `ImportDecl` / `TypeEdge` / `CallSite` | Value objects | LanguageIndexer Visitor fills them; resolvers do not parse JSON-RPC; `TypeEdge` parent is a simple type name (`type_ref_simple` strips type arguments) |
 | `GraphIndex` | Port | Same store as `SymbolIndex`; package tier is Graph only after ingest |
 | `StackGraphResolver` | Strategy | `unused()` is NotReady; `load_java` / `with_tsg_source` loads pinned Java TSG when selected |
 | `ComposerAdapter` / `GoModAdapter` / `ZigBuildAdapter` | Adapter | Manifest files only; no host php/go/zig |
@@ -185,7 +186,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test. `NoFileOpen` is the discover / context-menu empty-tab error |
 | `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
-| `PendingDialog` / `DialogAction` / `DialogOutcome` | Command / value | File-menu click records Open Folder / Open File; apply runs the Port after the menu closes; cancel is `Cancelled`, not an error |
+| `PendingDialog` / `DialogAction` / `DialogOutcome` | Command / value | File-menu click records Open Folder / Open Folder in Container / Open File; apply runs the Port after the menu closes; cancel is `Cancelled`, not an error |
 | `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
 | `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |
 | `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |
@@ -217,10 +218,10 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `LogMessageEvent` | Event / DTO | `window/logMessage` kept by the reader; missing `type` is 0 |
 | `DiscoverFlight` | Value object | Idle vs in-flight kind; second `begin` is a no-op; `waiting_label` is `waiting for server` iff in flight; not a Manager |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
-| `Highlighter` | Adapter + Cache | syntect tokens; unknown syntax → empty/plain spans, no panic. `highlight(path, text, generation)` hits [`HighlightCache`]; a second call with the same path + generation does not re-tokenize (`tokenize_count` stays) |
+| `Highlighter` | Adapter + Cache | syntect `InspiredGitHub` (dark token colors on the light egui editor); unknown syntax → empty/plain spans, no panic. `highlight(path, text, generation)` hits [`HighlightCache`]; a second call with the same path + generation does not re-tokenize (`tokenize_count` stays) |
 | `HighlightKey` | Value object / identity | Path + rope generation; equality is both fields |
 | `HighlightCache` | Cache | Stores `Vec<HighlightSpan>` for one key; hit returns the spans; miss tokenizes and stores; `clear` drops the entry |
-| `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
+| `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list; unhighlighted text uses `PLAIN_TEXT_RGB` |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
 | `WatchDepth` | Value object | `immediate` vs `recursive`; folder open uses immediate so a large tree does not block on a recursive OS watch |
 | `LspSessionState` | Value object | `idle` / `connecting` / `ready` / `failed`; connecting is not ready; tree paint must not wait for `ready` |
@@ -230,6 +231,14 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `SystemClock` (poc-ide) | ClockPort production | Wall `unix_ms`; tests use `FakeClock` |
 | `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
 | `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
+| `HostOs` | Value object | `linux` vs `other`; container File-menu item only on `other` |
+| `OpenMode` | Strategy | `native` vs `container`; `for_host` forces native on Linux; T3 offered for native-on-Linux or container; never two LSP processes |
+| `T3HostOffer` | Value object | `Offered` vs `NeedsContainer`; strip skip + discover `open folder in container` |
+| `LaunchFlags` / `parse_launch_args` | DTO + parser | `--folder` / `--file` / `--container` / `--control-socket`; tests parse strings |
+| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` with a missing binary in tests; no daemon |
+| `LaunchJournal` / `LaunchStep` / `StepState` | Value objects | Ordered `pending`/`running`/`ok`/`fail`/`skipped`; container plan: probe → platform → image → mount → start → T3 preflight |
+| `StatusModal` / `StatusModalKind` | Value object | Closed or open T1/T2/T3/container; Close does not cancel work |
+| `RuntimeIoRequest` / `RuntimeIoEvent` / `RuntimeIoHandle` | Command + Event mailbox | UI submits launch; worker yields `Progress` then `Finished` journal; tests `pump_runtime_io` |
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen`. `discover_offers` is method × min tier × ceiling from the language matrix; Java has no T3 offers; C# ceiling is T1/T2 |
 | `WireTier` | Value object | `syntax` / `graph` / `types`; unknown parse → `None`; `meets` is `>=` |
 | `DiscoverOffer` | Value object | One LSP method + `min_tier` + language `ceiling`; Java/C# ceiling is `graph`; typed-only methods have `min_tier == types` |
@@ -251,21 +260,22 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
 | `ControlPushInbox` | Observer | UI `ingest` / `poll` of `ControlPush`; never calls `index_status` / `tier_status` |
 | `ControlIoEvent` / `ControlIoHandle` | Event + inbox | Control IO thread yields Connected / IndexStatus / TierStatus / Push / Failed; `fn ui` only `poll`s; unary snapshots are requested on the IO thread |
-| `PackageTierMap` | Value object / collection | Applies IndexStatus ingest + TierStatus / TierReady; focused path picks a package id in the path, else workspace max tier |
-| `TierCell` / `TierCellKind` / `TierCellState` | Value objects | Cell is T1/T2/T3 × `in progress` / `done` / `not supported` / `skipped` / `n/a`; Java T3 is `not supported`; Rust/CSS T2 is `n/a`; stub refuse is `skipped`, never `done` |
-| `TierStrip` | Value object | Three cells from LanguageCatalog × ingest × current wire tier; `ui.rs` only renders |
-| `DiscoverMenu` / `DiscoverMenuItem` / `MenuDisableReason` | Value objects | Same ground truth for Navigate and context menus; disabled labels are `connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)`; `to_io_request` is `None` while disabled so FakeLsp is not called |
+| `PackageTierMap` | Value object / collection | Applies IndexStatus ingest + TierStatus / TierReady; focused path picks a package id in the path, else workspace max tier. `ingest_for_strip` treats Connecting + no IndexStatus as Running and Ready + no IndexStatus as Done (initialize ingest is sync) |
+| `TierCell` / `TierCellKind` / `TierCellState` | Value objects | Cell is T1/T2/T3 × `processing` / `done` / `not supported` / `skipped` / `n/a`; `n/a` is waiting (or matrix-no-T2); Java T3 is `not supported`; Rust/CSS T2 is `n/a`; native non-Linux T3 is `skipped`; stub refuse is `skipped`, never `done` |
+| `TierStrip` | Value object | Three cells from LanguageCatalog × ingest × current wire tier × `T3HostOffer`; no focused file still paints T1/T2 from workspace ingest; ingest running is T2 `processing` without waiting for Syntax; `ui.rs` renders cells as buttons that open `StatusModal` |
+| `DiscoverMenu` / `DiscoverMenuItem` / `MenuDisableReason` | Value objects | Same ground truth for Navigate and context menus; disabled labels are `connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)` / `open folder in container`; `to_io_request` is `None` while disabled so FakeLsp is not called |
 | `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
 | `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
-| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX` |
+| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX`; same codec as core `path_to_file_uri` |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
 | `RunLog` | Repository | One sqlite file (or `:memory:`) per run; append + query; write failure is `IdeError::Log`, never a panic. Discover rows include `path`, `uri`, `line`, `character`, `location_count` |
 | `RunLogPath` | Value object | `{dir}/poc-ide-{unix_ms}-{pid}.sqlite`; tests inject dir / path |
 | `LogRow` | DTO | `timestamp_ms` + `category` + `event` + optional JSON; payload is structured, never file bodies |
-| `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict`; unknown parse → `None` |
+| `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict` / `runtime`; unknown parse → `None` |
 | `IdeError::Log` | Domain Result | Classifier `is_log`; composition root ignores write failures |
+| `IdeError::Runtime` | Domain Result | Classifier `is_runtime`; Docker probe / image / start / T3 preflight |
 
 ## xtask (operator CLI)
 

@@ -12,8 +12,7 @@ pub fn matrix_path() -> std::path::PathBuf {
 
 pub fn run(_args: &[String]) -> Result<(), String> {
     let path = matrix_path();
-    let text = fs::read_to_string(&path)
-        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    let text = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let table: toml::Table = text
         .parse()
         .map_err(|e: toml::de::Error| format!("parse matrix: {e}"))?;

@@ -34,6 +34,8 @@ pub enum IdeError {
     Control(String),
     #[error("log: {0}")]
     Log(String),
+    #[error("runtime: {0}")]
+    Runtime(String),
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -95,6 +97,10 @@ impl IdeError {
         matches!(self, Self::Log(_))
     }
 
+    pub fn is_runtime(&self) -> bool {
+        matches!(self, Self::Runtime(_))
+    }
+
     pub fn is_control_socket_missing(&self) -> bool {
         matches!(self, Self::Control(m) if m == "control socket missing")
     }
@@ -137,6 +143,10 @@ impl IdeError {
 
     pub fn log(msg: impl Into<String>) -> Self {
         Self::Log(msg.into())
+    }
+
+    pub fn runtime(msg: impl Into<String>) -> Self {
+        Self::Runtime(msg.into())
     }
 }
 
@@ -196,6 +206,10 @@ mod tests {
             IdeError::log("sink unavailable").to_string(),
             "log: sink unavailable"
         );
+        assert_eq!(
+            IdeError::runtime("docker missing").to_string(),
+            "runtime: docker missing"
+        );
         let io = IdeError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert!(io.to_string().contains("denied"));
     }
@@ -240,6 +254,9 @@ mod tests {
         assert!(IdeError::log("x").is_log());
         assert!(!IdeError::log("x").is_io());
         assert!(!IdeError::log("x").is_control());
+        assert!(!IdeError::log("x").is_runtime());
+        assert!(IdeError::runtime("x").is_runtime());
+        assert!(!IdeError::runtime("x").is_log());
         let io = IdeError::from(io::Error::other("x"));
         assert!(io.is_io());
         assert!(!io.is_not_absolute());

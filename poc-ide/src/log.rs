@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 
 use crate::conflict::ConflictChoice;
 use crate::error::IdeError;
+use crate::open_mode::OpenMode;
 use crate::ports::ClockPort;
+use crate::runtime::LaunchJournal;
 
 pub const EVENT_RUN_START: &str = "run_start";
 pub const EVENT_CHILD_STDERR: &str = "child_stderr";
@@ -28,6 +30,7 @@ pub const EVENT_PROGRESS: &str = "$/progress";
 pub const EVENT_LOG_MESSAGE: &str = "window/logMessage";
 pub const EVENT_CONFLICT_ENQUEUE: &str = "conflict_enqueue";
 pub const EVENT_CONFLICT_RESOLVE: &str = "conflict_resolve";
+pub const EVENT_CONTAINER_STEP: &str = "container_step";
 
 /// Child `PROGRESSIVE_LSP_LOG_LEVEL`. poc-ide always sets this on spawn.
 pub const CHILD_LOG_LEVEL: &str = "debug";
@@ -55,6 +58,7 @@ pub enum LogCategory {
     Lsp,
     Control,
     Conflict,
+    Runtime,
 }
 
 impl LogCategory {
@@ -68,6 +72,7 @@ impl LogCategory {
             Self::Lsp => "lsp",
             Self::Control => "control",
             Self::Conflict => "conflict",
+            Self::Runtime => "runtime",
         }
     }
 
@@ -81,6 +86,7 @@ impl LogCategory {
             "lsp" => Some(Self::Lsp),
             "control" => Some(Self::Control),
             "conflict" => Some(Self::Conflict),
+            "runtime" => Some(Self::Runtime),
             _ => None,
         }
     }
@@ -510,6 +516,31 @@ impl RunLog {
         self.record(LogCategory::Ui, EVENT_OPEN_FOLDER, json_path(path));
     }
 
+    pub fn log_open_folder_mode(&mut self, path: &Path, mode: OpenMode) {
+        self.record(
+            LogCategory::Ui,
+            EVENT_OPEN_FOLDER,
+            Some(json_obj([
+                ("path", json!(path.display().to_string())),
+                ("mode", json!(mode.as_str())),
+            ])),
+        );
+    }
+
+    pub fn log_container_journal(&mut self, journal: &LaunchJournal) {
+        for step in journal.steps() {
+            self.record(
+                LogCategory::Runtime,
+                EVENT_CONTAINER_STEP,
+                Some(json_obj([
+                    ("id", json!(step.id())),
+                    ("state", json!(step.state().as_str())),
+                    ("detail", opt_str(step.detail())),
+                ])),
+            );
+        }
+    }
+
     pub fn log_open_file(&mut self, path: &Path) {
         self.record(LogCategory::Ui, EVENT_OPEN_FILE, json_path(path));
     }
@@ -767,6 +798,7 @@ mod tests {
             LogCategory::Lsp,
             LogCategory::Control,
             LogCategory::Conflict,
+            LogCategory::Runtime,
         ];
         for cat in all {
             assert_eq!(
@@ -1275,5 +1307,27 @@ mod tests {
         let missing = tmp.path().join("nope").join("run.sqlite");
         let err = RunLog::open(&missing, FakeClock::at_unix_ms(1)).unwrap_err();
         assert!(err.is_log());
+    }
+
+    #[test]
+    fn run_log_records_open_mode_and_container_journal() {
+        let mut log = memory_at(1);
+        log.log_open_folder_mode(Path::new("/ws"), crate::open_mode::OpenMode::Container);
+        log.log_container_journal(&crate::runtime::LaunchJournal::native_t3_skipped());
+        let rows = log.rows().unwrap();
+        let open = rows
+            .iter()
+            .find(|r| r.event() == EVENT_OPEN_FOLDER)
+            .unwrap();
+        assert_eq!(open.payload().unwrap()["mode"], "container");
+        let step = rows
+            .iter()
+            .find(|r| r.event() == EVENT_CONTAINER_STEP)
+            .unwrap();
+        assert_eq!(step.category(), LogCategory::Runtime);
+        assert_eq!(step.payload().unwrap()["id"], "t3_host");
+        assert_eq!(step.payload().unwrap()["state"], "skipped");
+        assert_eq!(EVENT_CONTAINER_STEP, "container_step");
+        assert_eq!(LogCategory::Runtime.as_str(), "runtime");
     }
 }

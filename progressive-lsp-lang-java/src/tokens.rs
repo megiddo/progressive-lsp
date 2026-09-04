@@ -37,7 +37,10 @@ pub struct SemanticToken {
 
 impl SemanticToken {
     pub fn type_index(kind: &str) -> Option<u32> {
-        TOKEN_TYPES.iter().position(|k| *k == kind).map(|i| i as u32)
+        TOKEN_TYPES
+            .iter()
+            .position(|k| *k == kind)
+            .map(|i| i as u32)
     }
 }
 
@@ -123,8 +126,12 @@ mod tests {
         let tree = p.parse(src, None).unwrap();
         let toks = tokens_from_tree(src, &tree);
         assert!(!toks.is_empty());
-        assert!(toks.iter().any(|t| t.token_type == SemanticToken::type_index("class").unwrap()));
-        assert!(toks.iter().any(|t| t.token_type == SemanticToken::type_index("variable").unwrap()));
+        assert!(toks
+            .iter()
+            .any(|t| t.token_type == SemanticToken::type_index("class").unwrap()));
+        assert!(toks
+            .iter()
+            .any(|t| t.token_type == SemanticToken::type_index("variable").unwrap()));
         assert_eq!(map_kind("class_declaration"), Some("class"));
         assert_eq!(map_kind("identifier"), Some("variable"));
         let data = encode_lsp_data(&toks);
@@ -141,8 +148,18 @@ mod tests {
         let empty = encode_lsp_data(&[]);
         assert!(empty.is_empty());
         let same_line = encode_lsp_data(&[
-            SemanticToken { line: 3, start: 2, length: 1, token_type: 1 },
-            SemanticToken { line: 3, start: 6, length: 2, token_type: 2 },
+            SemanticToken {
+                line: 3,
+                start: 2,
+                length: 1,
+                token_type: 1,
+            },
+            SemanticToken {
+                line: 3,
+                start: 6,
+                length: 2,
+                token_type: 2,
+            },
         ]);
         assert_eq!(same_line[0], 3);
         assert_eq!(same_line[1], 2);

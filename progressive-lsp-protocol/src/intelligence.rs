@@ -15,7 +15,10 @@ pub trait LspIntelligence: Send + Sync {
     fn drain_progress(&self) -> Vec<crate::progress::WorkDoneProgress> {
         Vec::new()
     }
-    fn on_initialize(&self, _params: &serde_json::Value) -> Result<(), progressive_lsp_core::InitializeFailed> {
+    fn on_initialize(
+        &self,
+        _params: &serde_json::Value,
+    ) -> Result<(), progressive_lsp_core::InitializeFailed> {
         Ok(())
     }
 }
@@ -103,7 +106,9 @@ pub fn uri_from_params(params: &Value) -> String {
 pub fn position_from_params(params: &Value) -> Position {
     let pos = params.get("position");
     Position::new(
-        pos.and_then(|p| p.get("line")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        pos.and_then(|p| p.get("line"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
         pos.and_then(|p| p.get("character"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
@@ -111,8 +116,7 @@ pub fn position_from_params(params: &Value) -> Position {
 }
 
 pub fn file_id_from_uri(uri: &str) -> progressive_lsp_core::FileId {
-    let path = uri.strip_prefix("file://").unwrap_or(uri);
-    progressive_lsp_core::FileId::new(path)
+    progressive_lsp_core::FileId::from_uri(uri)
 }
 
 #[cfg(test)]
@@ -158,6 +162,14 @@ mod tests {
         assert_eq!(position_from_params(&params), Position::new(2, 4));
         assert_eq!(file_id_from_uri("file:///tmp/a").as_str(), "/tmp/a");
         assert_eq!(file_id_from_uri("/abs").as_str(), "/abs");
+        assert_eq!(
+            file_id_from_uri("file:///Users/me/My%20Drive/a.java").as_str(),
+            "/Users/me/My Drive/a.java"
+        );
+        assert_eq!(
+            file_id_from_uri("file:///Users/me/GoogleDrive-en.gannim%40gmail.com/a.java").as_str(),
+            "/Users/me/GoogleDrive-en.gannim@gmail.com/a.java"
+        );
         assert_eq!(uri_from_params(&json!({"uri": "u"})), "u");
         assert_eq!(uri_from_params(&json!({})), "");
         assert_eq!(position_from_params(&json!({})), Position::default());

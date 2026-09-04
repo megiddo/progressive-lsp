@@ -52,13 +52,13 @@ impl JsonRpcError {
 }
 
 pub fn parse_request(bytes: &[u8]) -> Result<JsonRpcRequest, JsonRpcError> {
-    let value: Value = serde_json::from_slice(bytes)
-        .map_err(|e| JsonRpcError::parse_error(e.to_string()))?;
+    let value: Value =
+        serde_json::from_slice(bytes).map_err(|e| JsonRpcError::parse_error(e.to_string()))?;
     if !value.is_object() {
         return Err(JsonRpcError::invalid_request("not an object"));
     }
-    let req: JsonRpcRequest = serde_json::from_value(value)
-        .map_err(|e| JsonRpcError::invalid_request(e.to_string()))?;
+    let req: JsonRpcRequest =
+        serde_json::from_value(value).map_err(|e| JsonRpcError::invalid_request(e.to_string()))?;
     if req.method.is_empty() {
         return Err(JsonRpcError::invalid_request("missing method"));
     }
@@ -107,10 +107,7 @@ mod tests {
         assert_eq!(parse_request(b"[").unwrap_err().code, -32700);
         assert_eq!(parse_request(b"[]").unwrap_err().code, -32600);
         assert_eq!(parse_request(br#"{}"#).unwrap_err().code, -32600);
-        assert_eq!(
-            parse_request(br#"{"method":""}"#).unwrap_err().code,
-            -32600
-        );
+        assert_eq!(parse_request(br#"{"method":""}"#).unwrap_err().code, -32600);
     }
 
     #[test]

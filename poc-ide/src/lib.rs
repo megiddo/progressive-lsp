@@ -19,8 +19,11 @@ pub mod layout;
 pub mod log;
 pub mod lsp;
 pub mod lsp_io;
+pub mod open_mode;
 pub mod ports;
 pub mod proof;
+pub mod runtime;
+pub mod runtime_io;
 pub mod tabs;
 pub mod tier;
 pub mod tree;
@@ -39,15 +42,16 @@ pub use control::{
 pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
 pub use error::IdeError;
-pub use highlight::{HighlightCache, HighlightKey, HighlightSpan, Highlighter};
+pub use highlight::{HighlightCache, HighlightKey, HighlightSpan, Highlighter, PLAIN_TEXT_RGB};
 pub use language::{ControlSocketPath, DiscoverOffer, LanguageCatalog, ServeMode, WireTier};
 pub use layout::LayoutState;
 pub use log::{
     default_run_log_dir, run_log_dir, sanitize_payload, LogCategory, LogRow, RunLog, RunLogPath,
     RunStart, ServeWalPath, CHILD_LOG_LEVEL, EVENT_CHILD_STDERR, EVENT_CONFLICT_ENQUEUE,
-    EVENT_CONFLICT_RESOLVE, EVENT_CONTROL_CONNECT_ERROR, EVENT_CONTROL_PUSH, EVENT_LOG_MESSAGE,
-    EVENT_OPEN_FILE, EVENT_OPEN_FOLDER, EVENT_PROGRESS, EVENT_RUN_START, EVENT_SAVE,
-    EVENT_TAB_CLOSE, EVENT_TAB_OPEN, EVENT_TREE_EXPAND, EVENT_TREE_LOAD, SERVE_WAL_NOT_OPEN,
+    EVENT_CONFLICT_RESOLVE, EVENT_CONTAINER_STEP, EVENT_CONTROL_CONNECT_ERROR, EVENT_CONTROL_PUSH,
+    EVENT_LOG_MESSAGE, EVENT_OPEN_FILE, EVENT_OPEN_FOLDER, EVENT_PROGRESS, EVENT_RUN_START,
+    EVENT_SAVE, EVENT_TAB_CLOSE, EVENT_TAB_OPEN, EVENT_TREE_EXPAND, EVENT_TREE_LOAD,
+    SERVE_WAL_NOT_OPEN,
 };
 pub use lsp::{
     build_serve_command, file_uri, path_from_file_uri, position_at, LspClient, LspLocation,
@@ -58,12 +62,22 @@ pub use lsp_io::{
     spawn_lsp_io, DiscoverFlight, LogMessageEvent, LspIoEvent, LspIoHandle, LspIoMailbox,
     LspIoRequest, LspProgressKind, ProgressEvent,
 };
+pub use open_mode::{parse_launch_args, HostOs, LaunchFlags, OpenMode, T3HostOffer};
 pub use ports::{
     ClipboardPort, ClockPort, ControlTransport, DialogPort, DiskEvent, DiskEventKind,
     FakeClipboard, FakeClock, FakeControl, FakeDialog, FakeLsp, FakeWatch, FsPort, LspCall,
     LspTransport, MemFs, StdFs, SystemClock, WatchPort,
 };
 pub use proof::ProofStatus;
+pub use runtime::{
+    run_launch, run_launch_reporting, DockerRuntime, FakeRuntime, LaunchJournal, LaunchStep,
+    RuntimeInfo, RuntimePort, RuntimeSession, StatusModal, StatusModalKind, StepState,
+    RUNTIME_IMAGE,
+};
+pub use runtime_io::{
+    dispatch_runtime_io, pump_runtime_io, spawn_runtime_io, RuntimeIoEvent, RuntimeIoHandle,
+    RuntimeIoMailbox, RuntimeIoRequest,
+};
 pub use tabs::{TabId, TabStrip};
 pub use tier::{
     DiscoverMenu, DiscoverMenuItem, MenuDisableReason, PackageTierMap, TierCell, TierCellKind,
@@ -108,7 +122,9 @@ mod tests {
         let _ = ControlPushInbox::new();
         let _ = ControlIoEvent::Connected;
         let _ = PendingDialog::open_folder();
+        let _ = PendingDialog::open_folder_in_container();
         let _ = DialogAction::OpenFile;
+        let _ = DialogAction::OpenFolderInContainer;
         let _ = DialogOutcome::Cancelled;
         let _ = Highlighter::new();
         let _ = HighlightSpan::new(0, 1, 0, 0, 0);
@@ -156,6 +172,23 @@ mod tests {
             Some(WireTier::Syntax),
         );
         let _ = MenuDisableReason::Connecting;
+        let _ = MenuDisableReason::NeedsContainer;
+        let _ = OpenMode::Native;
+        let _ = HostOs::Other;
+        let _ = T3HostOffer::NeedsContainer;
+        let _ = LaunchFlags::default();
+        let _ = parse_launch_args(std::iter::empty());
+        let _ = FakeRuntime::ready();
+        let _ = LaunchJournal::container_plan();
+        let _ = LaunchStep::new("id", "label");
+        let _ = StepState::Pending;
+        let _ = StatusModal::closed();
+        let _ = StatusModalKind::T3;
+        let _ = StatusModalKind::Container;
+        let _ = RuntimeIoMailbox::new();
+        let _ = RuntimeIoRequest::launch("/ws");
+        let _ = spawn_runtime_io;
+        let _ = RUNTIME_IMAGE;
         let _ = ServeMode::StockStdio;
         let _ = ServeMode::ControlSocket;
         let _ = ServeMode::default();
@@ -230,6 +263,7 @@ mod tests {
         let _ = default_run_log_dir();
         let _ = sanitize_payload(None);
         assert_eq!(EVENT_OPEN_FOLDER, "open_folder");
+        assert_eq!(EVENT_CONTAINER_STEP, "container_step");
         assert_eq!(EVENT_OPEN_FILE, "open_file");
         assert_eq!(EVENT_TREE_LOAD, "tree_load");
         assert_eq!(EVENT_TREE_EXPAND, "tree_expand");
@@ -269,5 +303,6 @@ mod tests {
         assert_eq!(EVENT_CONFLICT_ENQUEUE, "conflict_enqueue");
         assert_eq!(EVENT_CONFLICT_RESOLVE, "conflict_resolve");
         assert!(IdeError::log("x").is_log());
+        assert!(IdeError::runtime("x").is_runtime());
     }
 }

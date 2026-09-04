@@ -102,8 +102,8 @@ pub fn write_tar_file(path: &Path, files: &[(String, Vec<u8>)]) -> Result<(), St
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     let bytes = write_ustar(files)?;
-    let mut f = std::fs::File::create(path)
-        .map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut f =
+        std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
     f.write_all(&bytes)
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(())
@@ -138,7 +138,9 @@ mod tests {
         .unwrap();
         assert!(tar.len() >= BLOCK * 4);
         assert_eq!(&tar[0..15], b"DIST_README.txt");
-        assert!(tar.windows(b"engines/python/ty".len()).any(|w| w == b"engines/python/ty"));
+        assert!(tar
+            .windows(b"engines/python/ty".len())
+            .any(|w| w == b"engines/python/ty"));
         assert!(write_ustar(&[("../x".into(), b"z".to_vec())]).is_err());
         assert!(write_ustar(&[("/abs".into(), b"z".to_vec())]).is_err());
         assert!(write_ustar(&[("a".repeat(100), b"z".to_vec())]).is_err());

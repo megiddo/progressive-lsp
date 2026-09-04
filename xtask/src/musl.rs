@@ -103,7 +103,9 @@ mod tests {
 
     #[test]
     fn dockerfile_exists() {
-        assert!(workspace_root().join("docker/rust-musl.Dockerfile").is_file());
+        assert!(workspace_root()
+            .join("docker/rust-musl.Dockerfile")
+            .is_file());
         assert!(workspace_root()
             .join("docker/engine-pack.Dockerfile")
             .is_file());

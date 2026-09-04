@@ -160,8 +160,14 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -184,7 +190,11 @@ pub fn tokens_from_tree(source: &str, tree: &Tree) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in &raw {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -235,11 +245,23 @@ mod tests {
         assert_eq!(GoLanguageFactory::new().grammar_id(), "tree-sitter-go");
         assert!(GoLanguageFactory::default().resolver_chain().is_empty());
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("go.mod"), "module example.com/greet\ngo 1.22\n").unwrap();
+        std::fs::write(
+            dir.path().join("go.mod"),
+            "module example.com/greet\ngo 1.22\n",
+        )
+        .unwrap();
         let greet = dir.path().join("greet.go");
         let main = dir.path().join("main.go");
-        std::fs::write(&greet, "package greet\nfunc Hello(name string) string { return name }\n").unwrap();
-        std::fs::write(&main, "package greet\nfunc Run() string { return Hello(\"x\") }\n").unwrap();
+        std::fs::write(
+            &greet,
+            "package greet\nfunc Hello(name string) string { return name }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main,
+            "package greet\nfunc Run() string { return Hello(\"x\") }\n",
+        )
+        .unwrap();
         assert_eq!(GoModAdapter.detect(dir.path()).unwrap().kind, "go.mod");
         let mut svc = IndexService::new();
         let job = PackageIngest::new("greet", "go")
@@ -263,7 +285,9 @@ mod tests {
             &greet_src,
             &greet_tree,
         );
-        assert!(greet_syms.iter().any(|s| s.name == "Hello" && s.kind == SymbolKind::Method));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Hello" && s.kind == SymbolKind::Method));
         let shared = SharedIndex::new(svc);
         let factory = GoLanguageFactory::with_graph(Arc::new(shared));
         assert_eq!(factory.resolver_chain().len(), 2);
@@ -313,14 +337,18 @@ mod tests {
     #[test]
     fn go_t3_when_pack_and_project_else_t2() {
         use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
-        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use progressive_lsp_engine::{
+            EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind,
+        };
         use std::path::PathBuf;
 
         assert!(project_go_present(tempfile::tempdir().unwrap().path()) == false);
         let proj = tempfile::tempdir().unwrap();
         std::fs::write(proj.path().join("go.mod"), "module example.com/x\n").unwrap();
         assert!(project_go_present(proj.path()));
-        assert!(go_degrade_reason(false, true).unwrap().contains("no gopls pack"));
+        assert!(go_degrade_reason(false, true)
+            .unwrap()
+            .contains("no gopls pack"));
         assert!(go_degrade_reason(true, false).is_some());
         assert!(go_degrade_reason(true, true).is_none());
         assert!(go_degrade_reason(false, false).is_some());
@@ -330,7 +358,10 @@ mod tests {
         let prefix = PrefixLayout::from_path(tmp.path());
         prefix.ensure_dirs().unwrap();
         let fake = FakeEngineAdapter::gopls();
-        fake.set_answers(FakeEngineAdapter::typed_fixture("Hello", "file:///greet.go"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "Hello",
+            "file:///greet.go",
+        ));
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         let fake = fake.with_binary(EngineBinary {
             pack_name: "gopls".into(),
@@ -360,7 +391,9 @@ mod tests {
             ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
             other => panic!("{other:?}"),
         }
-        let degrade = GoLanguageFactory::with_graph(Arc::new(index)).with_pack(true).with_project(false);
+        let degrade = GoLanguageFactory::with_graph(Arc::new(index))
+            .with_pack(true)
+            .with_project(false);
         assert_eq!(degrade.resolver_chain().len(), 2);
     }
 }

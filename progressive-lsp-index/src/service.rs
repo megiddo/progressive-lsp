@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use progressive_lsp_core::{FileId, LanguageId, LogPort, NullLog, PackageId, PrefixLayout, Tier};
+use progressive_lsp_core::{
+    path_to_file_uri, FileId, LanguageId, LogPort, NullLog, PackageId, PrefixLayout, Tier,
+};
 use progressive_lsp_resolve::{
     CallSite, GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, TypeEdge,
 };
@@ -268,29 +270,16 @@ impl IndexService {
         let gen = self.generation.saturating_add(1);
         self.generation = gen;
 
-        if self.cache.contains(&key) {
+        // Disk cache is a 12-byte "seen this hash" marker — it does not store
+        // symbols. Skipping extract on a disk hit leaves F12 with 0 locations
+        // after process restart. Only skip when this path already has symbols.
+        if self.symbols.contains_key(path) && self.files.get(path).is_some_and(|f| f.hash == hash) {
             if let Some(existing) = self.files.get_mut(path) {
                 existing.generation = gen;
                 existing.last_parse_us = 0;
                 existing.incremental = incremental;
                 existing.hash = hash;
                 existing.source = source.to_string();
-            } else {
-                self.files.insert(
-                    path.to_path_buf(),
-                    IndexedFile {
-                        path: path.to_path_buf(),
-                        language: language.clone(),
-                        grammar: grammar.to_string(),
-                        source: source.to_string(),
-                        hash,
-                        generation: gen,
-                        last_parse_us: 0,
-                        incremental,
-                        has_error: false,
-                        unparsed_note: None,
-                    },
-                );
             }
             let elapsed = started.elapsed().as_micros();
             return elapsed;
@@ -538,12 +527,7 @@ pub fn count_error_nodes(node: tree_sitter::Node) -> u32 {
 }
 
 pub fn path_to_uri(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    if s.starts_with("file:") {
-        s.into_owned()
-    } else {
-        format!("file://{s}")
-    }
+    path_to_file_uri(path)
 }
 
 #[cfg(test)]
@@ -696,15 +680,21 @@ mod tests {
         let path = Path::new("A.java");
         let src = "class A {}";
         svc.index_text(path, src, &JavaIndexer, false);
+        assert!(svc.indexed(path).unwrap().last_parse_us > 0);
         let gen = svc.generation();
         svc.index_text(path, src, &JavaIndexer, false);
         assert!(svc.generation() > gen);
+        assert_eq!(svc.indexed(path).unwrap().last_parse_us, 0);
         assert_eq!(svc.cache.len(), 1);
         assert_eq!(IndexService::default().file_count(), 0);
         assert_eq!(content_hash(b"a"), content_hash(b"a"));
         assert_ne!(content_hash(b"a"), content_hash(b"b"));
         assert_eq!(path_to_uri(Path::new("file://x")), "file://x");
         assert!(path_to_uri(Path::new("/tmp/a")).starts_with("file://"));
+        assert_eq!(
+            path_to_uri(Path::new("/Users/me/My Drive/a.rs")),
+            "file:///Users/me/My%20Drive/a.rs"
+        );
         let _ = InputChange::replace_all("ab", "xyz");
         let edit = InputChange::replace_all("a", "bb").to_input_edit();
         assert_eq!(edit.start_byte, 0);
@@ -789,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn disk_cache_cold_start_skips_parse_under_injected_prefix() {
+    fn disk_cache_cold_start_still_extracts_symbols() {
         let prefix = tempfile::tempdir().unwrap();
         let layout = PrefixLayout::from_path(prefix.path());
         layout.ensure_dirs().unwrap();
@@ -802,18 +792,44 @@ mod tests {
             assert!(first > 0 || warm.indexed(path).is_some());
             assert!(!warm.indexed(path).unwrap().has_error);
             assert!(layout.cache_dir().read_dir().unwrap().next().is_some());
+            assert!(warm
+                .symbols_for(&FileId::new("Cold.java"))
+                .iter()
+                .any(|s| s.name == "Cold"));
         }
         let mut cold = IndexService::with_prefix(&layout);
-        let skipped = cold.index_text(path, src, &JavaIndexer, false);
+        let _elapsed = cold.index_text(path, src, &JavaIndexer, false);
         let rec = cold.indexed(path).unwrap();
-        assert_eq!(rec.last_parse_us, 0);
         assert_eq!(rec.source, src);
+        let syms = cold.symbols_for(&FileId::new("Cold.java"));
         assert!(
-            skipped < 5_000,
-            "cache hit should skip Tree-sitter ({skipped}µs)"
+            syms.iter().any(|s| s.name == "Cold"),
+            "disk cache must not skip extract on a new process: {syms:?}"
+        );
+        assert!(
+            rec.last_parse_us > 0,
+            "cold start must parse; marker-only cache cannot restore symbols"
         );
         let miss = IndexService::with_cache(IndexCache::new());
         assert!(miss.cache.disk_dir().is_none());
+    }
+
+    #[test]
+    fn same_content_new_path_still_extracts_symbols() {
+        let mut svc = IndexService::new();
+        let src = "class Twin { void m() {} }";
+        svc.index_text(Path::new("A.java"), src, &JavaIndexer, false);
+        svc.index_text(Path::new("B.java"), src, &JavaIndexer, false);
+        assert!(svc
+            .symbols_for(&FileId::new("A.java"))
+            .iter()
+            .any(|s| s.name == "Twin"));
+        assert!(
+            svc.symbols_for(&FileId::new("B.java"))
+                .iter()
+                .any(|s| s.name == "Twin"),
+            "same hash at a new path must still extract; FileIds are per-path"
+        );
     }
 
     #[test]

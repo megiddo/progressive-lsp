@@ -121,7 +121,11 @@ mod tests {
         let t2 = JavaLanguageFactory::with_graph(g);
         assert_eq!(t2.resolver_chain().len(), 2);
         assert_eq!(t2.t2_name(), "heuristic");
-        assert_eq!(t2.bind_t2(Arc::new(progressive_lsp_resolve::EmptyIndex)).len(), 2);
+        assert_eq!(
+            t2.bind_t2(Arc::new(progressive_lsp_resolve::EmptyIndex))
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -135,11 +139,11 @@ mod tests {
     #[test]
     fn factory_injects_fake_t2() {
         use progressive_lsp_core::FileId;
+        use progressive_lsp_core::Tier;
         use progressive_lsp_resolve::{
             FakeResolver, LspLocation, Position, QueryKind, Range, ResolveOutcome, ResolveQuery,
             Resolver,
         };
-        use progressive_lsp_core::Tier;
         let fake = FakeResolver::graph("injected-java").with_location(LspLocation::new(
             "file:///injected",
             Range::default(),

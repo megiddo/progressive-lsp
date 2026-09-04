@@ -14,8 +14,7 @@ use crate::Resolver;
 /// Archived upstream last SHA (2025-09-09 archive note). Not a `third_party/` dump.
 pub const JAVA_TSG_PIN_URL: &str = "https://github.com/github/stack-graphs.git";
 pub const JAVA_TSG_PIN_SHA: &str = "fcb7705d5b38ae13b3665a9b2c882e5a97243d44";
-pub const JAVA_TSG_REL_PATH: &str =
-    "languages/tree-sitter-stack-graphs-java/src/stack-graphs.tsg";
+pub const JAVA_TSG_REL_PATH: &str = "languages/tree-sitter-stack-graphs-java/src/stack-graphs.tsg";
 
 /// Git URL + SHA + path. Same pin style as engine / corpus fetch-at-SHA.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,10 +34,7 @@ impl TsgPin {
     }
 
     pub fn raw_blob_url(&self) -> String {
-        let repo = self
-            .url
-            .trim_end_matches(".git")
-            .trim_end_matches('/');
+        let repo = self.url.trim_end_matches(".git").trim_end_matches('/');
         let owner_repo = repo.trim_start_matches("https://github.com/");
         format!(
             "https://raw.githubusercontent.com/{}/{}/{}",
@@ -133,7 +129,10 @@ impl StackGraphResolver {
     }
 
     pub fn index_file(&self, path: impl Into<String>, source: impl Into<String>) {
-        self.files.lock().expect("files").push((path.into(), source.into()));
+        self.files
+            .lock()
+            .expect("files")
+            .push((path.into(), source.into()));
     }
 
     /// Fetch-at-SHA into `cache` (git, not a vendor dump). Returns the TSG text.
@@ -172,11 +171,17 @@ pub fn looks_like_java_tsg(src: &str) -> bool {
 
 fn fetch_git_sha(url: &str, sha: &str, dest: &Path) -> Result<(), String> {
     if dest.join(".plsp-sha").is_file()
-        && std::fs::read_to_string(dest.join(".plsp-sha")).unwrap_or_default().trim() == sha
+        && std::fs::read_to_string(dest.join(".plsp-sha"))
+            .unwrap_or_default()
+            .trim()
+            == sha
     {
         return Ok(());
     }
-    let tmp = dest.parent().unwrap_or(Path::new(".")).join(format!(".tmp-{sha}"));
+    let tmp = dest
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(format!(".tmp-{sha}"));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let src = tmp.join("src");
@@ -285,11 +290,7 @@ impl StackGraphResolver {
         let mut locs = Vec::new();
         for (p, body) in files.iter() {
             if let Some(range) = find_decl(body, &ident) {
-                locs.push(LspLocation::new(
-                    format!("file://{p}"),
-                    range,
-                    Tier::Graph,
-                ));
+                locs.push(LspLocation::new(format!("file://{p}"), range, Tier::Graph));
             }
         }
         if locs.is_empty() {
@@ -354,7 +355,11 @@ fn find_decl(src: &str, name: &str) -> Option<Range> {
     ];
     for n in needles {
         if let Some(byte) = src.find(&n) {
-            return Some(range_of_byte(src, byte + n.rfind(name).unwrap_or(0), name.len()));
+            return Some(range_of_byte(
+                src,
+                byte + n.rfind(name).unwrap_or(0),
+                name.len(),
+            ));
         }
     }
     None
@@ -396,7 +401,11 @@ attribute node_definition = node => type = "pop_symbol"
         assert_eq!(r.label, "unused");
         assert_eq!(r.load_state(), TsgLoadState::Unused);
         assert!(!r.loaded());
-        let q = ResolveQuery::new(FileId::new("A.java"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("A.java"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         assert!(!r.resolve(&q).is_ready());
     }
 
@@ -462,9 +471,7 @@ attribute node_definition = node => type = "pop_symbol"
             ResolveOutcome::Ready(res) => assert!(res.hover.is_some()),
             ResolveOutcome::NotReady => panic!("hover"),
         }
-        assert!(!r
-            .resolve(&ResolveQuery::workspace_symbol("Lib"))
-            .is_ready());
+        assert!(!r.resolve(&ResolveQuery::workspace_symbol("Lib")).is_ready());
         let empty = StackGraphResolver::with_tsg_source(TsgPin::java_upstream(), MIN_TSG);
         assert!(!empty
             .resolve(&ResolveQuery::new(

@@ -98,13 +98,12 @@ mod tests {
     fn explicit_csv_and_empty_tokens() {
         let sel = ExplicitPacks::parse_csv("python, rust,");
         let packs = sel.select(&probe_with(|_| {}));
-        assert_eq!(
-            packs,
-            vec![PackId::new("python"), PackId::new("rust")]
-        );
+        assert_eq!(packs, vec![PackId::new("python"), PackId::new("rust")]);
         assert_eq!(packs[0].as_str(), "python");
         assert_ne!(packs[0].as_str(), "");
-        assert!(ExplicitPacks::parse_csv("").select(&probe_with(|_| {})).is_empty());
+        assert!(ExplicitPacks::parse_csv("")
+            .select(&probe_with(|_| {}))
+            .is_empty());
     }
 
     #[test]
@@ -137,9 +136,6 @@ mod tests {
             c.cargo_toml = true;
             c.pyproject_toml = true;
         }));
-        assert_eq!(
-            packs,
-            vec![PackId::new("rust-analyzer"), PackId::new("ty")]
-        );
+        assert_eq!(packs, vec![PackId::new("rust-analyzer"), PackId::new("ty")]);
     }
 }

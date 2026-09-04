@@ -3,6 +3,7 @@
 pub mod clock;
 pub mod config;
 pub mod error;
+pub mod file_uri;
 pub mod git_exclude;
 pub mod ids;
 pub mod log;
@@ -15,6 +16,7 @@ pub use error::{
     ConfigError, EngineError, EngineNotReady, InitializeFailed, InstallError, ScriptAbort,
     ScriptSandbox, StaticLinkError, UnsupportedLanguage, WatchOverflow,
 };
+pub use file_uri::{path_from_file_uri, path_to_file_uri};
 pub use git_exclude::{
     apply_worktree_excludes, belt_gitignore_body, git_exclude_lines, OVERLAY_DIR_NAME,
 };
@@ -38,6 +40,8 @@ mod tests {
     #[test]
     fn public_reexports_resolve() {
         let _ = LanguageId::new("java");
+        let _ = path_to_file_uri(std::path::Path::new("/tmp/a"));
+        let _ = path_from_file_uri("file:///tmp/a");
         let _ = FakeClock::at_unix_ms(1);
         let _ = Config::empty();
         let _ = NullLog;

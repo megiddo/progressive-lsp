@@ -584,7 +584,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
 | PTS-1 | Additive `IndexStatus.ingest` (`not_started` / `running` / `done`); fill from session | poc-lsp-async | **SIGNED OFF.** Next proto tag; no new RPC. |
-| PTS-2 | `TierStrip` / `TierCell` for focused package (workspace aggregate fallback); IndexStatus / TierStatus requested on control IO thread | PTS-1 | **SIGNED OFF.** Java T3 `not supported`; Rust/CSS T2 `n/a`; stub refuse `skipped`. |
+| PTS-2 | `TierStrip` / `TierCell` for focused package (workspace aggregate fallback); IndexStatus / TierStatus requested on control IO thread | PTS-1 | **SIGNED OFF.** Java T3 `not supported`; Rust/CSS T2 `n/a`; stub refuse `skipped`. No-file strip paints T1/T2 from workspace ingest. |
 | PTS-3 | `DiscoverOffer` + honest context / Navigate menus from LanguageCatalog × current tier | PTS-2 | **SIGNED OFF.** FakeLsp not called while disabled. |
 
 **Sign-off checklist (poc-tier-status)**

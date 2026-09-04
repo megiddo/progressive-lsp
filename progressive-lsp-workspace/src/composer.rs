@@ -146,7 +146,9 @@ mod tests {
         let model = ComposerAdapter.detect(dir.path()).unwrap();
         assert_eq!(model.kind, "composer");
         assert_eq!(model.packages[0].id.as_str(), "App");
-        assert!(ComposerAdapter.detect(tempfile::tempdir().unwrap().path()).is_none());
+        assert!(ComposerAdapter
+            .detect(tempfile::tempdir().unwrap().path())
+            .is_none());
     }
 
     #[test]

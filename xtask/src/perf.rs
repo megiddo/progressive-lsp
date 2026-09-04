@@ -9,9 +9,7 @@ use std::sync::Arc;
 use progressive_lsp_core::{rss_sample_label, sample_rss_bytes, FakeClock, FileId};
 use progressive_lsp_index::{IndexService, LanguageIndexer};
 use progressive_lsp_lang_java::JavaIndexer;
-use progressive_lsp_resolve::{
-    Position, QueryKind, ResolveQuery, Resolver, TreeSitterResolver,
-};
+use progressive_lsp_resolve::{Position, QueryKind, ResolveQuery, Resolver, TreeSitterResolver};
 use progressive_lsp_watch::{FakeWatcher, WatchCoalescer, WatchKind};
 
 pub fn run(_args: &[String]) -> Result<(), String> {
@@ -50,7 +48,9 @@ pub fn run(_args: &[String]) -> Result<(), String> {
          matching CI arch jobs (see docs/testing.md). This Darwin/laptop run is a sample."
     );
     if reparse >= 10_000 {
-        return Err(format!("open-buffer reparse {reparse}us exceeds ~10ms class"));
+        return Err(format!(
+            "open-buffer reparse {reparse}us exceeds ~10ms class"
+        ));
     }
     if def_p99 >= 50_000 {
         return Err(format!("definition p99 {def_p99}us exceeds 50ms"));

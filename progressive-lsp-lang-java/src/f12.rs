@@ -8,10 +8,10 @@ mod tests {
     use progressive_lsp_core::FileId;
     use progressive_lsp_index::{IndexService, SharedIndex};
     use progressive_lsp_plugin::LanguageFactory;
+    use progressive_lsp_resolve::fake::{FakeResolver, NotReadyResolver};
     use progressive_lsp_resolve::{
         Position, QueryKind, ResolveOutcome, ResolveQuery, Resolver, ResolverChain, SymbolKind,
     };
-    use progressive_lsp_resolve::fake::{FakeResolver, NotReadyResolver};
     use progressive_lsp_workspace::{detect_workspace, MavenAdapter, WorkspaceSource};
 
     use crate::extract::JavaIndexer;
@@ -33,8 +33,18 @@ mod tests {
         let app = root.join("app/src/main/java/com/example/app/App.java");
         let lib = root.join("lib/src/main/java/com/example/lib/Lib.java");
         svc.open_buffer(&app);
-        svc.index_text(&app, &std::fs::read_to_string(&app).unwrap(), &JavaIndexer, false);
-        svc.index_text(&lib, &std::fs::read_to_string(&lib).unwrap(), &JavaIndexer, false);
+        svc.index_text(
+            &app,
+            &std::fs::read_to_string(&app).unwrap(),
+            &JavaIndexer,
+            false,
+        );
+        svc.index_text(
+            &lib,
+            &std::fs::read_to_string(&lib).unwrap(),
+            &JavaIndexer,
+            false,
+        );
         (SharedIndex::new(svc), app, lib)
     }
 
@@ -119,7 +129,10 @@ mod tests {
             }
             ResolveOutcome::NotReady => panic!("ready"),
         }
-        match factory.resolver_chain().resolve(&ResolveQuery::workspace_symbol("Lib")) {
+        match factory
+            .resolver_chain()
+            .resolve(&ResolveQuery::workspace_symbol("Lib"))
+        {
             ResolveOutcome::Ready(r) => {
                 assert!(r.locations.iter().any(|l| l.uri.contains("Lib.java")));
             }
@@ -138,18 +151,21 @@ mod tests {
     #[test]
     fn t3_not_ready_does_not_drop_t2_before_java_t1() {
         let (index, app, _) = index_fixture();
-        let t2 = FakeResolver::graph("t2").with_location(progressive_lsp_resolve::LspLocation::new(
-            "file:///t2",
-            progressive_lsp_resolve::Range::default(),
-            progressive_lsp_core::Tier::Graph,
-        ));
+        let t2 =
+            FakeResolver::graph("t2").with_location(progressive_lsp_resolve::LspLocation::new(
+                "file:///t2",
+                progressive_lsp_resolve::Range::default(),
+                progressive_lsp_core::Tier::Graph,
+            ));
         let chain = ResolverChain::new(vec![
             Box::new(NotReadyResolver::new(
                 progressive_lsp_core::LanguageId::new("java"),
                 progressive_lsp_core::PackageId::new("app"),
             )),
             Box::new(t2),
-            Box::new(progressive_lsp_resolve::TreeSitterResolver::new(Arc::new(index))),
+            Box::new(progressive_lsp_resolve::TreeSitterResolver::new(Arc::new(
+                index,
+            ))),
         ]);
         let q = ResolveQuery::new(
             FileId::new(app.to_string_lossy().as_ref()),
@@ -162,6 +178,30 @@ mod tests {
                 assert_eq!(r.locations[0].uri, "file:///t2");
             }
             ResolveOutcome::NotReady => panic!("T2 must win"),
+        }
+    }
+
+    #[test]
+    fn implementation_of_class_usage_finds_declaration() {
+        let (index, app, lib) = index_fixture();
+        let app_src = std::fs::read_to_string(&app).unwrap();
+        let pos = line_col(&app_src, "Lib.greet");
+        let factory = JavaLanguageFactory::with_index(Arc::new(index));
+        let q = ResolveQuery::new(
+            FileId::new(app.to_string_lossy().as_ref()),
+            pos,
+            QueryKind::Implementation,
+        );
+        match factory.resolver_chain().resolve(&q) {
+            ResolveOutcome::Ready(r) => {
+                assert!(
+                    r.locations.iter().any(|l| l.uri.contains("Lib.java")),
+                    "implementation of Lib usage should be Lib.java, got {:?}",
+                    r.locations
+                );
+                let _ = lib;
+            }
+            ResolveOutcome::NotReady => panic!("T1 ready"),
         }
     }
 }

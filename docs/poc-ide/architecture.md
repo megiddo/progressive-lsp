@@ -6,12 +6,14 @@ Consumer sample. Product boundary for the **server** is unchanged: [../architect
 
 ```text
 poc-ide (eframe)
-  ├── FileTree / tabs / buffers / ConflictModal   (in-process)
+  ├── FileTree / tabs / buffers / ConflictModal / StatusModal   (in-process)
   ├── LspClient Adapter  --stdio JSON-RPC-->  progressive-lsp serve
+  │         native serve on Linux (T1/T2/T3) or Darwin T1/T2-only
+  │         **or** one Linux container host (Open Folder in Container)
   └── ControlClient Adapter --unix socket Envelope-->  same serve (--control-socket)
 ```
 
-One language-server process per workspace. **Selection of LSP backend** means: pick `ServeMode` (stock stdio vs control-socket) and set `textDocument/didOpen.languageId` from `LanguageCatalog`. It does **not** spawn clangd/ty/tsserver. Those stay inside `progressive-lsp` packs.
+One language-server process per workspace. **Never two serves** (no local T1 + container T3). **Selection of LSP backend** means: pick `ServeMode` and `OpenMode` (`Native` vs `Container`). It does **not** spawn clangd/ty/tsserver. Those stay inside `progressive-lsp` packs.
 
 ## Crate split
 
@@ -21,7 +23,10 @@ poc-ide/                     workspace member; not a musl artifact
   src/main.rs               composition root: eframe, rfd (`RfdDialog`), wire ports
   src/ports.rs              DialogPort, ClipboardPort, FsPort, StdFs, WatchPort, ClockPort, LspTransport, ControlTransport
   src/layout.rs             LayoutState (left panel width)
-  src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite, CompactChain, ExpandChainCommand, CompactChainListing, TreeExpansion, PendingDialog
+  src/tree.rs               WorkspaceRoot, FileTree, TreeNode Composite, CompactChain, ExpandChainCommand, CompactChainListing, TreeExpansion, PendingDialog (`OpenFolderInContainer`)
+  src/open_mode.rs          HostOs, OpenMode, T3HostOffer, LaunchFlags
+  src/runtime.rs            RuntimePort, FakeRuntime, DockerRuntime, LaunchJournal, StatusModal
+  src/runtime_io.rs         RuntimeIoRequest / RuntimeIoEvent mailbox; launch worker
   src/tabs.rs               TabStrip, TabId
   src/buffer.rs             OpenBuffer, BufferMap, Selection, DirtyFlag
   src/edit.rs               EditCommand
@@ -47,7 +52,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 
 ## Data flow
 
-1. File → Open Folder / Open File records `PendingDialog`; apply after the menu closes so `rfd` is not invoked mid-layout. `DialogPort.open_folder` / `open_file` → `WorkspaceRoot` (canonical absolute path). File → parent directory is the root; that file is also opened as a tab.
+1. File → Open Folder / Open Folder in Container / Open File records `PendingDialog`; apply runs the Port after the menu closes so `rfd` is not invoked mid-layout. `DialogPort.open_folder` / `open_file` → `WorkspaceRoot` (canonical absolute path). File → parent directory is the root; that file is also opened as a tab. **Open Folder…** on non-Linux is native T1/T2 (`T3HostOffer::NeedsContainer`). **Open Folder in Container…** (non-Linux only) is one Linux `progressive-lsp serve` for T1/T2/T3: the UI submits `RuntimeIoRequest::launch`, opens `StatusModal` (`Container`), and paints `LaunchJournal` as probe → platform → image → mount → start → T3 preflight. Linux has no container item; native open is the full host.
 2. `FsPort.read_tree` → `FileTree` shallow load of the workspace root's immediate children (skip `.git/`, `target/`, `node_modules/` — display filter, not server ignore). Child directories start unloaded. Listing order is non-dot dirs, non-dot files, then dot dirs / dot files, lexicographic within each group. `TreeExpansion` starts empty (collapsed at every level). Expanding a row submits `TreeIoRequest` to a `poc-ide-tree` worker (`ExpandChainCommand` + `FsPort.read_dir`); the collapsing header may look open with children `loading…` until `TreeIoEvent` fills the inbox. `fn ui` never calls `read_dir` on expand. `FileTree::apply_listing` grafts the listing. `CompactChain` is a view of already-loaded single-child directory chains (`a/b/c`); an unloaded dir cannot claim "exactly one child," so root children are not compact-chained until the user expands enough. The compact row's path is the innermost directory; expanding it loads that dir's children.
 3. Click a file → `BufferMap.open` (read bytes, `LanguageCatalog.for_path`, `didOpen` if LSP is up).
 4. Keystrokes → `EditCommand` on `OpenBuffer` → dirty → generation bump → `didChange` incremental. The layouter calls `Highlighter::highlight` with path + generation; unchanged text does not re-tokenize.
@@ -67,6 +72,7 @@ Allowed lib deps: `ropey`, `syntect`, `walkdir`, `lsp-types`, `serde_json`, `thi
 | `ClockPort` | reuse `progressive-lsp-core::ClockPort` **or** a local copy of the trait in poc-ide to avoid pulling core if that crate is too server-shaped | `FakeClock` |
 | `LspTransport` | `StdioLsp` (child stdio Content-Length) | `FakeLsp` |
 | `ControlTransport` | `UnixControl` (Unix socket + `encode_frame` / `decode_frame`) | `FakeControl` |
+| `RuntimePort` | `DockerRuntime` (`docker` CLI; no daemon in tests) | `FakeRuntime` |
 | `RunLog` (Repository) | rusqlite file under run-log dir | `:memory:` / tempfile path |
 
 Prefer a **local `ClockPort`** in poc-ide (same invariant: tests never `thread::sleep`) rather than depending on `progressive-lsp-core`. Do not take a dependency on core just for the clock.
@@ -120,9 +126,10 @@ Unknown extension → `plaintext`. Buffer still opens. LSP `didOpen` is skipped 
 
 - Left: `egui::Panel::left("tree").resizable(true)` bound to `LayoutState.left_width` (egui 0.36 renamed `SidePanel` to `Panel`).
 - Center: `TabStrip` rendered with a thin custom tab bar in `ui.rs` (egui_dock 0.21 rust-version 1.95 does not pin on this workspace’s rustc). Same `TabStrip` tests.
-- Editor: `egui::TextEdit::multiline` + syntect layouter from `Highlighter` tokens (cached by path + rope generation; layouter rebuilds only on edit). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References from `DiscoverMenu` (honest labels; not a static three-item enabled list). Clicks and keyboard F12 queue `LspIoRequest` only when the item is enabled (`LspSessionState::Ready` and the rest of `DiscoverMenu`); jump runs when the inbox yields. Navigate / F12 stay disabled with `connecting language server` until Ready. Save / disk conflict modal stays; it does not block the rest of the shell.
-- Status strip: three cells T1 / T2 / T3 (`in progress` / `done` / `not supported` / `skipped` / `n/a`) for the focused file’s package. Not a protocol console.
-- Modal: `egui::Modal` / `Window` for `ConflictModal`.
+- Editor: `egui::ScrollArea::both` around `egui::TextEdit::multiline` + syntect layouter from `Highlighter` tokens (cached by path + rope generation; layouter rebuilds only on edit; lines do not wrap so the area can scroll horizontally). Rope is source of truth; the widget is a view. After `TextEdit::show`, caret char offsets are copied onto `OpenBuffer.selection` via `CursorOffsets`. `response.context_menu` on the editor (and file tree rows) offers Find Definition / Implementation / References from `DiscoverMenu` (honest labels; not a static three-item enabled list). Clicks and keyboard F12 queue `LspIoRequest` only when the item is enabled (`LspSessionState::Ready` and the rest of `DiscoverMenu`); jump runs when the inbox yields. Navigate / F12 stay disabled with `connecting language server` until Ready. Save / disk conflict modal stays; it does not block the rest of the shell.
+- Status strip: three **buttons** T1 / T2 / T3 (`processing` / `done` / `not supported` / `skipped` / `n/a`). Click opens `StatusModal` with that tier’s journal. Folder open starts workspace ingest in `initialize`; the strip paints T1/T2 from that ingest with no file focused. Opening a file is not required to start T2. A focused language with no T2 (Rust/CSS) stays T2 `n/a`. T3 stays `n/a` until a language is known. Native open on non-Linux skips T3 (`open folder in container`). Java T3 is `not supported` until bytecode T3 lands. Stub refuse is `skipped`, not `done`.
+- File menu: **Open Folder…** is native serve (Linux: T1/T2/T3; elsewhere T1/T2). Non-Linux also offers **Open Folder in Container…**, which launches one Linux serve host and opens a **Container launch** modal with live preflight/launch steps. Tests use `FakeRuntime` (no Docker daemon). `DockerRuntime::start` is not wired yet (attach is a later slice).
+- Modal: `egui::Modal` / `Window` for `ConflictModal` and `StatusModal`.
 - No bottom protocol console. Debug is `RunLog` sqlite, not a hand-typed inspector. RunLog stays a separate schema from the serve WAL.
 - Footer (`ProofStatus`): binary basename, log level, RunLog path, serve WAL path (or “WAL not open yet”), last discover (`definition L23:88 → 0 locations`) from RunLog discover rows.
 

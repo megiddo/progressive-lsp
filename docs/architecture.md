@@ -127,7 +127,7 @@ sequenceDiagram
 
 **Fast re-index**
 
-- Per-file generation + content hash. Unchanged files are not re-parsed.
+- Per-file generation + content hash. Unchanged files already in memory are not re-parsed.
 - Incremental Tree-sitter `InputEdit` on every keystroke; T2 for that file debounced (~50–100 ms).
 - T2/T3 rebuild is file- and package-scoped.
 - Priority: open buffers > recently viewed > same package > other packages > vendor/deps.

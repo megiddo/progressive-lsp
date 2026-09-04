@@ -69,7 +69,10 @@ mod tests {
         assert!(d.contains(Path::new("a.java")));
         assert!(!d.contains(Path::new("c.java")));
         assert_eq!(d.len(), 2);
-        let paths: Vec<_> = d.paths().map(|p| p.to_string_lossy().into_owned()).collect();
+        let paths: Vec<_> = d
+            .paths()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(paths, vec!["a.java", "b.java"]);
         assert_eq!(d.take(Path::new("a.java")), Some(3));
         assert!(!d.contains(Path::new("a.java")));

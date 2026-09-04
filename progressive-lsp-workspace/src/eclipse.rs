@@ -93,8 +93,10 @@ mod tests {
     #[test]
     fn parse_project_and_classpath() {
         assert_eq!(
-            EclipseAdapter::parse_project_name("<projectDescription><name>demo</name></projectDescription>")
-                .as_deref(),
+            EclipseAdapter::parse_project_name(
+                "<projectDescription><name>demo</name></projectDescription>"
+            )
+            .as_deref(),
             Some("demo")
         );
         assert_eq!(EclipseAdapter::parse_project_name("<name></name>"), None);

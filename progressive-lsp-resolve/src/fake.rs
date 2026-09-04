@@ -2,9 +2,7 @@
 
 use progressive_lsp_core::{EngineNotReady, LanguageId, PackageId, Tier};
 
-use crate::query::{
-    LspLocation, QueryKind, ResolveOutcome, ResolveQuery, ResolveResult,
-};
+use crate::query::{LspLocation, QueryKind, ResolveOutcome, ResolveQuery, ResolveResult};
 use crate::Resolver;
 
 /// T2 stand-in. Always `Ready` with a configured tier.
@@ -136,9 +134,6 @@ mod tests {
         assert_eq!(r.error.language.as_str(), "java");
         assert_eq!(r.error.package.as_str(), "p");
         assert!(!r.resolve(&q(QueryKind::Definition)).is_ready());
-        assert_eq!(
-            r.error.to_string(),
-            "engine not ready for java/p"
-        );
+        assert_eq!(r.error.to_string(), "engine not ready for java/p");
     }
 }

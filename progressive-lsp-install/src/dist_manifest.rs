@@ -12,10 +12,7 @@ pub const DIST_PROTO: &str = "progressive.v1";
 pub const DIST_PAYLOAD_STUB: &str = "stub";
 
 /// Per-triple musl targets that Linux CI must publish as the real dist.
-pub const MUSL_TRIPLES: &[&str] = &[
-    "x86_64-unknown-linux-musl",
-    "aarch64-unknown-linux-musl",
-];
+pub const MUSL_TRIPLES: &[&str] = &["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"];
 
 pub const DIST_TRIPLES: &[&str] = MUSL_TRIPLES;
 
@@ -74,7 +71,9 @@ impl DistManifest {
         }
         for a in &self.artifacts {
             if a.triple.is_empty() || a.flavor.is_empty() || a.rel_path.is_empty() {
-                return Err(InstallError::Manifest("dist artifact fields required".into()));
+                return Err(InstallError::Manifest(
+                    "dist artifact fields required".into(),
+                ));
             }
             if a.rel_path.contains("..") || a.rel_path.starts_with('/') {
                 return Err(InstallError::Manifest(format!(

@@ -64,10 +64,7 @@ impl FakeWatcher {
     }
 
     pub fn inject(&self, events: impl IntoIterator<Item = RawWatchEvent>) {
-        self.queue
-            .lock()
-            .expect("FakeWatcher queue")
-            .extend(events);
+        self.queue.lock().expect("FakeWatcher queue").extend(events);
     }
 
     pub fn inject_one(&self, path: impl Into<String>, kind: WatchKind) {

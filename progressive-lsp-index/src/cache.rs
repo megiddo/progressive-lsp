@@ -81,8 +81,9 @@ pub fn sanitize_component(s: &str) -> String {
     }
 }
 
-/// Repository: same `(grammar, lang, hash)` → skip parse.
-/// Optional disk dir is `$PREFIX/cache/` (injected in tests).
+/// Repository: remembers `(grammar, lang, hash)` under `$PREFIX/cache/`.
+/// The on-disk record is a marker only; `IndexService` still extracts symbols
+/// unless that path already has in-memory symbols.
 #[derive(Clone)]
 pub struct IndexCache {
     hits: HashMap<CacheKey, u64>,

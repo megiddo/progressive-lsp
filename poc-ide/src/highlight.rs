@@ -9,6 +9,12 @@ use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
+/// syntect light theme: dark token colors on the white egui editor.
+const LIGHT_THEME: &str = "InspiredGitHub";
+
+/// Unhighlighted / unknown-syntax text. Dark gray, not a dark-theme pastel.
+pub const PLAIN_TEXT_RGB: (u8, u8, u8) = (36, 41, 46);
+
 /// One highlighted run. Range is ordered `start <= end` in char offsets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightSpan {
@@ -129,7 +135,7 @@ pub struct Highlighter {
 
 impl Highlighter {
     pub fn new() -> Self {
-        let theme = ThemeSet::load_defaults().themes["base16-ocean.dark"].clone();
+        let theme = ThemeSet::load_defaults().themes[LIGHT_THEME].clone();
         Self {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme,
@@ -246,6 +252,45 @@ mod tests {
             colors.len() > 1,
             "a Rust fixture must use more than one token color, got {colors:?}"
         );
+    }
+
+    fn luminance(r: u8, g: u8, b: u8) -> u16 {
+        ((u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000) as u16
+    }
+
+    #[test]
+    fn highlighter_uses_dark_token_colors_on_light_theme() {
+        assert!(
+            ThemeSet::load_defaults().themes.contains_key(LIGHT_THEME),
+            "missing syntect theme {LIGHT_THEME}"
+        );
+        assert!(luminance(PLAIN_TEXT_RGB.0, PLAIN_TEXT_RGB.1, PLAIN_TEXT_RGB.2) < 80);
+        let mut highlighter = Highlighter::new();
+        let rust = highlighter.highlight(
+            Path::new("/ws/src/lib.rs"),
+            "fn main() {\n    let x = \"hi\";\n}\n",
+            0,
+        );
+        let java = highlighter.highlight(
+            Path::new("/ws/A.java"),
+            "public class A { void greet() {} }\n",
+            1,
+        );
+        for (lang, spans) in [("rs", rust.as_slice()), ("java", java.as_slice())] {
+            let dark = spans
+                .iter()
+                .filter(|s| luminance(s.r(), s.g(), s.b()) < 160)
+                .count();
+            assert!(
+                dark * 2 >= spans.len(),
+                "{lang} tokens must be dark on white, dark={dark}/{} colors={:?}",
+                spans.len(),
+                spans
+                    .iter()
+                    .map(|s| (s.r(), s.g(), s.b(), luminance(s.r(), s.g(), s.b())))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

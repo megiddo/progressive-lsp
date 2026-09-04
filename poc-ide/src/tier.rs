@@ -11,6 +11,7 @@ use crate::error::IdeError;
 use crate::language::{DiscoverOffer, LanguageCatalog, WireTier};
 use crate::lsp::LspSessionState;
 use crate::lsp_io::{DiscoverFlight, LspIoRequest};
+use crate::open_mode::T3HostOffer;
 use crate::tabs::TabStrip;
 
 /// One cell in the status strip.
@@ -31,7 +32,7 @@ impl TierCellKind {
     }
 }
 
-/// Painted state for one cell. Never a spinner for matrix `n/a`.
+/// Painted state for one cell. Never a spinner for matrix `n/a` or waiting `n/a`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TierCellState {
     InProgress,
@@ -44,7 +45,7 @@ pub enum TierCellState {
 impl TierCellState {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::InProgress => "in progress",
+            Self::InProgress => "processing",
             Self::Done => "done",
             Self::NotSupported => "not supported",
             Self::Skipped => "skipped",
@@ -97,19 +98,33 @@ impl TierStrip {
         ingest: IngestState,
         current: Option<WireTier>,
     ) -> Self {
+        Self::paint_for_open(catalog, language_id, ingest, current, T3HostOffer::Offered)
+    }
+
+    pub fn paint_for_open(
+        catalog: &LanguageCatalog,
+        language_id: &str,
+        ingest: IngestState,
+        current: Option<WireTier>,
+        t3_host: T3HostOffer,
+    ) -> Self {
         if !catalog.is_known(language_id) {
+            let indexing = ingest.is_running() || ingest.is_done();
             return Self {
-                t1: TierCell::new(TierCellKind::T1, t1_state(ingest)),
-                t2: TierCell::new(TierCellKind::T2, TierCellState::Na),
+                t1: TierCell::new(TierCellKind::T1, t1_state(ingest, current, indexing)),
+                t2: TierCell::new(TierCellKind::T2, workspace_t2(ingest)),
                 t3: TierCell::new(TierCellKind::T3, TierCellState::Na),
             };
         }
         Self {
-            t1: TierCell::new(TierCellKind::T1, t1_state(ingest)),
-            t2: TierCell::new(TierCellKind::T2, t2_state(catalog, language_id, current)),
+            t1: TierCell::new(TierCellKind::T1, t1_state(ingest, current, true)),
+            t2: TierCell::new(
+                TierCellKind::T2,
+                t2_state(catalog, language_id, ingest, current),
+            ),
             t3: TierCell::new(
                 TierCellKind::T3,
-                t3_state(catalog, language_id, ingest, current),
+                t3_state(catalog, language_id, ingest, current, t3_host),
             ),
         }
     }
@@ -131,26 +146,41 @@ impl TierStrip {
     }
 }
 
-fn t1_state(ingest: IngestState) -> TierCellState {
-    if ingest.is_done() {
-        TierCellState::Done
-    } else {
-        TierCellState::InProgress
+fn t1_state(ingest: IngestState, current: Option<WireTier>, known: bool) -> TierCellState {
+    if current.is_some_and(|t| t.meets(WireTier::Syntax)) || ingest.is_done() {
+        return TierCellState::Done;
     }
+    if known || ingest.is_running() {
+        return TierCellState::InProgress;
+    }
+    TierCellState::Na
 }
 
 fn t2_state(
     catalog: &LanguageCatalog,
     language_id: &str,
+    ingest: IngestState,
     current: Option<WireTier>,
 ) -> TierCellState {
     if !catalog.has_t2(language_id) {
         return TierCellState::Na;
     }
-    if current.is_some_and(|t| t.meets(WireTier::Graph)) {
+    if current.is_some_and(|t| t.meets(WireTier::Graph)) || ingest.is_done() {
+        return TierCellState::Done;
+    }
+    if ingest.is_running() || current.is_some_and(|t| t.meets(WireTier::Syntax)) {
+        return TierCellState::InProgress;
+    }
+    TierCellState::Na
+}
+
+fn workspace_t2(ingest: IngestState) -> TierCellState {
+    if ingest.is_done() {
         TierCellState::Done
-    } else {
+    } else if ingest.is_running() {
         TierCellState::InProgress
+    } else {
+        TierCellState::Na
     }
 }
 
@@ -159,17 +189,29 @@ fn t3_state(
     language_id: &str,
     ingest: IngestState,
     current: Option<WireTier>,
+    t3_host: T3HostOffer,
 ) -> TierCellState {
     if !catalog.t3_supported(language_id) {
         return TierCellState::NotSupported;
+    }
+    if !t3_host.is_offered() {
+        return TierCellState::Skipped;
     }
     if current == Some(WireTier::Types) {
         return TierCellState::Done;
     }
     if ingest.is_done() {
-        TierCellState::Skipped
+        return TierCellState::Skipped;
+    }
+    let prior_ready = if catalog.has_t2(language_id) {
+        current.is_some_and(|t| t.meets(WireTier::Graph))
     } else {
+        current.is_some_and(|t| t.meets(WireTier::Syntax))
+    };
+    if prior_ready {
         TierCellState::InProgress
+    } else {
+        TierCellState::Na
     }
 }
 
@@ -186,6 +228,20 @@ impl PackageTierMap {
     }
 
     pub fn ingest(&self) -> IngestState {
+        self.ingest
+    }
+
+    /// Folder open starts initialize ingest before IndexStatus arrives.
+    /// Connecting means ingest is in that initialize; Ready means it already finished.
+    pub fn ingest_for_strip(&self, lsp: LspSessionState) -> IngestState {
+        if self.ingest.is_not_started() {
+            if lsp.is_connecting() {
+                return IngestState::Running;
+            }
+            if lsp.is_ready() {
+                return IngestState::Done;
+            }
+        }
         self.ingest
     }
 
@@ -249,6 +305,7 @@ pub enum MenuDisableReason {
     NeedsT3,
     NotSupported,
     T3Skipped,
+    NeedsContainer,
 }
 
 impl MenuDisableReason {
@@ -261,6 +318,7 @@ impl MenuDisableReason {
             Self::NeedsT3 => "needs T3",
             Self::NotSupported => "not supported",
             Self::T3Skipped => "T3 skipped (stub pack)",
+            Self::NeedsContainer => "open folder in container",
         }
     }
 }
@@ -326,6 +384,26 @@ impl DiscoverMenu {
         ingest: IngestState,
         current: Option<WireTier>,
     ) -> Self {
+        Self::paint_for_open(
+            catalog,
+            language_id,
+            lsp,
+            flight,
+            ingest,
+            current,
+            T3HostOffer::Offered,
+        )
+    }
+
+    pub fn paint_for_open(
+        catalog: &LanguageCatalog,
+        language_id: &str,
+        lsp: LspSessionState,
+        flight: &DiscoverFlight,
+        ingest: IngestState,
+        current: Option<WireTier>,
+        t3_host: T3HostOffer,
+    ) -> Self {
         Self {
             definition: item_for(
                 catalog,
@@ -335,6 +413,7 @@ impl DiscoverMenu {
                 flight,
                 ingest,
                 current,
+                t3_host,
             ),
             implementation: item_for(
                 catalog,
@@ -344,6 +423,7 @@ impl DiscoverMenu {
                 flight,
                 ingest,
                 current,
+                t3_host,
             ),
             references: item_for(
                 catalog,
@@ -353,6 +433,7 @@ impl DiscoverMenu {
                 flight,
                 ingest,
                 current,
+                t3_host,
             ),
         }
     }
@@ -383,6 +464,7 @@ impl DiscoverMenu {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn item_for(
     catalog: &LanguageCatalog,
     language_id: &str,
@@ -391,6 +473,7 @@ fn item_for(
     flight: &DiscoverFlight,
     ingest: IngestState,
     current: Option<WireTier>,
+    t3_host: T3HostOffer,
 ) -> DiscoverMenuItem {
     if !lsp.is_ready() {
         return DiscoverMenuItem::disabled(kind, MenuDisableReason::Connecting);
@@ -408,7 +491,7 @@ fn item_for(
     if current.meets(offer.min_tier()) {
         return DiscoverMenuItem::enabled(kind);
     }
-    disable_below_min(catalog, language_id, kind, offer, current)
+    disable_below_min(catalog, language_id, kind, offer, current, t3_host)
 }
 
 fn disable_below_min(
@@ -417,10 +500,14 @@ fn disable_below_min(
     kind: DiscoverKind,
     offer: DiscoverOffer,
     _current: WireTier,
+    t3_host: T3HostOffer,
 ) -> DiscoverMenuItem {
     if offer.is_t3_only() || (offer.min_tier() == WireTier::Graph && !catalog.has_t2(language_id)) {
         if !catalog.t3_supported(language_id) {
             return DiscoverMenuItem::disabled(kind, MenuDisableReason::NotSupported);
+        }
+        if !t3_host.is_offered() {
+            return DiscoverMenuItem::disabled(kind, MenuDisableReason::NeedsContainer);
         }
         return DiscoverMenuItem::disabled(kind, MenuDisableReason::T3Skipped);
     }
@@ -430,6 +517,9 @@ fn disable_below_min(
     if offer.min_tier() == WireTier::Types {
         if !catalog.t3_supported(language_id) {
             return DiscoverMenuItem::disabled(kind, MenuDisableReason::NotSupported);
+        }
+        if !t3_host.is_offered() {
+            return DiscoverMenuItem::disabled(kind, MenuDisableReason::NeedsContainer);
         }
         return DiscoverMenuItem::disabled(kind, MenuDisableReason::T3Skipped);
     }
@@ -469,6 +559,25 @@ mod tests {
         assert_eq!(TierCellKind::T3.as_str(), "T3");
         assert_eq!(java.cells().len(), 3);
 
+        let java_open = TierStrip::paint(&c, "java", IngestState::NotStarted, None);
+        assert_eq!(java_open.t1().state(), TierCellState::InProgress);
+        assert_eq!(java_open.t1().status(), "processing");
+        assert_eq!(java_open.t2().state(), TierCellState::Na);
+        assert_eq!(java_open.t2().status(), "n/a");
+        assert_eq!(java_open.t3().state(), TierCellState::NotSupported);
+
+        let java_ingest = TierStrip::paint(&c, "java", IngestState::Running, None);
+        assert_eq!(java_ingest.t1().state(), TierCellState::InProgress);
+        assert_eq!(java_ingest.t2().state(), TierCellState::InProgress);
+        assert_eq!(java_ingest.t2().status(), "processing");
+        assert_eq!(java_ingest.t3().state(), TierCellState::NotSupported);
+
+        let java_t1 = TierStrip::paint(&c, "java", IngestState::Running, Some(WireTier::Syntax));
+        assert_eq!(java_t1.t1().state(), TierCellState::Done);
+        assert_eq!(java_t1.t2().state(), TierCellState::InProgress);
+        assert_eq!(java_t1.t2().status(), "processing");
+        assert_eq!(java_t1.t3().state(), TierCellState::NotSupported);
+
         let rust = TierStrip::paint(&c, "rust", IngestState::Done, Some(WireTier::Syntax));
         assert_eq!(rust.t1().state(), TierCellState::Done);
         assert_eq!(rust.t2().state(), TierCellState::Na);
@@ -480,17 +589,29 @@ mod tests {
         assert_eq!(rust_types.t3().state(), TierCellState::Done);
 
         let csharp = TierStrip::paint(&c, "csharp", IngestState::Running, Some(WireTier::Syntax));
-        assert_eq!(csharp.t1().state(), TierCellState::InProgress);
+        assert_eq!(csharp.t1().state(), TierCellState::Done);
         assert_eq!(csharp.t2().state(), TierCellState::InProgress);
         assert_eq!(csharp.t3().state(), TierCellState::NotSupported);
 
         let building = TierStrip::paint(&c, "python", IngestState::NotStarted, None);
-        assert_eq!(building.t1().status(), "in progress");
-        assert_eq!(building.t3().state(), TierCellState::InProgress);
+        assert_eq!(building.t1().status(), "processing");
+        assert_eq!(building.t2().state(), TierCellState::Na);
+        assert_eq!(building.t3().state(), TierCellState::Na);
+
+        let python_t2 = TierStrip::paint(&c, "python", IngestState::Running, Some(WireTier::Graph));
+        assert_eq!(python_t2.t1().state(), TierCellState::Done);
+        assert_eq!(python_t2.t2().state(), TierCellState::Done);
+        assert_eq!(python_t2.t3().state(), TierCellState::InProgress);
+        assert_eq!(python_t2.t3().status(), "processing");
+
+        let folder_open = TierStrip::paint(&c, "plaintext", IngestState::Running, None);
+        assert_eq!(folder_open.t1().status(), "processing");
+        assert_eq!(folder_open.t2().status(), "processing");
+        assert_eq!(folder_open.t3().state(), TierCellState::Na);
 
         let unknown = TierStrip::paint(&c, "plaintext", IngestState::Done, None);
         assert_eq!(unknown.t1().state(), TierCellState::Done);
-        assert_eq!(unknown.t2().state(), TierCellState::Na);
+        assert_eq!(unknown.t2().state(), TierCellState::Done);
         assert_eq!(unknown.t3().state(), TierCellState::Na);
         assert_ne!(java, rust);
         let cell = TierCell::new(TierCellKind::T1, TierCellState::Done);
@@ -502,6 +623,18 @@ mod tests {
     fn package_tier_map_applies_index_tier_ready_and_path_fallback() {
         let mut map = PackageTierMap::new();
         assert_eq!(map.ingest(), IngestState::NotStarted);
+        assert_eq!(
+            map.ingest_for_strip(LspSessionState::Connecting),
+            IngestState::Running
+        );
+        assert_eq!(
+            map.ingest_for_strip(LspSessionState::Idle),
+            IngestState::NotStarted
+        );
+        assert_eq!(
+            map.ingest_for_strip(LspSessionState::Ready),
+            IngestState::Done
+        );
         assert_eq!(map.package_count(), 0);
         assert!(map.aggregate().is_none());
         map.apply_index_status(&IndexStatusResponse {
@@ -683,6 +816,10 @@ mod tests {
         );
         assert_eq!(MenuDisableReason::NeedsT3.as_str(), "needs T3");
         assert_eq!(MenuDisableReason::NotSupported.as_str(), "not supported");
+        assert_eq!(
+            MenuDisableReason::NeedsContainer.as_str(),
+            "open folder in container"
+        );
         assert_eq!(t1.items().len(), 3);
         assert_eq!(
             t1.item(DiscoverKind::Definition).kind(),
@@ -804,5 +941,45 @@ mod tests {
         assert!(!LspSessionState::Idle.is_ready());
         assert!(!LspSessionState::Failed.is_ready());
         assert!(LspSessionState::Ready.is_ready());
+    }
+
+    #[test]
+    fn native_non_linux_open_skips_t3_and_asks_for_container() {
+        let c = catalog();
+        let python = TierStrip::paint_for_open(
+            &c,
+            "python",
+            IngestState::Done,
+            Some(WireTier::Syntax),
+            T3HostOffer::NeedsContainer,
+        );
+        assert_eq!(python.t3().state(), TierCellState::Skipped);
+        let java = TierStrip::paint_for_open(
+            &c,
+            "java",
+            IngestState::Done,
+            Some(WireTier::Graph),
+            T3HostOffer::NeedsContainer,
+        );
+        assert_eq!(java.t3().state(), TierCellState::NotSupported);
+
+        let rust = DiscoverMenu::paint_for_open(
+            &c,
+            "rust",
+            LspSessionState::Ready,
+            &DiscoverFlight::idle(),
+            IngestState::Done,
+            Some(WireTier::Syntax),
+            T3HostOffer::NeedsContainer,
+        );
+        assert_eq!(
+            rust.item(DiscoverKind::Implementation).reason(),
+            Some(MenuDisableReason::NeedsContainer)
+        );
+        assert_eq!(
+            rust.item(DiscoverKind::Implementation)
+                .label("Find Implementation"),
+            "open folder in container"
+        );
     }
 }

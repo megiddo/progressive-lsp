@@ -6,15 +6,17 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use poc_ide::{
-    advertised_control_socket, spawn_control_io, spawn_lsp_io, spawn_tree_io, BufferMap,
-    ClipboardPort, CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle, ControlPush,
-    ControlPushInbox, ControlSocketPath, CursorOffsets, DialogOutcome, DialogPort, DiscoverFlight,
-    DiscoverKind, DiscoverMenu, DiskEvent, DiskWatch, EditCommand, FileTree, FsPort, HighlightSpan,
-    Highlighter, IdeError, LanguageCatalog, LayoutState, LspIoEvent, LspIoHandle, LspIoRequest,
-    LspSessionState, NotifyWatch, OpenBuffer, PackageTierMap, PendingDialog, PendingDiscover,
-    ProofStatus, RunLog, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec, StdFs,
-    SystemClock, TabId, TabStrip, TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent,
-    TreeIoHandle, TreeIoRequest, TreeNode, WatchPort, WireTier, WorkspaceRoot,
+    advertised_control_socket, spawn_control_io, spawn_lsp_io, spawn_runtime_io, spawn_tree_io,
+    BufferMap, ClipboardPort, CompactChain, ConflictChoice, ControlIoEvent, ControlIoHandle,
+    ControlPush, ControlPushInbox, ControlSocketPath, CursorOffsets, DialogAction, DialogOutcome,
+    DialogPort, DiscoverFlight, DiscoverKind, DiscoverMenu, DiskEvent, DiskWatch, EditCommand,
+    FileTree, FsPort, HighlightSpan, Highlighter, HostOs, IdeError, LanguageCatalog, LaunchJournal,
+    LayoutState, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState, NotifyWatch, OpenBuffer,
+    OpenMode, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent,
+    RuntimeIoHandle, RuntimeIoRequest, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec,
+    StatusModal, StatusModalKind, StdFs, SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind,
+    TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent, TreeIoHandle, TreeIoRequest, TreeNode,
+    WatchPort, WireTier, WorkspaceRoot, PLAIN_TEXT_RGB,
 };
 use std::sync::mpsc;
 
@@ -136,6 +138,11 @@ pub struct PocIdeApp {
     run_log: RunLog,
     pending_discover: Option<PendingDiscover>,
     pending_dialog: Option<PendingDialog>,
+    host: HostOs,
+    open_mode: OpenMode,
+    status_modal: StatusModal,
+    launch_journal: LaunchJournal,
+    runtime_io: RuntimeIoHandle,
 }
 
 impl PocIdeApp {
@@ -144,6 +151,7 @@ impl PocIdeApp {
         file: Option<PathBuf>,
         control_socket: Option<PathBuf>,
         run_log: RunLog,
+        open_mode: OpenMode,
     ) -> Self {
         let socket = ControlSocketPath::resolve_default(control_socket.as_deref());
         let _ = socket.ensure_parent();
@@ -162,6 +170,7 @@ impl PocIdeApp {
         run_log.log_run_start(
             &serve_spawn.run_start(spawn_binary.as_deref(), run_log_path.as_deref()),
         );
+        let host = HostOs::current();
         let mut app = Self {
             dialog: RfdDialog,
             fs: StdFs,
@@ -193,6 +202,11 @@ impl PocIdeApp {
             run_log,
             pending_discover: None,
             pending_dialog: None,
+            host,
+            open_mode: open_mode.for_host(host),
+            status_modal: StatusModal::closed(),
+            launch_journal: LaunchJournal::new(),
+            runtime_io: spawn_runtime_io(),
         };
         if let Some(dir) = folder {
             app.apply_folder_path(&dir);
@@ -206,7 +220,8 @@ impl PocIdeApp {
     fn apply_folder_path(&mut self, path: &Path) {
         match WorkspaceRoot::from_folder_path(path, &self.fs) {
             Ok(root) => {
-                self.run_log.log_open_folder(root.as_path());
+                self.run_log
+                    .log_open_folder_mode(root.as_path(), self.open_mode);
                 self.set_root(root, None);
             }
             Err(e) => self.status = e.to_string(),
@@ -235,14 +250,38 @@ impl PocIdeApp {
                     self.shutdown_lsp();
                 }
                 let watch_err = self.watch.watch_root(root.as_path()).err();
-                self.spawn_lsp(&root);
                 self.tree_flight = TreeExpandFlight::idle();
                 self.expansion = TreeExpansion::for_root(&root);
+                let container = self.open_mode == OpenMode::Container;
+                if container {
+                    self.launch_journal = LaunchJournal::container_plan();
+                    self.status_modal = StatusModal::open(StatusModalKind::Container);
+                    match self
+                        .runtime_io
+                        .submit(RuntimeIoRequest::launch(root.as_path()))
+                    {
+                        Ok(()) => {
+                            self.status = "Starting Linux container host…".into();
+                        }
+                        Err(e) => self.status = e.to_string(),
+                    }
+                } else {
+                    if !self.open_mode.offers_t3(self.host) {
+                        self.launch_journal = LaunchJournal::native_t3_skipped();
+                    } else {
+                        self.launch_journal = LaunchJournal::new();
+                    }
+                    self.spawn_lsp(&root);
+                }
                 self.root = Some(root);
                 self.tree = Some(tree);
-                self.status = watch_err
-                    .map(|e| e.to_string())
-                    .unwrap_or_else(|| "Connecting language server…".into());
+                if !container {
+                    self.status = watch_err
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "Connecting language server…".into());
+                } else if let Some(e) = watch_err {
+                    self.status = e.to_string();
+                }
                 if let Some(file) = open_file {
                     self.open_path(&file);
                 }
@@ -266,7 +305,13 @@ impl PocIdeApp {
         match pending.apply(&mut self.dialog, &self.fs) {
             Ok(DialogOutcome::Cancelled) => {}
             Ok(DialogOutcome::Folder(root)) => {
-                self.run_log.log_open_folder(root.as_path());
+                self.open_mode = match pending.action() {
+                    DialogAction::OpenFolderInContainer => OpenMode::Container,
+                    _ => OpenMode::Native,
+                }
+                .for_host(self.host);
+                self.run_log
+                    .log_open_folder_mode(root.as_path(), self.open_mode);
                 self.set_root(root, None);
             }
             Ok(DialogOutcome::File { root, path }) => {
@@ -369,6 +414,29 @@ impl PocIdeApp {
         let events = self.tree_io.poll();
         for ev in events {
             self.handle_tree_event(ev);
+        }
+    }
+
+    fn poll_runtime_inbox(&mut self) {
+        let events = self.runtime_io.poll();
+        for ev in events {
+            self.handle_runtime_event(ev);
+        }
+    }
+
+    fn handle_runtime_event(&mut self, ev: RuntimeIoEvent) {
+        let finished = ev.is_finished();
+        self.launch_journal = ev.journal().clone();
+        if finished {
+            self.run_log.log_container_journal(&self.launch_journal);
+            if self.launch_journal.all_ok() {
+                if let Some(root) = self.root.clone() {
+                    self.spawn_lsp(&root);
+                    self.status = "Connecting language server…".into();
+                }
+            } else if self.launch_journal.is_failed() {
+                self.status = "Container host failed — see launch log".into();
+            }
         }
     }
 
@@ -640,23 +708,59 @@ impl PocIdeApp {
     }
 
     fn discover_menu(&self) -> DiscoverMenu {
-        DiscoverMenu::paint(
+        DiscoverMenu::paint_for_open(
             &self.catalog,
             self.focused_language(),
             self.lsp_session,
             &self.discover_flight,
             self.tiers.ingest(),
             self.focused_tier(),
+            T3HostOffer::from_open(self.host, self.open_mode),
         )
     }
 
     fn tier_strip(&self) -> TierStrip {
-        TierStrip::paint(
+        TierStrip::paint_for_open(
             &self.catalog,
             self.focused_language(),
-            self.tiers.ingest(),
+            self.tiers.ingest_for_strip(self.lsp_session),
             self.focused_tier(),
+            T3HostOffer::from_open(self.host, self.open_mode),
         )
+    }
+
+    fn journal_for_kind(&self, kind: StatusModalKind) -> LaunchJournal {
+        match kind {
+            StatusModalKind::T1 => {
+                LaunchJournal::t1_from_ingest(self.tiers.ingest_for_strip(self.lsp_session))
+            }
+            StatusModalKind::T2 => {
+                LaunchJournal::t2_from_ingest(self.tiers.ingest_for_strip(self.lsp_session))
+            }
+            StatusModalKind::Container => {
+                if self.launch_journal.is_empty() {
+                    LaunchJournal::container_plan()
+                } else {
+                    self.launch_journal.clone()
+                }
+            }
+            StatusModalKind::T3 => {
+                if self.open_mode == OpenMode::Container {
+                    if self.launch_journal.is_empty() {
+                        LaunchJournal::container_plan()
+                    } else {
+                        self.launch_journal.clone()
+                    }
+                } else if !T3HostOffer::from_open(self.host, self.open_mode).is_offered() {
+                    LaunchJournal::native_t3_skipped()
+                } else {
+                    LaunchJournal::native_t3_from_wire(
+                        self.focused_tier(),
+                        self.tiers.ingest_for_strip(self.lsp_session),
+                    )
+                }
+            }
+        }
     }
 
     fn queue_discover(&mut self, kind: DiscoverKind) {
@@ -737,6 +841,46 @@ impl PocIdeApp {
             }
         }
     }
+
+    fn show_status_modal(&mut self, ui: &mut egui::Ui) {
+        let Some(kind) = self.status_modal.kind() else {
+            return;
+        };
+        let journal = self.journal_for_kind(kind);
+        let title = match kind {
+            StatusModalKind::Container => "Container launch".to_string(),
+            StatusModalKind::T3 if self.open_mode == OpenMode::Container => {
+                "T3 — container host".to_string()
+            }
+            _ => format!("{} status", kind.as_str()),
+        };
+        let mut close = false;
+        egui::Modal::new(egui::Id::new("tier_status")).show(ui.ctx(), |ui| {
+            ui.heading(title);
+            ui.label(format!("Open mode: {}", self.open_mode.as_str()));
+            ui.separator();
+            for step in journal.steps() {
+                let detail = step.detail().unwrap_or("");
+                if detail.is_empty() {
+                    ui.label(format!("[{}] {}", step.state().as_str(), step.label()));
+                } else {
+                    ui.label(format!(
+                        "[{}] {}: {}",
+                        step.state().as_str(),
+                        step.label(),
+                        detail
+                    ));
+                }
+            }
+            ui.separator();
+            if ui.button("Close").clicked() {
+                close = true;
+            }
+        });
+        if close {
+            self.status_modal.close();
+        }
+    }
 }
 
 impl eframe::App for PocIdeApp {
@@ -745,9 +889,12 @@ impl eframe::App for PocIdeApp {
         self.poll_lsp_inbox();
         self.poll_control_inbox();
         self.poll_tree_inbox();
+        self.poll_runtime_inbox();
         if self.lsp_session.is_connecting()
             || self.discover_flight.is_in_flight()
             || !self.tree_flight.is_empty()
+            || self.launch_journal.is_running()
+            || self.status_modal.is_open() && self.open_mode == OpenMode::Container
         {
             ui.ctx().request_repaint();
         }
@@ -769,6 +916,7 @@ impl eframe::App for PocIdeApp {
             self.run_log.log_conflict_enqueue(&path, mtime);
         }
         self.show_conflict_modal(ui);
+        self.show_status_modal(ui);
 
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
@@ -784,9 +932,16 @@ impl eframe::App for PocIdeApp {
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Open Folder…").clicked() {
+                    if ui.button(OpenMode::Native.folder_label()).clicked() {
                         ui.close_kind(egui::UiKind::Menu);
                         self.queue_dialog(PendingDialog::open_folder());
+                        ui.ctx().request_repaint();
+                    }
+                    if self.host.shows_container_open()
+                        && ui.button(OpenMode::Container.folder_label()).clicked()
+                    {
+                        ui.close_kind(egui::UiKind::Menu);
+                        self.queue_dialog(PendingDialog::open_folder_in_container());
                         ui.ctx().request_repaint();
                     }
                     if ui.button("Open File…").clicked() {
@@ -851,7 +1006,17 @@ impl eframe::App for PocIdeApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for cell in self.tier_strip().cells() {
-                        ui.label(format!("{}: {}", cell.label(), cell.status()));
+                        let kind = match cell.kind() {
+                            TierCellKind::T1 => StatusModalKind::T1,
+                            TierCellKind::T2 => StatusModalKind::T2,
+                            TierCellKind::T3 => StatusModalKind::T3,
+                        };
+                        if ui
+                            .button(format!("{}: {}", cell.label(), cell.status()))
+                            .clicked()
+                        {
+                            self.status_modal = StatusModal::open(kind);
+                        }
                         ui.separator();
                     }
                 });
@@ -1118,12 +1283,19 @@ fn show_editor(
         let job = layout_job_from_spans(s, &spans, wrap_width);
         ui.fonts_mut(|f| f.layout_job(job))
     };
-    let output = egui::TextEdit::multiline(&mut text)
-        .code_editor()
-        .desired_width(f32::INFINITY)
-        .desired_rows(24)
-        .layouter(&mut layouter)
-        .show(ui);
+    let output = egui::ScrollArea::both()
+        .id_salt("editor-scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let rows = text.lines().count().max(1);
+            egui::TextEdit::multiline(&mut text)
+                .code_editor()
+                .desired_width(f32::INFINITY)
+                .desired_rows(rows)
+                .layouter(&mut layouter)
+                .show(ui)
+        })
+        .inner;
     let mut discover = None;
     output
         .response
@@ -1160,9 +1332,9 @@ fn sync_buffer_from_view(
     }
 }
 
-fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -> LayoutJob {
+fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], _wrap_width: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
-    job.wrap.max_width = wrap_width;
+    job.wrap.max_width = f32::INFINITY;
     let font = egui::FontId::monospace(14.0);
     if spans.is_empty() {
         job.append(
@@ -1170,7 +1342,11 @@ fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -
             0.0,
             egui::TextFormat {
                 font_id: font,
-                color: egui::Color32::from_rgb(200, 200, 200),
+                color: egui::Color32::from_rgb(
+                    PLAIN_TEXT_RGB.0,
+                    PLAIN_TEXT_RGB.1,
+                    PLAIN_TEXT_RGB.2,
+                ),
                 ..Default::default()
             },
         );
@@ -1189,7 +1365,11 @@ fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -
                 0.0,
                 egui::TextFormat {
                     font_id: font.clone(),
-                    color: egui::Color32::from_rgb(200, 200, 200),
+                    color: egui::Color32::from_rgb(
+                        PLAIN_TEXT_RGB.0,
+                        PLAIN_TEXT_RGB.1,
+                        PLAIN_TEXT_RGB.2,
+                    ),
                     ..Default::default()
                 },
             );
@@ -1215,7 +1395,11 @@ fn layout_job_from_spans(text: &str, spans: &[HighlightSpan], wrap_width: f32) -
             0.0,
             egui::TextFormat {
                 font_id: font,
-                color: egui::Color32::from_rgb(200, 200, 200),
+                color: egui::Color32::from_rgb(
+                    PLAIN_TEXT_RGB.0,
+                    PLAIN_TEXT_RGB.1,
+                    PLAIN_TEXT_RGB.2,
+                ),
                 ..Default::default()
             },
         );

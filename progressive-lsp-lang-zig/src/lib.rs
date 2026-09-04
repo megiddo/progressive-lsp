@@ -155,8 +155,14 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -179,7 +185,11 @@ pub fn tokens_from_tree(source: &str, tree: &Tree) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in &raw {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -233,9 +243,16 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         let greet = dir.path().join("src/greet.zig");
         let main = dir.path().join("src/main.zig");
-        std::fs::write(&greet, "pub fn hello(name: []const u8) []const u8 { return name; }\n").unwrap();
+        std::fs::write(
+            &greet,
+            "pub fn hello(name: []const u8) []const u8 { return name; }\n",
+        )
+        .unwrap();
         std::fs::write(&main, "const greet = @import(\"greet.zig\");\npub fn run() []const u8 { return hello(\"x\"); }\n").unwrap();
-        assert_eq!(ZigBuildAdapter.detect(dir.path()).unwrap().kind, "build.zig");
+        assert_eq!(
+            ZigBuildAdapter.detect(dir.path()).unwrap().kind,
+            "build.zig"
+        );
         let mut svc = IndexService::new();
         let job = PackageIngest::new("zig", "zig")
             .with_file(&greet)
@@ -272,7 +289,9 @@ mod tests {
         )) {
             ResolveOutcome::Ready(r) => {
                 assert!(
-                    r.locations.iter().any(|l| l.uri.contains("greet.zig") || l.uri.contains("main.zig")),
+                    r.locations
+                        .iter()
+                        .any(|l| l.uri.contains("greet.zig") || l.uri.contains("main.zig")),
                     "{:?}",
                     r.locations
                 );
@@ -285,7 +304,10 @@ mod tests {
             QueryKind::DocumentSymbol,
         )) {
             ResolveOutcome::Ready(r) => {
-                assert!(r.symbols.iter().any(|s| s.name == "run" || s.name == "hello" || !r.symbols.is_empty()));
+                assert!(r
+                    .symbols
+                    .iter()
+                    .any(|s| s.name == "run" || s.name == "hello" || !r.symbols.is_empty()));
             }
             ResolveOutcome::NotReady => panic!("ready"),
         }
@@ -312,14 +334,18 @@ mod tests {
     #[test]
     fn zig_t3_when_pack_and_project_else_t2() {
         use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
-        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use progressive_lsp_engine::{
+            EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind,
+        };
         use std::path::PathBuf;
 
         assert!(!project_zig_present(tempfile::tempdir().unwrap().path()));
         let proj = tempfile::tempdir().unwrap();
         std::fs::write(proj.path().join("build.zig"), "pub fn build() void {}\n").unwrap();
         assert!(project_zig_present(proj.path()));
-        assert!(zig_degrade_reason(false, true).unwrap().contains("no zls pack"));
+        assert!(zig_degrade_reason(false, true)
+            .unwrap()
+            .contains("no zls pack"));
         assert!(zig_degrade_reason(true, false).is_some());
         assert!(zig_degrade_reason(true, true).is_none());
 
@@ -328,7 +354,10 @@ mod tests {
         let prefix = PrefixLayout::from_path(tmp.path());
         prefix.ensure_dirs().unwrap();
         let fake = FakeEngineAdapter::zls();
-        fake.set_answers(FakeEngineAdapter::typed_fixture("hello", "file:///greet.zig"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "hello",
+            "file:///greet.zig",
+        ));
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         let fake = fake.with_binary(EngineBinary {
             pack_name: "zls".into(),
@@ -358,7 +387,9 @@ mod tests {
             ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
             other => panic!("{other:?}"),
         }
-        let degrade = ZigLanguageFactory::with_graph(Arc::new(index)).with_pack(true).with_project(false);
+        let degrade = ZigLanguageFactory::with_graph(Arc::new(index))
+            .with_pack(true)
+            .with_project(false);
         assert_eq!(degrade.resolver_chain().len(), 2);
     }
 }

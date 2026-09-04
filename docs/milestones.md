@@ -172,7 +172,7 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 **Status: SIGNED OFF** on branch `m5`. Do not start M6 until this section stays signed off. No dist tarball productization, no conformance dashboard, no `on_install_verify` as an M6-only exit (the install crate already exists from M0).
 
-- Content-addressed `IndexCache` under `$PREFIX/cache/` keyed `(grammar_ver, language_id, file_hash)`. Cold start skips unchanged files. Never written into the git worktree.
+- Content-addressed `IndexCache` under `$PREFIX/cache/` keyed `(grammar_ver, language_id, file_hash)`. Disk marker does not skip extract on cold start (symbols are in-memory only). Never written into the git worktree.
 - LATEST, LATEST-1, LATEST-2 fixtures per v1 language; one mixed-version workspace. C# T1/T2 only. Java no T3.
 - Watch overflow → FilesSince catch-up with `truncated`; 10k-file external-edit burst via FakeWatcher/FakeClock within the published budget.
 - Grammar lag: newer-than-window syntax → ERROR nodes / unparsed note; server stays up (Java/PHP/JS/Python/Rust/C).
@@ -883,7 +883,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 **Exit**
 
 - [x] `IndexStatusResponse.ingest` is `not_started` / `running` / `done`, filled from session ingest reality.
-- [x] Status strip paints T1 / T2 / T3 for the focused package (`in progress` / `done` / `not supported` / `skipped` / `n/a`). Java T3 is `not supported`. Stub refuse is `skipped`, not `done`.
+- [x] Status strip paints T1 / T2 / T3 for the focused package (`processing` / `done` / `not supported` / `skipped` / `n/a`). Folder open starts workspace ingest; T1/T2 follow that ingest with no file focused. Java T3 is `not supported`. Stub refuse is `skipped`, not `done`.
 - [x] Context and Navigate menus use `DiscoverOffer`. Disabled items do not call FakeLsp.
 
 **Sign-off checklist (poc-tier-status)**
