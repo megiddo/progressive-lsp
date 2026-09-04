@@ -7,6 +7,7 @@ mod musl;
 mod pack;
 mod perf;
 mod poc;
+mod runtime_image;
 mod tarball;
 
 use std::env;
@@ -25,6 +26,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     match cmd {
         "musl" => musl::run(&args[1..]),
         "pack" => pack::run(&args[1..]),
+        "runtime-image" => runtime_image::run(&args[1..]),
         "check-static" => check_static::run(&args[1..]),
         "bench-alloc" => allocator::run(&args[1..]),
         "bench-perf" => perf::run(&args[1..]),
@@ -47,6 +49,9 @@ xtask pack [--pack slim|python,rust,...] [--target TRIPLE] [--both]
   Slim packs only (ty, rust-analyzer, phpantom, biome, superhtml).
   Extracts to target/musl/<triple>/engines/<pack>/<binary> then check-static.
   Heavy packs (clangd/tsgo/gopls/zls) fail closed (HOST-7).
+xtask runtime-image [--target TRIPLE] [--both]
+  Copy prebuilt core + slim packs into progressive-lsp-runtime:local.
+  Staging is target/runtime-image/<triple> (not the git tree). No cargo/LLVM in the image.
 xtask check-static <ELF>...
 xtask bench-alloc
 xtask bench-perf

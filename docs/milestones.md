@@ -1074,6 +1074,45 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 - Runtime image remains HOST-4. Heavy packs remain HOST-7.
 
+## HOST-4 — runtime image copy of core and slim packs
+
+**Status: SIGNED OFF** on branch `host4`. Parent is `host3` (`0d24582`). Do not open `host5` from this branch. Do not `docker run` attach. Do not mux client. Do not build clangd/tsgo/gopls/zls. Do not compile cargo/LLVM/clang/zig/go inside the runtime image. Crate tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real ty/clangd download in tests. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Runtime image `progressive-lsp-runtime:local` via `xtask runtime-image`; copy prebuilt HOST-2 core + HOST-3 slim packs into `/opt/plsp` (`bin/progressive-lsp`, `engines/<pack>/<binary>`, empty `cache`/`log`/`run`/`scripts`, empty `/tmp`); `FROM scratch` Dockerfile that `COPY`s only; `RuntimeImagePlan` + existing `DockerPort` / `RecordingDockerPort` (`tag_image`). Not attach. Not mux. Not heavy packs. Allocator-matrix placeholders stay mimalloc.
+
+**Exit**
+
+- [x] `xtask runtime-image` stages prebuilt ELFs and tags `progressive-lsp-runtime:local` for both platforms (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
+- [x] Image layout matches `PrefixLayout` under `/opt/plsp`. ENTRYPOINT is the core ELF; default args are `serve --prefix /opt/plsp` (host5 attach still unwired).
+- [x] `RuntimeImagePlan` is a value object (platform, triple, dockerfile, core dest, pack dests, image tag). Darwin unit tests name the pattern and cover the plan without docker.
+- [x] `docker/runtime.Dockerfile` is `FROM scratch` and `COPY`s only. No rustc/cargo/clang/LLVM/zig/go. Missing required core ELF fail closed. `superhtml` × x86_64 may be omitted (HOST-3 miss).
+- [x] `RecordingDockerPort` is would-have-tagged (no daemon). Production is `CommandDockerPort` / `DockerPort::tag_image`. Tests never start docker.
+- [x] Docs: branching `host3 └── host4`; `host5`–`host7` still future. host-deps: runtime image is our artifact; docker CLI remains a host tool; tests still FakeRuntime.
+
+**Sign-off checklist (HOST-4)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (60 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELFs unchanged; image copies HOST-2/HOST-3 dests). Do not run `check-static` on a Darwin Mach-O
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan`, `PackImageCopy`; `DockerPort` `tag_image`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-4 proof is a tagged local image, not a cargo test. Staging dest is gitignored under `target/runtime-image/`. Do not commit musl ELFs.
+- Live `cargo xtask runtime-image` on this Darwin host (Docker Desktop 29.2.0):
+
+  | platform | triple | tag | image id | notes |
+  |---|---|---|---|---|
+  | `linux/arm64` | `aarch64-unknown-linux-musl` | `progressive-lsp-runtime:local` | `sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8` | native; ~85 MiB; ENTRYPOINT `/opt/plsp/bin/progressive-lsp`; CMD `serve --prefix /opt/plsp`; core + five slim packs |
+  | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:42a7314349631cf0fb04be66deed203bc281389c75a462d73af603fb77699ac1` | ~86 MiB; same ENTRYPOINT/CMD; `superhtml` omitted (HOST-3 qemu/Zig miss). `:local` left on native arm64 |
+
+- `DockerRuntime.start` remains unwired. Heavy packs remain HOST-7.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

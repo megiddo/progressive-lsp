@@ -114,10 +114,13 @@ impl MuslBuildPlan {
 }
 
 /// Port. Production is `docker` CLI; tests inject a recording double.
-/// Core musl and slim pack jobs share this Port — not a second docker abstraction.
+/// Core musl, slim pack extract, and runtime-image tag share this Port.
 pub trait DockerPort {
     /// `docker build --output` extract. `dest` is the named ELF path.
     fn extract(&self, dest: &Path, context: &Path, args: &[String]) -> Result<(), String>;
+
+    /// `docker build -t` (runtime image). Tests record args; no daemon.
+    fn tag_image(&self, context: &Path, args: &[String]) -> Result<(), String>;
 
     fn build_and_export(&self, plan: &MuslBuildPlan) -> Result<(), String> {
         self.extract(plan.dest(), plan.context(), &plan.docker_build_args())
@@ -158,6 +161,31 @@ impl DockerPort for CommandDockerPort {
             return Err(format!(
                 "extract missing {} after docker build --output",
                 dest.display()
+            ));
+        }
+        Ok(())
+    }
+
+    fn tag_image(&self, context: &Path, args: &[String]) -> Result<(), String> {
+        eprintln!(
+            "xtask docker: {} (tag, context={})",
+            args.join(" "),
+            context.display()
+        );
+        let status = Command::new("docker")
+            .args(args)
+            .env("DOCKER_BUILDKIT", "1")
+            .current_dir(context)
+            .status()
+            .map_err(|e| {
+                format!(
+                    "docker not available ({e}); runtime image requires Linux CI or a working Docker. \
+                     See docs/milestones.md HOST-4 notes."
+                )
+            })?;
+        if !status.success() {
+            return Err(format!(
+                "docker build -t failed (exit {status}). Context must be a staging dir of prebuilt ELFs."
             ));
         }
         Ok(())
@@ -209,6 +237,18 @@ impl DockerPort for RecordingDockerPort {
         // Fixture static ELF so dest exists for check-static. Not a musl green.
         fs::write(dest, check_static::fixture_static_elf64())
             .map_err(|e| format!("write fixture {}: {e}", dest.display()))?;
+        Ok(())
+    }
+
+    fn tag_image(&self, context: &Path, args: &[String]) -> Result<(), String> {
+        self.dests
+            .lock()
+            .expect("RecordingDockerPort")
+            .push(context.to_path_buf());
+        self.args
+            .lock()
+            .expect("RecordingDockerPort")
+            .push(args.to_vec());
         Ok(())
     }
 }

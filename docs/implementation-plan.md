@@ -65,7 +65,8 @@ main   # after log11 merge
                           └── host0   # native vs container File menu; T3HostOffer; RuntimePort
                                 └── host1   # PackAdapter Linux Command spawn
                                       └── host2  # musl core ELF extract both triples
-                                            └── host3  # slim pack jobs both triples (do not start host4)
+                                            └── host3  # slim pack jobs both triples
+                                                  └── host4  # runtime image (do not start host5)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -692,6 +693,29 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | HOST-3.3 | Hermetic pack Dockerfiles + live extract both triples | HOST-3.2 | **SIGNED OFF.** `docker/engine-pack.Dockerfile` (ty, RA, phpantom, biome) and `docker/engine-pack-zig.Dockerfile` (superhtml). Live `check-static` **9/10 PASS**; `superhtml` × x86_64 is a qemu/Zig `access()` gap (job/pin remain). |
 | HOST-3.4 | Docs sign-off | HOST-3.3 | **SIGNED OFF.** milestones HOST-3; branching `host2 └── host3`; `host4`–`host7` still future. host-deps / testing dest convention. |
 
+## HOST-4 (`host4` branch)
+
+**Status: SIGNED OFF** on `host4`. Parent is `host3` (`0d24582`). Do not open `host5` from this branch. Do not `docker run` attach. Do not mux client. Do not build clangd/tsgo/gopls/zls. The runtime Dockerfile copies prebuilt ELFs only — no rustc/cargo/clang/LLVM/zig/go. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). `RunLog` stays a separate schema from the serve WAL. Allocator-matrix mimalloc placeholders stay (no matching CI arch winner).
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| HOST-4.1 | `RuntimeImagePlan` / `PackImageCopy` value objects | host3 | **SIGNED OFF.** Darwin unit tests name the pattern and cover both triples without docker. Tag is `progressive-lsp-runtime:local`. Prefix in image is `/opt/plsp`. Unknown triple / missing dockerfile / missing required core ELF fail closed. `superhtml` × x86_64 may be omitted (HOST-3 miss). |
+| HOST-4.2 | `xtask runtime-image` + scratch Dockerfile + `DockerPort::tag_image` | HOST-4.1 | **SIGNED OFF.** Staging dir `target/runtime-image/<triple>` (not the git tree). `FROM scratch`; `COPY` only. `RecordingDockerPort` is would-have-tagged. Live tag both platforms (orchestrator proof). |
+| HOST-4.3 | Docs sign-off | HOST-4.2 | **SIGNED OFF.** milestones HOST-4; branching `host3 └── host4`; `host5`–`host7` still future. host-deps: runtime image is our artifact; docker CLI remains a host tool; tests still FakeRuntime. |
+
+**Sign-off checklist (HOST-4)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (60 passed)
+- [x] 95% llvm-cov on crates that exist — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only; xtask is not on the 80% list)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (no new ELF; image copies HOST-2/HOST-3 dests). Do not run `check-static` on a Darwin Mach-O
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan`, `PackImageCopy`; `DockerPort` `tag_image` row updated
+
+## HOST-3 sign-off recap (do not reopen)
+
 **Sign-off checklist (HOST-3)**
 
 - [x] Exit criteria for this WP met
@@ -736,4 +760,4 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
-9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`.
+9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`.
