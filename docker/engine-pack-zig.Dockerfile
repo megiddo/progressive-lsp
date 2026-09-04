@@ -1,7 +1,7 @@
-# Hermetic slim engine pack (Zig): superhtml.
+# Hermetic Zig engine pack: superhtml (slim) and zls (full / HOST-7).
 # Zig toolchain exists only inside this build container — not a shipped .so.
 # Fetch at the pinned git SHA inside this image — not a Mac host product step.
-# Parameterized by PACK + UPSTREAM_SHA + ZIG_TARGET / ZIG_ARCH.
+# Parameterized by PACK + UPSTREAM_SHA + ZIG_TARGET / ZIG_ARCH / BINARY.
 #
 #   docker build --platform linux/arm64 \
 #     --build-arg PACK=superhtml --build-arg BINARY=superhtml \
@@ -53,7 +53,7 @@ ENV ZIG_GLOBAL_CACHE_DIR=/tmp/zig-global
 RUN mkdir -p "${ZIG_LOCAL_CACHE_DIR}" "${ZIG_GLOBAL_CACHE_DIR}" \
     && zig build -j1 -Doptimize=ReleaseSafe -Dtarget="${ZIG_TARGET}" \
     && mkdir -p /out \
-    && cp zig-out/bin/superhtml "/out/${BINARY}"
+    && cp "zig-out/bin/${BINARY}" "/out/${BINARY}"
 
 FROM scratch
 ARG BINARY

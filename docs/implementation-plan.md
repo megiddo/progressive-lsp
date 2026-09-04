@@ -68,7 +68,8 @@ main   # after log11 merge
                                             └── host3  # slim pack jobs both triples
                                                   └── host4  # runtime image
                                                         └── host5  # docker run attach
-                                                              └── host6  # mux client (do not start host7)
+                                                              └── host6  # mux client
+                                                                    └── host7  # full flavor packs (last host slice)
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -745,7 +746,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 |---|---|---|---|
 | HOST-6.1 | `ServeMode::Mux` + `DockerRunPlan` includes `--mux` | host5 | **SIGNED OFF.** argv `serve --prefix /opt/plsp --mux`. Darwin unit tests name the pattern. HOST-5 “never `--mux`” assertion inverted. |
 | HOST-6.2 | `MuxStdio` / `MuxLsp` / `MuxControl` reuse protocol `MuxFrame` | HOST-6.1 | **SIGNED OFF.** Channel 0 = opaque JSON-RPC body (same as `serve_mux`). Channel 1 = length-prefixed Envelope. Unknown channel / >16 MiB fail closed. Pair / Cursor tests. |
-| HOST-6.3 | Docs sign-off | HOST-6.2 | **SIGNED OFF.** milestones HOST-6; branching `host5 └── host6`; `host7` still future. host-deps: container attach is mux stdio. Live mux initialize recorded in milestones (not a cargo test). |
+| HOST-6.3 | Docs sign-off | HOST-6.2 | **SIGNED OFF.** milestones HOST-6; branching `host5 └── host6`; `host7` was future (now stacked). host-deps: container attach is mux stdio. Live mux initialize recorded in milestones (not a cargo test). |
 
 **Sign-off checklist (HOST-6)**
 
@@ -757,6 +758,28 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] `check-static` — **N/A** (no shipped ELF change)
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `ServeMode::Mux`, `MuxStdio`, `ControlAttach`
+
+## HOST-7 (`host7` branch)
+
+**Status: SIGNED OFF** on `host7`. Parent is `host6` (`d6f8fa8`). This is the last host slice — do not open `host8`. Do not rewire attach/mux. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real LLVM download in crate tests. `RunLog` stays a separate schema from the serve WAL. Allocator-matrix mimalloc placeholders stay (no matching CI arch winner). Skip matrix: gopls, tsgo, zls.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| HOST-7.1 | Full pack pins + `PackKind` `go`/`cached`/`cmake` | host6 | **SIGNED OFF.** 40-hex SHAs; `--pack full` allowed; slim default; unknown fail closed. |
+| HOST-7.2 | Go/Zig/clangd pack jobs + `check-static` | HOST-7.1 | **SIGNED OFF.** gopls/tsgo `CGO_ENABLED=0`; zls Zig musl; clangd cache COPY (miss documented); `--cache-fill` not PR CI. |
+| HOST-7.3 | Optional full packs on `xtask runtime-image` | HOST-7.2 | **SIGNED OFF.** Copy when present; omit as HOST-7 miss. No cargo/LLVM in `docker/runtime.Dockerfile`. |
+| HOST-7.4 | Docs sign-off | HOST-7.3 | **SIGNED OFF.** milestones HOST-7; branching `host6 └── host7`; no host8. host-deps: full packs via Docker/cache; PR CI must not compile LLVM. |
+
+**Sign-off checklist (HOST-7)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (68 passed)
+- [x] 95% llvm-cov on crates that exist — **95.95%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — fixture path in crate tests; live table in milestones
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `GoToolchainPin`, `PackKind` go/cached/cmake, heavy `PackBuildPlan`
 
 ## HOST-3 sign-off recap (do not reopen)
 
@@ -804,4 +827,4 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
-9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not open `host6` until HOST-5 is signed off. Do not open `host7` until HOST-6 is signed off. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`. Do not mux client on `host5`. Do not build clangd/tsgo/gopls/zls on `host6`.
+9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not open `host6` until HOST-5 is signed off. Do not open `host7` until HOST-6 is signed off. `host7` is the last host slice — do not open `host8`. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`. Do not mux client on `host5`. Do not build clangd/tsgo/gopls/zls on `host6`.

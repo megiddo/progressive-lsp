@@ -1,7 +1,7 @@
 //! Hermetic musl **core** ELFs via Docker. Both Linux triples.
 //!
 //! `docker build --output` extracts `progressive-lsp` to
-//! `target/musl/<triple>/progressive-lsp`. Slim packs use the same
+//! `target/musl/<triple>/progressive-lsp`. Pack jobs use the same
 //! [`DockerPort`] (`xtask pack` → `target/musl/<triple>/engines/<pack>/<binary>`).
 //! Tests inject [`RecordingDockerPort`] and never start a daemon.
 //! [`MuslBuildPlan`] is the Value object.
@@ -114,7 +114,7 @@ impl MuslBuildPlan {
 }
 
 /// Port. Production is `docker` CLI; tests inject a recording double.
-/// Core musl, slim pack extract, and runtime-image tag share this Port.
+/// Core musl, pack extract (slim + full), and runtime-image tag share this Port.
 pub trait DockerPort {
     /// `docker build --output` extract. `dest` is the named ELF path.
     fn extract(&self, dest: &Path, context: &Path, args: &[String]) -> Result<(), String>;

@@ -45,12 +45,14 @@ fn print_help() {
         "\
 xtask musl [--target TRIPLE] [--both]
   Core ELF only. Extracts to target/musl/<triple>/progressive-lsp then check-static.
-xtask pack [--pack slim|python,rust,...] [--target TRIPLE] [--both]
-  Slim packs only (ty, rust-analyzer, phpantom, biome, superhtml).
+xtask pack [--pack slim|full|python,rust,clangd,...] [--target TRIPLE] [--both] [--cache-fill]
+  Slim default (ty, rust-analyzer, phpantom, biome, superhtml).
+  --pack full / --full adds clangd, tsgo, gopls, zls.
   Extracts to target/musl/<triple>/engines/<pack>/<binary> then check-static.
-  Heavy packs (clangd/tsgo/gopls/zls) fail closed (HOST-7).
+  clangd is cache COPY (target/pack-cache/clangd/<sha>/<triple>/clangd); miss is documented.
+  --cache-fill clangd is the dedicated LLVM cmake job — not PR CI.
 xtask runtime-image [--target TRIPLE] [--both]
-  Copy prebuilt core + slim packs into progressive-lsp-runtime:local.
+  Copy prebuilt core + slim + optional full packs into progressive-lsp-runtime:local.
   Staging is target/runtime-image/<triple> (not the git tree). No cargo/LLVM in the image.
 xtask check-static <ELF>...
 xtask bench-alloc

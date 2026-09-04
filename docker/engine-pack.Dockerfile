@@ -1,7 +1,7 @@
 # Hermetic slim engine pack (Rust): ty, rust-analyzer, phpantom, biome.
 # Parameterized by PACK + UPSTREAM_SHA + RUST_TARGET.
 # Fetch at the pinned git SHA inside this image — not a Mac host product step.
-# PR CI must not compile LLVM. Heavy packs (clangd/tsgo/gopls/zls) are HOST-7.
+# PR CI must not compile LLVM. Heavy packs use engine-pack-go / zig / clangd (HOST-7).
 #
 #   docker build --platform linux/arm64 \
 #     --build-arg PACK=python --build-arg BINARY=ty --build-arg CARGO_BIN=ty \

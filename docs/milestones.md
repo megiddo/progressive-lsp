@@ -1174,7 +1174,47 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inspect `DockerRunPlan` argv and inject `FakeRuntime` / a scripted CLI / in-memory mux frames; they never start a Docker daemon.
 - HOST-6 proof is mux initialize (`mux: true`, `socket: null`), not a cargo test and not a T3 hover. First live T3 on mounted source is later (Python/ty or PHP/phpantom).
 - Live `docker run -i --rm … serve --prefix /opt/plsp --mux` initialize: **attempted and succeeded**. Image `progressive-lsp-runtime:local` (`sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8`, linux/arm64, ENTRYPOINT `/opt/plsp/bin/progressive-lsp`). One-shot `docker run -i --rm -v $WS:$WS -w $WS` (no `-t`) with `serve --prefix /opt/plsp --mux` answered a channel-0 mux-framed `initialize` with `serverInfo.name=progressive-lsp` and `experimental.progressiveLsp` `{version:v1, socket:null, mux:true}`. Not a cargo test. Not a T3 hover.
-- Heavy packs remain HOST-7.
+- Full packs are HOST-7.
+
+## HOST-7 — full flavor musl pack jobs
+
+**Status: SIGNED OFF** on branch `host7`. Parent is `host6` (`d6f8fa8`). This is the last host slice — do not open `host8`. Do not rewire `DockerRuntime.start` except to copy extra packs into the runtime image when present. Container LSP + control stay mux stdio. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real LLVM download in tests. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Full flavor packs on both musl triples: `clangd` (cache COPY; miss documented; never cmake in the default job), `tsgo` / `gopls` (`CGO_ENABLED=0` Go static), `zls` (Zig musl, same dockerfile as superhtml). Pins are 40-hex SHAs in `xtask/pack-pins.toml`. `--pack full` / `--pack clangd,tsgo,gopls,zls` allowed; slim default still works; unknown packs fail closed. Dest `target/musl/<triple>/engines/<pack>/<binary>` then `check-static`. `PackBuildPlan` Darwin unit tests cover heavy plans without docker. `xtask runtime-image` copies full packs when present (optional). Allocator-matrix placeholders stay mimalloc (skip matrix: gopls, tsgo, zls). Not a follow-on host8.
+
+**Exit**
+
+- [x] `xtask pack --pack full` (or named CSV) extracts / records per pack×triple. Slim still the default. Unknown packs fail closed.
+- [x] After a successful extract, `xtask check-static` on that ELF (no `PT_INTERP`, no `DT_NEEDED`). clangd missing cache is a documented miss — do not ship dynamic. Mach-O and Darwin dist stubs still refused.
+- [x] `PackBuildPlan` covers heavy kinds (`go`, `cached`, `cmake` cache-fill) without docker. Darwin unit tests name the pattern.
+- [x] Pins are 40-hex git SHAs (gopls, tsgo, zls, llvm-project). Not `latest`.
+- [x] Go packs: `CGO_ENABLED=0`. Zig toolchain only inside the pack build container. clangd default job never cmake; `--cache-fill` is dedicated and not PR CI.
+- [x] Docs: branching `host6 └── host7`; no host8. host-deps: full packs via Docker/cache; PR CI must not compile LLVM.
+
+**Sign-off checklist (HOST-7)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (68 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.95%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only; discovery.rs unchanged)
+- [x] No `sleep`
+- [x] `check-static` — crate tests use fixture ELFs. Live dest table below. Do not commit musl ELFs.
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `PackKind` (`go`/`cached`/`cmake`), `GoToolchainPin`, `PackBuildPlan` heavy plans, `PackImageCopy` optional full
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-7 proof is extracted musl ELFs (or honest misses), not Darwin `xtask dist` stubs. Dest is gitignored under `target/`. Do not commit musl ELFs.
+- clangd is content-addressed by llvm-project SHA + triple. Cache hit COPY; miss is an honest gap. `--cache-fill` cmake is not the default pack job and must not run on every PR.
+- Live `check-static` on this Darwin host (Docker Desktop 29.2.0):
+
+  | pack | binary | aarch64 | x86_64 |
+  |---|---|---|---|
+  | gopls | gopls | PASS (~27 MiB static) | PASS (~29 MiB static) |
+  | zls | zls | PASS (~17 MiB static) | **MISS** — qemu/Zig `access()` `Unexpected` on `.zig-cache` options files (same class as HOST-3 superhtml). Job/pin remain. Native linux/amd64 CI can close this; not a Mach-O green. |
+  | tsgo | tsgo | PASS (~25 MiB static) | PASS (~28 MiB static) |
+  | clangd | clangd | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:aarch64-unknown-linux-musl` absent; not cmake | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:x86_64-unknown-linux-musl` absent; not cmake |
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 

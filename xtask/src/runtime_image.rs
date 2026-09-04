@@ -1,4 +1,4 @@
-//! Runtime image: copy prebuilt core + slim packs into `/opt/plsp`.
+//! Runtime image: copy prebuilt core + slim + optional full packs into `/opt/plsp`.
 //!
 //! Context is a staging dir of already-extracted ELFs under
 //! `target/runtime-image/<triple>/` — not the git tree, and never a
@@ -9,7 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use progressive_lsp_core::PrefixLayout;
-use progressive_lsp_engine::{binary_name_for_pack, slim_pack_names, SUPERHTML_PACK};
+use progressive_lsp_engine::{
+    binary_name_for_pack, full_pack_names, is_heavy_pack, slim_pack_names, SUPERHTML_PACK,
+};
 
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
@@ -26,7 +28,7 @@ pub const DOCKERFILE_REL: &str = "docker/runtime.Dockerfile";
 
 const STAGING_KEEP: &str = ".keep";
 
-/// One slim pack ELF to copy. Value object (field of [`RuntimeImagePlan`]).
+/// One pack ELF to copy (slim required, full optional). Value object (field of [`RuntimeImagePlan`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackImageCopy {
     pack: String,
@@ -89,13 +91,14 @@ impl RuntimeImagePlan {
         }
         let musl_root = root.join("target").join("musl").join(triple);
         let core_dest = musl_root.join(CORE_ELF_NAME);
-        let pack_dests = slim_pack_names()
+        let pack_dests = full_pack_names()
             .iter()
             .map(|pack| {
                 let binary = binary_name_for_pack(pack)
-                    .ok_or_else(|| format!("unknown slim pack {pack}"))?
+                    .ok_or_else(|| format!("unknown pack {pack}"))?
                     .to_string();
-                let required = !(*pack == SUPERHTML_PACK && triple == X86_64_MUSL);
+                let required = slim_pack_names().contains(pack)
+                    && !(*pack == SUPERHTML_PACK && triple == X86_64_MUSL);
                 Ok(PackImageCopy {
                     pack: (*pack).to_string(),
                     binary: binary.clone(),
@@ -169,6 +172,7 @@ impl RuntimeImagePlan {
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
     /// Fail closed if the core ELF or a required slim pack is missing.
     /// superhtml × x86_64 may be absent (HOST-3 qemu/Zig miss).
+    /// Full packs (clangd/tsgo/gopls/zls) are optional (HOST-7 miss / cache miss).
     pub fn stage(&self) -> Result<Vec<String>, String> {
         if !self.core_dest.is_file() {
             return Err(format!(
@@ -211,8 +215,13 @@ impl RuntimeImagePlan {
                         self.triple
                     ));
                 }
+                let why = if is_heavy_pack(&pack.pack) {
+                    "HOST-7 miss"
+                } else {
+                    "HOST-3 miss"
+                };
                 omitted.push(format!(
-                    "{}:{} omitted (HOST-3 miss; not a Mach-O green)",
+                    "{}:{} omitted ({why}; not a Mach-O green)",
                     pack.pack, self.triple
                 ));
                 continue;
@@ -297,7 +306,7 @@ fn parse_targets(args: &[String]) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use crate::musl::RecordingDockerPort;
-    use progressive_lsp_engine::{BIOME_PACK, PHPANTOM_PACK, PYTHON_PACK, RUST_PACK};
+    use progressive_lsp_engine::PYTHON_PACK;
 
     fn fixture_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -359,16 +368,13 @@ mod tests {
         assert_eq!(amd, amd.clone());
 
         let packs: Vec<_> = amd.pack_dests().iter().map(|p| p.pack()).collect();
-        assert_eq!(
-            packs,
-            vec![
-                PYTHON_PACK,
-                RUST_PACK,
-                PHPANTOM_PACK,
-                SUPERHTML_PACK,
-                BIOME_PACK
-            ]
-        );
+        assert_eq!(packs, full_pack_names());
+        let clangd = amd
+            .pack_dests()
+            .iter()
+            .find(|p| p.pack() == progressive_lsp_engine::CLANGD_PACK)
+            .unwrap();
+        assert!(!clangd.required(), "full packs are optional HOST-7 copies");
         let superhtml = amd
             .pack_dests()
             .iter()
@@ -447,7 +453,10 @@ mod tests {
         seed_required_elfs(root.path(), AARCH64_MUSL, true);
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
         let omitted = plan.stage().unwrap();
-        assert!(omitted.is_empty());
+        assert!(
+            omitted.iter().all(|n| n.contains("HOST-7 miss")),
+            "{omitted:?}"
+        );
         let docker = RecordingDockerPort::new();
         docker
             .tag_image(plan.context(), &plan.docker_build_args())
@@ -519,13 +528,53 @@ mod tests {
         seed_required_elfs(root.path(), X86_64_MUSL, false);
         let plan = RuntimeImagePlan::for_triple(root.path(), X86_64_MUSL).unwrap();
         let omitted = plan.stage().unwrap();
-        assert_eq!(omitted.len(), 1);
-        assert!(omitted[0].contains("superhtml"), "{omitted:?}");
-        assert!(omitted[0].contains("HOST-3 miss"), "{omitted:?}");
+        assert!(
+            omitted
+                .iter()
+                .any(|n| n.contains("superhtml") && n.contains("HOST-3 miss")),
+            "{omitted:?}"
+        );
+        assert!(
+            omitted
+                .iter()
+                .any(|n| n.contains("clangd") && n.contains("HOST-7 miss")),
+            "{omitted:?}"
+        );
+        assert!(
+            omitted
+                .iter()
+                .any(|n| n.contains("gopls") && n.contains("HOST-7 miss")),
+            "{omitted:?}"
+        );
         let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
         assert!(!prefix.engines_dir().join("superhtml/superhtml").exists());
         assert!(prefix.engines_dir().join("python/ty").is_file());
         assert!(prefix.engines_dir().join("biome/biome").is_file());
+    }
+
+    #[test]
+    fn stage_copies_optional_full_pack_when_present() {
+        let root = fixture_root();
+        seed_required_elfs(root.path(), AARCH64_MUSL, true);
+        write_elf(
+            &root
+                .path()
+                .join("target/musl")
+                .join(AARCH64_MUSL)
+                .join("engines/gopls/gopls"),
+        );
+        let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
+        let omitted = plan.stage().unwrap();
+        assert!(
+            omitted
+                .iter()
+                .any(|n| n.contains("clangd") && n.contains("HOST-7 miss")),
+            "{omitted:?}"
+        );
+        assert!(!omitted.iter().any(|n| n.contains("gopls")), "{omitted:?}");
+        let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
+        assert!(prefix.engines_dir().join("gopls/gopls").is_file());
+        assert!(!prefix.engines_dir().join("clangd/clangd").exists());
     }
 
     #[test]
