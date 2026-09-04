@@ -6,7 +6,7 @@
 #
 # Extract dest is target/musl/<triple>/progressive-lsp (HOST-2).
 # PR CI must not compile LLVM. This job builds only the core binary.
-# Do not add engine packs here (HOST-3).
+# Slim packs are docker/engine-pack.Dockerfile (HOST-3), not this file.
 
 FROM rust:1.87-alpine AS build
 

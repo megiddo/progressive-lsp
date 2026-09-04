@@ -1,8 +1,10 @@
 //! Hermetic musl **core** ELFs via Docker. Both Linux triples.
 //!
 //! `docker build --output` extracts `progressive-lsp` to
-//! `target/musl/<triple>/progressive-lsp`. Tests inject [`RecordingDockerPort`]
-//! and never start a daemon. [`MuslBuildPlan`] is the Value object.
+//! `target/musl/<triple>/progressive-lsp`. Slim packs use the same
+//! [`DockerPort`] (`xtask pack` → `target/musl/<triple>/engines/<pack>/<binary>`).
+//! Tests inject [`RecordingDockerPort`] and never start a daemon.
+//! [`MuslBuildPlan`] is the Value object.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -112,65 +114,76 @@ impl MuslBuildPlan {
 }
 
 /// Port. Production is `docker` CLI; tests inject a recording double.
+/// Core musl and slim pack jobs share this Port — not a second docker abstraction.
 pub trait DockerPort {
-    fn build_and_export(&self, plan: &MuslBuildPlan) -> Result<(), String>;
+    /// `docker build --output` extract. `dest` is the named ELF path.
+    fn extract(&self, dest: &Path, context: &Path, args: &[String]) -> Result<(), String>;
+
+    fn build_and_export(&self, plan: &MuslBuildPlan) -> Result<(), String> {
+        self.extract(plan.dest(), plan.context(), &plan.docker_build_args())
+    }
 }
 
 /// Production Adapter. `std::process::Command` docker; never used from crate tests.
 pub struct CommandDockerPort;
 
 impl DockerPort for CommandDockerPort {
-    fn build_and_export(&self, plan: &MuslBuildPlan) -> Result<(), String> {
-        if let Some(parent) = plan.dest.parent() {
+    fn extract(&self, dest: &Path, context: &Path, args: &[String]) -> Result<(), String> {
+        if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
         eprintln!(
-            "xtask musl: docker build --platform {} --build-arg RUST_TARGET={} --output {}",
-            plan.docker_platform(),
-            plan.rust_target(),
-            plan.output_dir().display()
+            "xtask docker: {} --output dest={}",
+            args.join(" "),
+            dest.display()
         );
         let status = Command::new("docker")
-            .args(plan.docker_build_args())
+            .args(args)
             .env("DOCKER_BUILDKIT", "1")
-            .current_dir(plan.context())
+            .current_dir(context)
             .status()
             .map_err(|e| {
                 format!(
                     "docker not available ({e}); musl ELFs require Linux CI or a working Docker. \
-                     See docs/milestones.md HOST-2 notes."
+                     See docs/milestones.md HOST-2 / HOST-3 notes."
                 )
             })?;
         if !status.success() {
             return Err(format!(
                 "docker build failed for {} (exit {status}). CI Linux must produce both musl triples.",
-                plan.triple()
+                dest.display()
             ));
         }
-        if !plan.dest().is_file() {
+        if !dest.is_file() {
             return Err(format!(
                 "extract missing {} after docker build --output",
-                plan.dest().display()
+                dest.display()
             ));
         }
         Ok(())
     }
 }
 
-/// Test double. Records the plan and writes a fixture ELF — never a Docker daemon.
+/// Test double. Records dest/args and writes a fixture ELF — never a Docker daemon.
 pub struct RecordingDockerPort {
-    plans: Mutex<Vec<MuslBuildPlan>>,
+    dests: Mutex<Vec<PathBuf>>,
+    args: Mutex<Vec<Vec<String>>>,
 }
 
 impl RecordingDockerPort {
     pub fn new() -> Self {
         Self {
-            plans: Mutex::new(Vec::new()),
+            dests: Mutex::new(Vec::new()),
+            args: Mutex::new(Vec::new()),
         }
     }
 
-    pub fn recorded(&self) -> Vec<MuslBuildPlan> {
-        self.plans.lock().expect("RecordingDockerPort").clone()
+    pub fn recorded_dests(&self) -> Vec<PathBuf> {
+        self.dests.lock().expect("RecordingDockerPort").clone()
+    }
+
+    pub fn recorded_args(&self) -> Vec<Vec<String>> {
+        self.args.lock().expect("RecordingDockerPort").clone()
     }
 }
 
@@ -181,17 +194,21 @@ impl Default for RecordingDockerPort {
 }
 
 impl DockerPort for RecordingDockerPort {
-    fn build_and_export(&self, plan: &MuslBuildPlan) -> Result<(), String> {
-        self.plans
+    fn extract(&self, dest: &Path, _context: &Path, args: &[String]) -> Result<(), String> {
+        self.dests
             .lock()
             .expect("RecordingDockerPort")
-            .push(plan.clone());
-        if let Some(parent) = plan.dest.parent() {
+            .push(dest.to_path_buf());
+        self.args
+            .lock()
+            .expect("RecordingDockerPort")
+            .push(args.to_vec());
+        if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
         // Fixture static ELF so dest exists for check-static. Not a musl green.
-        fs::write(plan.dest(), check_static::fixture_static_elf64())
-            .map_err(|e| format!("write fixture {}: {e}", plan.dest().display()))?;
+        fs::write(dest, check_static::fixture_static_elf64())
+            .map_err(|e| format!("write fixture {}: {e}", dest.display()))?;
         Ok(())
     }
 }
@@ -362,9 +379,9 @@ mod tests {
         let plan = MuslBuildPlan::for_triple(root.path(), X86_64_MUSL).unwrap();
         let docker = RecordingDockerPort::new();
         docker.build_and_export(&plan).unwrap();
-        let recorded = docker.recorded();
+        let recorded = docker.recorded_dests();
         assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0], plan);
+        assert_eq!(recorded[0], plan.dest());
         assert!(plan.dest().is_file(), "fixture dest for extract pipeline");
         check_static::check_path(plan.dest()).unwrap();
         let bytes = fs::read(plan.dest()).unwrap();
@@ -373,6 +390,8 @@ mod tests {
             "Mach-O still refused"
         );
         assert_ne!(bytes, fixture_macho());
+        let args = &docker.recorded_args()[0];
+        assert!(args.iter().any(|a| a.contains("RUST_TARGET=")));
     }
 
     #[test]
@@ -386,18 +405,19 @@ mod tests {
         )
         .unwrap();
         run_at(root.path(), &["--both".into()], &docker).unwrap();
-        let recorded = docker.recorded();
+        let recorded = docker.recorded_dests();
         assert_eq!(recorded.len(), 3);
-        assert_eq!(recorded[0].triple(), X86_64_MUSL);
+        assert!(recorded[0].ends_with(CORE_ELF_NAME));
+        assert!(recorded[0].to_string_lossy().contains(X86_64_MUSL));
         let triples: Vec<_> = recorded[1..]
             .iter()
-            .map(|p| p.triple().to_string())
+            .map(|p| p.to_string_lossy().to_string())
             .collect();
-        assert!(triples.contains(&X86_64_MUSL.to_string()));
-        assert!(triples.contains(&AARCH64_MUSL.to_string()));
-        for plan in &recorded {
-            assert_eq!(plan.dest().file_name().unwrap(), CORE_ELF_NAME);
-            check_static::check_path(plan.dest()).unwrap();
+        assert!(triples.iter().any(|p| p.contains(X86_64_MUSL)));
+        assert!(triples.iter().any(|p| p.contains(AARCH64_MUSL)));
+        for dest in &recorded {
+            assert_eq!(dest.file_name().unwrap(), CORE_ELF_NAME);
+            check_static::check_path(dest).unwrap();
         }
     }
 

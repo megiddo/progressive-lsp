@@ -1029,6 +1029,51 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - Extract dest is gitignored under `target/`. Do not commit musl ELFs.
 - Engine pack builds remain HOST-3. Runtime image remains HOST-4.
 
+## HOST-3 — slim pack jobs both triples
+
+**Status: SIGNED OFF** on branch `host3`. Parent is `host2` (`7e34b2c`). Do not open `host4` from this branch. Do not build clangd/tsgo/gopls/zls. Do not build the runtime image. Do not `docker run` attach. Do not mux client. Crate tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real ty/clangd download in tests. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Slim pack musl jobs for `python`/`ty`, `rust`/`rust-analyzer`, `phpantom`/`phpantom`, `biome`/`biome`, `superhtml`/`superhtml` on both triples via `xtask pack`; pinned upstream git SHAs in `xtask/pack-pins.toml`; `docker build --output` extract to `target/musl/<triple>/engines/<pack>/<binary>`; `check-static` after extract; `PackBuildPlan` + existing `DockerPort` / `RecordingDockerPort`. Not heavy packs. Not runtime image. Not attach. Not mux. Allocator-matrix placeholders stay mimalloc. Darwin `xtask dist` stubs are not musl greens.
+
+**Exit**
+
+- [x] `xtask pack` extracts named slim pack ELFs under `target/musl/<triple>/engines/<pack>/<binary>` for both triples (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
+- [x] After a successful extract, `xtask check-static` on that ELF (no `PT_INTERP`, no `DT_NEEDED`). Mach-O and Darwin dist stubs still refused.
+- [x] `PackBuildPlan` is a value object (pack, binary, triple, platform, dockerfile, dest, pinned SHA). Darwin unit tests name the pattern and cover the plan without docker.
+- [x] Pins are 40-hex git SHAs in `xtask/pack-pins.toml` (not core crate semver, not `latest`).
+- [x] `RecordingDockerPort` is would-have-built (no daemon). Production is `CommandDockerPort` / `DockerPort::extract`. Tests never start docker.
+- [x] `docker/engine-pack.Dockerfile` is a real hermetic Rust pack job (not `cat /pack-id.txt`). Heavy packs fail closed. Do not commit musl ELFs.
+- [x] Docs: branching `host2 └── host3`; `host4`–`host7` still future. host-deps / testing dest convention.
+
+**Sign-off checklist (HOST-3)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (47 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — crate tests use fixture ELFs. Live dest ELFs: **9/10 PASS** (table below). `superhtml` × `x86_64-unknown-linux-musl` is an honest qemu/Zig gap, not a Mach-O green.
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `PackPin`, `PackKind`, `PackBuildPlan`, `RustToolchainPin`, `ZigToolchainPin`; `DockerPort` extract
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-3 proof is extracted musl ELFs, not Darwin `xtask dist` stubs. Dest is gitignored under `target/`.
+- First live extract attempt (phpantom aarch64 on `rust:1.87-alpine`) failed: mago crates require rustc ≥ 1.97. Switched to `rust:1.98.0-bookworm` + musl *target* (`1.99.0` is unpublished; alpine musl-host rustup 1.98+ 404s).
+- `x86_64-unknown-linux-musl` defaults to dynamic `ld-musl` (`PT_INTERP`). Pack Dockerfile now forces `+crt-static` / `link-self-contained` / `-static` via target-specific `RUSTFLAGS` (plain `RUSTFLAGS` was dropped by upstream `.cargo/config`).
+- Live `check-static` on this Darwin host (Docker Desktop, native `linux/arm64` then qemu `linux/amd64`):
+
+  | pack | binary | aarch64 | x86_64 |
+  |---|---|---|---|
+  | python | ty | PASS (~33 MiB static) | PASS (~45 MiB static) |
+  | rust | rust-analyzer | PASS (~50 MiB static) | PASS (~57 MiB static) |
+  | phpantom | phpantom | PASS (~46 MiB static) | PASS (~46 MiB static) |
+  | biome | biome | PASS (~125 MiB static) | PASS (~118 MiB static) |
+  | superhtml | superhtml | PASS (~7.9 MiB static) | **MISS** — qemu/Zig `access()` `Unexpected` on `.zig-cache` options files (`-j1` + `/tmp` cache still fails). Job/pin remain. Native linux/amd64 CI can close this; do not call it green here. |
+
+- Runtime image remains HOST-4. Heavy packs remain HOST-7.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 
 Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).

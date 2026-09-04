@@ -1,0 +1,64 @@
+# Slim engine pack pins. Content-addressed by upstream git SHA.
+# Not core crate semver (workspace 0.1.0). Fetch inside Docker, not on the Mac host.
+
+[toolchain.rust]
+# Pack-build rustc when the upstream tree has no rust-toolchain.toml.
+# Matches biome / ty-ruff rust-toolchain.toml (1.98.0). 1.99.0 is not published.
+channel = "1.98.0"
+
+[toolchain.zig]
+version = "0.15.1"
+tarball_x86_64 = "https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz"
+sha256_x86_64 = "c61c5da6edeea14ca51ecd5e4520c6f4189ef5250383db33d01848293bfafe05"
+tarball_aarch64 = "https://ziglang.org/download/0.15.1/zig-aarch64-linux-0.15.1.tar.xz"
+sha256_aarch64 = "bb4a8d2ad735e7fba764c497ddf4243cb129fece4148da3222a7046d3f1f19fe"
+
+[[pack]]
+name = "python"
+binary = "ty"
+repo = "https://github.com/astral-sh/ty.git"
+sha = "dca9f9873896bc3bfdb7db6459fd54f80fac3fa6"
+kind = "rust"
+cargo_bin = "ty"
+source_subdir = "ruff"
+tag = "0.0.78"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "rust"
+binary = "rust-analyzer"
+repo = "https://github.com/rust-lang/rust-analyzer.git"
+sha = "f8996691e991a4dc3c6f135e0fc04fc5561e4e9a"
+kind = "rust"
+cargo_bin = "rust-analyzer"
+tag = "2026-08-31"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "phpantom"
+binary = "phpantom"
+repo = "https://github.com/PHPantom-dev/phpantom_lsp.git"
+sha = "533ef884630924b774a2d74ac3d6050f7b3fbce0"
+kind = "rust"
+cargo_bin = "phpantom_lsp"
+tag = "0.10.0"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "biome"
+binary = "biome"
+repo = "https://github.com/biomejs/biome.git"
+sha = "0a31d7c4e1f6cc1b3e08af4aef2ad4b97f6b4f1c"
+kind = "rust"
+cargo_bin = "biome"
+tag = "@biomejs/biome@2.5.12"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "superhtml"
+binary = "superhtml"
+repo = "https://github.com/kristoff-it/superhtml.git"
+sha = "9b8a0ab0d20339fbe1c803a72090d7b575efdc18"
+kind = "zig"
+tag = "v0.6.2"
+dockerfile = "docker/engine-pack-zig.Dockerfile"
