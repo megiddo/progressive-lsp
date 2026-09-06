@@ -1052,7 +1052,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
 - [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
 - [x] No `sleep`
-- [x] `check-static` — crate tests use fixture ELFs. Live dest ELFs: **9/10 PASS** (table below). `superhtml` × `x86_64-unknown-linux-musl` is an honest qemu/Zig gap, not a Mach-O green.
+- [x] `check-static` — crate tests use fixture ELFs. Live dest ELFs: **10/10 PASS** (table below). `superhtml` × `x86_64-unknown-linux-musl` was a qemu/Zig `faccessat` ENOSYS miss at HOST-3 sign-off; closed later by host-native `--platform` + Zig `-Dtarget` (not qemu amd64).
 - [x] Docs in this tree updated (`RunLog` stays a separate schema)
 - [x] [design-patterns.md](design-patterns.md) — `PackPin`, `PackKind`, `PackBuildPlan`, `RustToolchainPin`, `ZigToolchainPin`; `DockerPort` extract
 
@@ -1062,7 +1062,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - HOST-3 proof is extracted musl ELFs, not Darwin `xtask dist` stubs. Dest is gitignored under `target/`.
 - First live extract attempt (phpantom aarch64 on `rust:1.87-alpine`) failed: mago crates require rustc ≥ 1.97. Switched to `rust:1.98.0-bookworm` + musl *target* (`1.99.0` is unpublished; alpine musl-host rustup 1.98+ 404s).
 - `x86_64-unknown-linux-musl` defaults to dynamic `ld-musl` (`PT_INTERP`). Pack Dockerfile now forces `+crt-static` / `link-self-contained` / `-static` via target-specific `RUSTFLAGS` (plain `RUSTFLAGS` was dropped by upstream `.cargo/config`).
-- Live `check-static` on this Darwin host (Docker Desktop, native `linux/arm64` then qemu `linux/amd64`):
+- Live `check-static` on this Darwin host (Docker Desktop). Rust packs: native `linux/arm64` then qemu `linux/amd64`. Zig packs: host-native `linux/arm64` + `-Dtarget` (do not qemu the Zig compiler).
 
   | pack | binary | aarch64 | x86_64 |
   |---|---|---|---|
@@ -1070,7 +1070,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
   | rust | rust-analyzer | PASS (~50 MiB static) | PASS (~57 MiB static) |
   | phpantom | phpantom | PASS (~46 MiB static) | PASS (~46 MiB static) |
   | biome | biome | PASS (~125 MiB static) | PASS (~118 MiB static) |
-  | superhtml | superhtml | PASS (~7.9 MiB static) | **MISS** — qemu/Zig `access()` `Unexpected` on `.zig-cache` options files (`-j1` + `/tmp` cache still fails). Job/pin remain. Native linux/amd64 CI can close this; do not call it green here. |
+  | superhtml | superhtml | PASS (~7.9 MiB static) | PASS (~8.1 MiB static) — native `linux/arm64` container + `ZIG_TARGET=x86_64-linux-musl`. qemu `linux/amd64` still hits Zig `faccessat` ENOSYS; that path is no longer used. |
 
 - Runtime image remains HOST-4. Heavy packs remain HOST-7.
 
@@ -1212,7 +1212,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
   | pack | binary | aarch64 | x86_64 |
   |---|---|---|---|
   | gopls | gopls | PASS (~27 MiB static) | PASS (~29 MiB static) |
-  | zls | zls | PASS (~17 MiB static) | **MISS** — qemu/Zig `access()` `Unexpected` on `.zig-cache` options files (same class as HOST-3 superhtml). Job/pin remain. Native linux/amd64 CI can close this; not a Mach-O green. |
+  | zls | zls | PASS (~17 MiB static) | PASS (~17 MiB static) — same Zig path as superhtml: host-native `linux/arm64` + `ZIG_TARGET=x86_64-linux-musl`. qemu amd64 is not used. |
   | tsgo | tsgo | PASS (~25 MiB static) | PASS (~28 MiB static) |
   | clangd | clangd | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:aarch64-unknown-linux-musl` absent; not cmake | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:x86_64-unknown-linux-musl` absent; not cmake |
 

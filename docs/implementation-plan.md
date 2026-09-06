@@ -693,7 +693,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 |---|---|---|---|
 | HOST-3.1 | `PackPin` / `PackKind` / `RustToolchainPin` / `ZigToolchainPin` + `xtask/pack-pins.toml` | host2 | **SIGNED OFF.** Slim packs pinned by 40-hex git SHA (not `latest`). Rustc 1.98.0; Zig 0.15.1 tarball SHA256. |
 | HOST-3.2 | `PackBuildPlan` + `xtask pack` via existing `DockerPort::extract` | HOST-3.1 | **SIGNED OFF.** Dest `target/musl/<triple>/engines/<pack>/<binary>`. Unknown / heavy packs fail closed. Darwin unit tests name the pattern; `RecordingDockerPort` is would-have-built. |
-| HOST-3.3 | Hermetic pack Dockerfiles + live extract both triples | HOST-3.2 | **SIGNED OFF.** `docker/engine-pack.Dockerfile` (ty, RA, phpantom, biome) and `docker/engine-pack-zig.Dockerfile` (superhtml). Live `check-static` **9/10 PASS**; `superhtml` × x86_64 is a qemu/Zig `access()` gap (job/pin remain). |
+| HOST-3.3 | Hermetic pack Dockerfiles + live extract both triples | HOST-3.2 | **SIGNED OFF.** `docker/engine-pack.Dockerfile` (ty, RA, phpantom, biome) and `docker/engine-pack-zig.Dockerfile` (superhtml). Live `check-static` **10/10 PASS**. `superhtml` × x86_64 qemu `faccessat` miss was closed later: host-native docker platform + Zig `-Dtarget`. |
 | HOST-3.4 | Docs sign-off | HOST-3.3 | **SIGNED OFF.** milestones HOST-3; branching `host2 └── host3`; `host4`–`host7` still future. host-deps / testing dest convention. |
 
 ## HOST-4 (`host4` branch)
@@ -790,7 +790,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] 95% llvm-cov on crates that exist — **96.00%** lines
 - [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only; xtask is not on the 80% list)
 - [x] No `sleep`
-- [x] `check-static` — crate tests use fixture ELFs. Live dest ELFs: **9/10 PASS** (ty, rust-analyzer, phpantom, biome both triples; superhtml aarch64). `superhtml` × x86_64 qemu/Zig gap recorded in milestones — not a Mach-O green.
+- [x] `check-static` — crate tests use fixture ELFs. Live dest ELFs: **10/10 PASS** (ty, rust-analyzer, phpantom, biome, superhtml both triples). `superhtml` × x86_64 qemu miss closed later via Zig cross-compile — not a Mach-O green.
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `PackPin`, `PackKind`, `PackBuildPlan`, `RustToolchainPin`, `ZigToolchainPin`; `DockerPort` extract row updated
 

@@ -124,20 +124,42 @@ impl ZigToolchainPin {
         &self.version
     }
 
-    pub fn for_triple(&self, triple: &str) -> Result<(&str, &str, &str), String> {
-        match triple {
-            X86_64_MUSL => Ok((
+    /// Tarball matches the **container** ISA (`--platform`), not the output triple.
+    /// Zig then cross-compiles with `-Dtarget`.
+    pub fn for_docker_platform(&self, platform: &str) -> Result<(&str, &str, &str), String> {
+        match platform {
+            "linux/amd64" => Ok((
                 "x86_64",
                 self.tarball_x86_64.as_str(),
                 self.sha256_x86_64.as_str(),
             )),
-            AARCH64_MUSL => Ok((
+            "linux/arm64" => Ok((
                 "aarch64",
                 self.tarball_aarch64.as_str(),
                 self.sha256_aarch64.as_str(),
             )),
-            other => Err(format!("unknown triple {other} for zig toolchain")),
+            other => Err(format!("unknown docker platform {other} for zig toolchain")),
         }
+    }
+}
+
+/// Native container ISA for Zig packs. qemu `linux/amd64` on Darwin is ENOSYS
+/// (`faccessat`) in Zig 0.15.1's Options step. Rust/Go packs still follow the triple.
+pub fn host_native_docker_platform() -> Result<&'static str, String> {
+    match std::env::consts::ARCH {
+        "aarch64" => Ok("linux/arm64"),
+        "x86_64" => Ok("linux/amd64"),
+        other => Err(format!(
+            "unsupported host arch {other} for zig pack docker platform; expected aarch64 or x86_64"
+        )),
+    }
+}
+
+fn zig_target_for_triple(triple: &str) -> Result<&'static str, String> {
+    match triple {
+        X86_64_MUSL => Ok("x86_64-linux-musl"),
+        AARCH64_MUSL => Ok("aarch64-linux-musl"),
+        other => Err(format!("unknown triple {other} for zig target")),
     }
 }
 
@@ -189,7 +211,7 @@ impl PackBuildPlan {
         zig: Option<&ZigToolchainPin>,
         go: Option<&GoToolchainPin>,
     ) -> Result<Self, String> {
-        let docker_platform = match triple {
+        let triple_platform = match triple {
             X86_64_MUSL => "linux/amd64",
             AARCH64_MUSL => "linux/arm64",
             _ => {
@@ -197,6 +219,12 @@ impl PackBuildPlan {
                     "unknown triple {triple}; expected {X86_64_MUSL} or {AARCH64_MUSL}"
                 ))
             }
+        };
+        // Zig cross-compiles (`-Dtarget`); do not qemu the compiler. Rust/Go stay
+        // on the triple platform (those already PASS under qemu).
+        let docker_platform = match pin.kind {
+            PackKind::Zig => host_native_docker_platform()?,
+            PackKind::Rust | PackKind::Go | PackKind::Cached | PackKind::Cmake => triple_platform,
         };
         let dockerfile = root.join(&pin.dockerfile);
         if !dockerfile.is_file() {
@@ -220,12 +248,8 @@ impl PackBuildPlan {
         let (zig_version, zig_arch, zig_target, zig_sha256) = match pin.kind {
             PackKind::Zig => {
                 let zig = zig.ok_or("zig pack requires [toolchain.zig] in pack-pins.toml")?;
-                let (arch, _tarball, sha) = zig.for_triple(triple)?;
-                let zt = match triple {
-                    X86_64_MUSL => "x86_64-linux-musl",
-                    AARCH64_MUSL => "aarch64-linux-musl",
-                    _ => unreachable!(),
-                };
+                let (arch, _tarball, sha) = zig.for_docker_platform(docker_platform)?;
+                let zt = zig_target_for_triple(triple)?;
                 (
                     Some(zig.version.clone()),
                     Some(arch.to_string()),
@@ -1064,6 +1088,125 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             .iter()
             .any(|a| a.contains("ZIG_TARGET=aarch64-linux-musl")));
         assert!(zargs.iter().any(|a| a.starts_with("UPSTREAM_SHA=")));
+        assert_eq!(
+            zig_plan.docker_platform(),
+            host_native_docker_platform().unwrap()
+        );
+    }
+
+    #[test]
+    fn zig_packs_use_host_native_platform_and_zig_target_for_both_triples() {
+        let root = fixture_root();
+        let (pins, rust, zig, go) = load_pins(root.path()).unwrap();
+        let host_platform = host_native_docker_platform().unwrap();
+        let host_zig_arch = match host_platform {
+            "linux/amd64" => "x86_64",
+            "linux/arm64" => "aarch64",
+            other => panic!("unexpected host docker platform {other}"),
+        };
+        let host_sha = zig
+            .as_ref()
+            .unwrap()
+            .for_docker_platform(host_platform)
+            .unwrap()
+            .2;
+        for (name, triple, zig_target) in [
+            (SUPERHTML_PACK, X86_64_MUSL, "x86_64-linux-musl"),
+            (SUPERHTML_PACK, AARCH64_MUSL, "aarch64-linux-musl"),
+            (ZLS_PACK, X86_64_MUSL, "x86_64-linux-musl"),
+            (ZLS_PACK, AARCH64_MUSL, "aarch64-linux-musl"),
+        ] {
+            let pin = pins.iter().find(|p| p.name() == name).unwrap();
+            let plan = PackBuildPlan::for_pin(
+                root.path(),
+                pin,
+                triple,
+                rust.as_ref(),
+                zig.as_ref(),
+                go.as_ref(),
+            )
+            .unwrap();
+            assert_eq!(plan.kind(), &PackKind::Zig);
+            assert_eq!(plan.triple(), triple);
+            assert_eq!(
+                plan.docker_platform(),
+                host_platform,
+                "{name} {triple} must not qemu the Zig compiler"
+            );
+            let args = plan.docker_build_args();
+            assert!(
+                args.contains(&host_platform.to_string()),
+                "{name} {triple} args={args:?}"
+            );
+            assert!(
+                args.iter()
+                    .any(|a| a == &format!("ZIG_ARCH={host_zig_arch}")),
+                "{name} {triple} args={args:?}"
+            );
+            assert!(
+                args.iter()
+                    .any(|a| a == &format!("ZIG_TARGET={zig_target}")),
+                "{name} {triple} args={args:?}"
+            );
+            assert!(
+                args.iter().any(|a| a == &format!("ZIG_SHA256={host_sha}")),
+                "{name} {triple} args={args:?}"
+            );
+        }
+        let rust_pin = pins.iter().find(|p| p.name() == PYTHON_PACK).unwrap();
+        let rust_amd = PackBuildPlan::for_pin(
+            root.path(),
+            rust_pin,
+            X86_64_MUSL,
+            rust.as_ref(),
+            zig.as_ref(),
+            go.as_ref(),
+        )
+        .unwrap();
+        assert_eq!(
+            rust_amd.docker_platform(),
+            "linux/amd64",
+            "rust packs keep triple platform (qemu amd64 is fine)"
+        );
+        let err = zig
+            .as_ref()
+            .unwrap()
+            .for_docker_platform("linux/s390x")
+            .unwrap_err();
+        assert!(err.contains("unknown docker platform"), "{err}");
+        assert!(zig_target_for_triple("x86_64-unknown-linux-gnu").is_err());
+    }
+
+    #[test]
+    fn recording_docker_port_covers_both_superhtml_triples_on_host_platform() {
+        let root = fixture_root();
+        let docker = RecordingDockerPort::new();
+        run_at(
+            root.path(),
+            &["--pack".into(), "superhtml".into(), "--both".into()],
+            &docker,
+        )
+        .unwrap();
+        let dests = docker.recorded_dests();
+        assert_eq!(dests.len(), 2);
+        let host_platform = host_native_docker_platform().unwrap();
+        for args in docker.recorded_args() {
+            assert!(args.contains(&"--platform".to_string()), "{args:?}");
+            assert!(
+                args.contains(&host_platform.to_string()),
+                "zig pack must use host-native {host_platform}, args={args:?}"
+            );
+            if host_platform != "linux/amd64" {
+                assert!(
+                    !args.contains(&"linux/amd64".to_string()),
+                    "must not qemu amd64 for zig, args={args:?}"
+                );
+            }
+        }
+        for d in &dests {
+            assert_eq!(d.file_name().unwrap(), "superhtml");
+            check_static::check_path(d).unwrap();
+        }
     }
 
     #[test]

@@ -3,14 +3,17 @@
 # Fetch at the pinned git SHA inside this image — not a Mac host product step.
 # Parameterized by PACK + UPSTREAM_SHA + ZIG_TARGET / ZIG_ARCH / BINARY.
 #
+# Host-native `--platform` + Zig `-Dtarget` (do not qemu linux/amd64: Zig 0.15.1
+# Options/faccessat is ENOSYS under qemu-user). Example Darwin aarch64 → x86_64:
+#
 #   docker build --platform linux/arm64 \
 #     --build-arg PACK=superhtml --build-arg BINARY=superhtml \
 #     --build-arg UPSTREAM_REPO=https://github.com/kristoff-it/superhtml.git \
 #     --build-arg UPSTREAM_SHA=<40-hex> \
 #     --build-arg ZIG_VERSION=0.15.1 --build-arg ZIG_ARCH=aarch64 \
-#     --build-arg ZIG_TARGET=aarch64-linux-musl --build-arg ZIG_SHA256=<sha256> \
+#     --build-arg ZIG_TARGET=x86_64-linux-musl --build-arg ZIG_SHA256=<sha256> \
 #     -f docker/engine-pack-zig.Dockerfile \
-#     --output type=local,dest=target/musl/aarch64-unknown-linux-musl/engines/superhtml .
+#     --output type=local,dest=target/musl/x86_64-unknown-linux-musl/engines/superhtml .
 
 FROM alpine:3.20 AS build
 
@@ -45,9 +48,8 @@ RUN git clone "${UPSTREAM_REPO}" src \
     && git submodule update --init --recursive
 
 WORKDIR /fetch/src
-# qemu/amd64: zig's parallel options cache hits error.Unexpected on access().
-# Single-job + /tmp cache is the Darwin Desktop workaround; native linux/amd64
-# does not need this. aarch64 (native here) already extracts statically.
+# Cache on a real rw fs. `-j1` is leftover from the qemu miss; native
+# host-platform + `-Dtarget` is what avoids faccessat ENOSYS.
 ENV ZIG_LOCAL_CACHE_DIR=/tmp/zig-local
 ENV ZIG_GLOBAL_CACHE_DIR=/tmp/zig-global
 RUN mkdir -p "${ZIG_LOCAL_CACHE_DIR}" "${ZIG_GLOBAL_CACHE_DIR}" \
