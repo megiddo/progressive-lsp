@@ -36,9 +36,17 @@ RUN apt-get update \
 WORKDIR /fetch
 # Go binary does not need the tsgo TypeScript submodule (conformance fixtures).
 # qemu/amd64 clone of that tree flakes; do not fail the pack job on it.
-RUN git clone "${UPSTREAM_REPO}" src \
-    && cd src \
-    && git checkout --detach "${UPSTREAM_SHA}"
+# Bounded retries: pack-container git clone can hit GitHub :443 timeout.
+RUN set -eux; \
+    n=0; \
+    until git clone "${UPSTREAM_REPO}" src; do \
+      n=$((n+1)); \
+      echo "git clone retry ${n}/3 (${UPSTREAM_REPO})" >&2; \
+      if [ "${n}" -ge 3 ]; then exit 1; fi; \
+      rm -rf src; \
+      sleep 5; \
+    done; \
+    git -C src checkout --detach "${UPSTREAM_SHA}"
 
 ENV CGO_ENABLED=0
 # Pipe fallback: Docker Desktop DNS to proxy.golang.org can time out.

@@ -4,7 +4,7 @@ Normative. If code and this file disagree, fix the code or file an explicit doc 
 
 ## Goals
 
-- Multi-language progressive LSP: T1 Tree-sitter → T2 heuristics/stack-graphs → T3 static engines.
+- Multi-language progressive LSP: T1 Tree-sitter → T2 heuristics (every v1 language) → T3 static engines on Linux.
 - Target languages (v1): C, C++, C#, Rust, JavaScript, TypeScript, CSS, HTML, Python, PHP, Java, Go, Zig.
 - Syntax highlighting via `textDocument/semanticTokens` (Tree-sitter; T3 overlay when ready).
 - Type-resolution LSP where T3 exists: definition, references, type definition, implementation, generics.
@@ -18,10 +18,10 @@ Normative. If code and this file disagree, fix the code or file an explicit doc 
 
 | Restriction | Detail |
 |---|---|
-| No dynamic linking of our artifacts | `check-static`: no interpreter, no `DT_NEEDED`. |
+| No dynamic linking of our artifacts | `check-static`: no interpreter, no `DT_NEEDED`. **Exception:** aarch64 Java T3 may depend on the host C library until Graal fully-static ARM exists ([t3-linux-hosts.md](t3-linux-hosts.md)). No other pack. |
 | No Node / JVM / CPython as LSP runtime | No tsserver, JDT-LS, pylsp, pyright, intelephense. |
-| Engine/backends | C, C++, C# Native AOT, Rust, Go, Zig, PHP (static pack only). |
-| Java T3 | Out of v1. No JVM. |
+| Engine/backends | C, C++, C# Native AOT, Rust, Go, Zig, PHP (static pack only), Java (Graal native-image; x86_64 fully static, aarch64 libc exception). |
+| Java T3 | Native-image of a javac-based LS. **x86_64:** fully static. **aarch64:** native-image with libc allowed (not a JVM). No JDT-LS. Revert aarch64 to fully static when Graal supports it. |
 | Host `php` | Not a T3 pack. |
 | Not an IDE host | No SSH, git porcelain, PTY, file-tree CRUD **in the server**. In-tree `poc-ide/` is a **consumer sample** ([poc-ide/README.md](poc-ide/README.md)): tree view + open/save only. |
 | No `$/` mirror of control RPCs in v1 | [lsp-contract.md](lsp-contract.md). |
@@ -65,7 +65,7 @@ Normative. If code and this file disagree, fix the code or file an explicit doc 
 
 - Optional binaries under `$PREFIX/engines/`. Core boots without them.
 - Pack select: explicit list or census ([detailed-design.md](detailed-design.md) `PackSelector`).
-- T3 engines: clangd, rust-analyzer, ty, csharp-ls (AOT), tsgo, gopls, zls, superhtml, biome, PHP static pack (PHPantom preferred).
+- T3 engines: clangd, rust-analyzer, ty, csharp-ls (AOT; not shipped — T1/T2 ceiling), tsgo, gopls, zls, superhtml, biome, PHP static pack (PHPantom preferred), Java static pack (javac-based LS via Graal native-image; not JDT-LS).
 - Handoff: forward `didChange` / watches to children; crash/backoff; T2 remains if spawn skipped.
 
 ### F6 — Config, scripts, install
@@ -90,11 +90,11 @@ Normative. If code and this file disagree, fix the code or file an explicit doc 
 | N5 | 10k injected watch events → one coalesced batch | M1 |
 | N6 | 95% llvm-cov on library crates; 80% mutants on listed crates | CI from first crate |
 | N7 | No `sleep` in tests; `--test-threads=1` must pass | CI |
-| N8 | `check-static` on every shipped ELF | `xtask` / CI |
+| N8 | `check-static` on every shipped ELF except aarch64 Java T3 (libc exception) | `xtask` / CI |
 | N9 | musl x86_64 and aarch64 for default dist; glibc-static optional same bar | M0 |
 | N10 | Allocator from `xtask/allocator-matrix.toml` pick rule | [testing.md](testing.md) |
 | N11 | Core usable alone; clangd not required for PHP/Java | pack tests |
 
 ## Out of v1 (scheduled later)
 
-Java full type resolution (no JVM). WASM plugin ABI. `$/` JSON mirror of `progressive.v1`. Native macOS/Windows **hosts**. HTTP/S3 `ArtifactTransport` in-tree. Watchman. oxc_type_checker as TS T3 if it matures.
+WASM plugin ABI. `$/` JSON mirror of `progressive.v1`. Native macOS/Windows **hosts**. HTTP/S3 `ArtifactTransport` in-tree. Watchman. oxc_type_checker as TS T3 if it matures.

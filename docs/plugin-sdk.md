@@ -16,9 +16,9 @@ Related: [design-patterns.md](design-patterns.md), [detailed-design.md](detailed
 
 ### `LanguageFactory`
 
-Produces grammar id, `LanguageId`, and the resolver chain (T1 required; T2/T3 optional). Empty slot → `UnsupportedLanguage`.
+Produces grammar id, `LanguageId`, and the resolver chain (T1 and heuristic T2 required for every v1 language; T3 optional). Empty slot → `UnsupportedLanguage`.
 
-`LanguageFactory::resolver_chain` returns a `ResolverChain` (T3 `EngineResolver` when `EngineSupervisor` is ready for that package; else T2 `T2Strategy` when the language has a T2 Strategy; else T1 `TreeSitterResolver`). T2 pick is per language from `[t2]` in `config.toml` (`java = "heuristic"` default; `"stack-graphs"` opt-in). Tests inject a fake T2. Rhai still cannot implement `textDocument/definition`. Empty slot → `UnsupportedLanguage`. Composition-root `register_languages` installs Java, PHP, HTML, CSS, JavaScript (and TypeScript), Go, Zig, Python, Rust, C, C++, and C# when their `lang-*` features are on (default-on for M4). No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
+`LanguageFactory::resolver_chain` returns a `ResolverChain` (T3 `EngineResolver` when `EngineSupervisor` is ready for that package; else T2 `T2Strategy` for every v1 language — [t2-heuristic-coverage.md](t2-heuristic-coverage.md); else T1 `TreeSitterResolver`). T2 pick is per language from `[t2]` in `config.toml` (`heuristic` default; `"stack-graphs"` opt-in where a TSG exists). Tests inject a fake T2. Rhai still cannot implement `textDocument/definition`. Empty slot → `UnsupportedLanguage`. Composition-root `register_languages` installs Java, PHP, HTML, CSS, JavaScript (and TypeScript), Go, Zig, Python, Rust, C, C++, and C# when their `lang-*` features are on (default-on for M4). No `dlopen`. No process-global registry — the bin constructs one `PluginRegistry` and injects it.
 
 M3 implements `on_engine_spawn` and `on_tier_ready` in addition to the M2 catalog. M6 implements `on_install_verify`: after the hash check, before rename/first exec of a new binary. Abort → `InstallError::Refused`; tmp is deleted; the final path is not replaced.
 

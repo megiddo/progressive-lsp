@@ -9,7 +9,7 @@ Related: [plugin-sdk.md](../plugin-sdk.md) (`LanguageFactory` / `Resolver` chain
 
 ## Why a seam, not a one-shot rewrite
 
-T2 is “good enough navigation while T3 boots” (or the ceiling, for Java). Implementations will change: heuristics today, stack-graphs if it actually wins, oxc-style graphs for JS, something else later.
+T2 is “good enough navigation while T3 boots” (or the ceiling, for C#). Implementations will change: heuristics today, stack-graphs if it actually wins, oxc-style graphs for JS, something else later.
 
 **Rule:** go-to-definition stays the `Resolver` chain. A T2 backend is a **compiled-in Strategy** behind that trait. Rhai still must not implement `textDocument/definition`. No `dlopen` in v1 (same as other plugins).
 
@@ -85,4 +85,4 @@ Not Java-only. Each is another Strategy impl, same pick rule:
 
 - Replacing T3 engines.
 - Rhai as a resolver.
-- Changing Java’s v1 ceiling (still no JVM).
+- Changing C#’s v1 ceiling (still no csharp-ls pack). Java T3 is a separate static pack, not this T2 spike.

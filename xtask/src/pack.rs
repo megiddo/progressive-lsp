@@ -17,12 +17,14 @@ use crate::workspace_root;
 
 pub const PINS_REL: &str = "xtask/pack-pins.toml";
 
-/// Value object. rust / zig / go / cached / cmake (toolchain lives in the container).
+/// Value object. rust / zig / go / graal / cached / cmake (toolchain lives in the container).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PackKind {
     Rust,
     Zig,
     Go,
+    /// GraalVM native-image of a javac-based LS. Build-time JDK only; no JVM at runtime.
+    Graal,
     /// clangd default: content-addressed cache COPY. Never cmake.
     Cached,
     /// clangd cache-fill only (`--cache-fill`). Not the default pack job.
@@ -35,10 +37,11 @@ impl PackKind {
             "rust" => Ok(Self::Rust),
             "zig" => Ok(Self::Zig),
             "go" => Ok(Self::Go),
+            "graal" | "native-image" => Ok(Self::Graal),
             "cached" => Ok(Self::Cached),
             "cmake" => Ok(Self::Cmake),
             other => Err(format!(
-                "unknown pack kind {other}; expected rust, zig, go, cached, or cmake \
+                "unknown pack kind {other}; expected rust, zig, go, graal, cached, or cmake \
                  (host php/Node/JVM/CPython forbidden)"
             )),
         }
@@ -255,7 +258,11 @@ impl PackBuildPlan {
         // on the triple platform (those already PASS under qemu).
         let docker_platform = match pin.kind {
             PackKind::Zig => docker_platform_for_host_arch(host_arch)?,
-            PackKind::Rust | PackKind::Go | PackKind::Cached | PackKind::Cmake => triple_platform,
+            PackKind::Rust
+            | PackKind::Go
+            | PackKind::Graal
+            | PackKind::Cached
+            | PackKind::Cmake => triple_platform,
         };
         let dockerfile = root.join(&pin.dockerfile);
         if !dockerfile.is_file() {
@@ -288,9 +295,11 @@ impl PackBuildPlan {
                     Some(sha.to_string()),
                 )
             }
-            PackKind::Rust | PackKind::Go | PackKind::Cached | PackKind::Cmake => {
-                (None, None, None, None)
-            }
+            PackKind::Rust
+            | PackKind::Go
+            | PackKind::Graal
+            | PackKind::Cached
+            | PackKind::Cmake => (None, None, None, None),
         };
         let (go_version, go_os, go_arch, go_package) = match pin.kind {
             PackKind::Go => {
@@ -311,9 +320,11 @@ impl PackBuildPlan {
                     }),
                 )
             }
-            PackKind::Rust | PackKind::Zig | PackKind::Cached | PackKind::Cmake => {
-                (None, None, None, None)
-            }
+            PackKind::Rust
+            | PackKind::Zig
+            | PackKind::Graal
+            | PackKind::Cached
+            | PackKind::Cmake => (None, None, None, None),
         };
         Ok(Self {
             pack: pin.name.clone(),
@@ -641,6 +652,7 @@ fn parse_pack(v: &toml::Value) -> Result<PackPin, String> {
             PackKind::Rust => "docker/engine-pack.Dockerfile".into(),
             PackKind::Zig => "docker/engine-pack-zig.Dockerfile".into(),
             PackKind::Go => "docker/engine-pack-go.Dockerfile".into(),
+            PackKind::Graal => "docker/engine-pack-graal.Dockerfile".into(),
             PackKind::Cached => "docker/engine-pack-clangd.Dockerfile".into(),
             PackKind::Cmake => "docker/engine-pack-clangd-cache-fill.Dockerfile".into(),
         });
@@ -663,6 +675,110 @@ fn req_str(v: &toml::Value, key: &str) -> Result<String, String> {
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("pack pin missing {key}"))
+}
+
+/// Canonical stamp bytes for one pack: that `[[pack]]` table plus the
+/// `[toolchain.*]` section that pack's kind uses. Changing `[[pack]] java`
+/// must not stale phpantom / biome / superhtml.
+pub fn pack_stamp_payload(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let (pins, rust, zig, go) = load_pins(root)?;
+    let pin = pins
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("pack {name} is not pinned in {PINS_REL}"))?;
+    let mut buf = Vec::new();
+    buf.extend(b"[[pack]]\0");
+    buf.extend(pin.name.as_bytes());
+    buf.push(0);
+    buf.extend(pin.binary.as_bytes());
+    buf.push(0);
+    buf.extend(pin.repo.as_bytes());
+    buf.push(0);
+    buf.extend(pin.sha.as_bytes());
+    buf.push(0);
+    buf.extend(pack_kind_stamp_label(&pin.kind).as_bytes());
+    buf.push(0);
+    buf.extend(pin.cargo_bin.as_bytes());
+    buf.push(0);
+    buf.extend(pin.source_subdir.as_bytes());
+    buf.push(0);
+    buf.extend(pin.go_package.as_bytes());
+    buf.push(0);
+    buf.extend(pin.dockerfile.as_bytes());
+    buf.push(0);
+    match pin.kind {
+        PackKind::Rust => {
+            buf.extend(b"[toolchain.rust]\0");
+            if let Some(r) = rust {
+                buf.extend(r.channel.as_bytes());
+            } else {
+                buf.extend(b"missing");
+            }
+        }
+        PackKind::Zig => {
+            buf.extend(b"[toolchain.zig]\0");
+            if let Some(z) = zig {
+                buf.extend(z.version.as_bytes());
+                buf.push(0);
+                buf.extend(z.tarball_x86_64.as_bytes());
+                buf.push(0);
+                buf.extend(z.sha256_x86_64.as_bytes());
+                buf.push(0);
+                buf.extend(z.tarball_aarch64.as_bytes());
+                buf.push(0);
+                buf.extend(z.sha256_aarch64.as_bytes());
+            } else {
+                buf.extend(b"missing");
+            }
+        }
+        PackKind::Go => {
+            buf.extend(b"[toolchain.go]\0");
+            if let Some(g) = go {
+                buf.extend(g.version.as_bytes());
+            } else {
+                buf.extend(b"missing");
+            }
+        }
+        PackKind::Graal | PackKind::Cached | PackKind::Cmake => {}
+    }
+    buf.push(0);
+    Ok(buf)
+}
+
+fn pack_kind_stamp_label(kind: &PackKind) -> &'static str {
+    match kind {
+        PackKind::Rust => "rust",
+        PackKind::Zig => "zig",
+        PackKind::Go => "go",
+        PackKind::Graal => "graal",
+        PackKind::Cached => "cached",
+        PackKind::Cmake => "cmake",
+    }
+}
+
+/// Graal muslib / `--static --libc=musl` is Linux x64 only. aarch64 is JAVA-T3.2.
+pub fn documented_miss_for_pack(
+    root: &Path,
+    name: &str,
+    triple: &str,
+) -> Result<Option<String>, String> {
+    let (pins, _, _, _) = load_pins(root)?;
+    let Some(pin) = pins.iter().find(|p| p.name == name) else {
+        return Ok(None);
+    };
+    Ok(graal_aarch64_miss(&pin.kind, name, triple))
+}
+
+fn graal_aarch64_miss(kind: &PackKind, name: &str, triple: &str) -> Option<String> {
+    if *kind == PackKind::Graal && triple == AARCH64_MUSL {
+        Some(format!(
+            "{name}:{triple} JAVA-T3.2 miss: Graal muslib / native-image --static --libc=musl \
+             is Linux x64 only; aarch64 cannot produce a check-static ELF. See spike/java-t3.md. \
+             Not a JAR / jlink / JDT-LS / libjvm fallback, not a musl-triple CI gap."
+        ))
+    } else {
+        None
+    }
 }
 
 fn req_hex(v: &toml::Value, key: &str, len: usize) -> Result<String, String> {
@@ -761,9 +877,87 @@ fn extract_plan(plan: &PackBuildPlan, docker: &dyn DockerPort) -> Result<PackOut
         check_static_dest(plan)?;
         return Ok(PackOutcome::Pass);
     }
-    docker.extract(plan.dest(), plan.context(), &plan.docker_build_args())?;
-    check_static_dest(plan)?;
-    Ok(PackOutcome::Pass)
+    if let Some(note) = graal_aarch64_miss(plan.kind(), plan.pack(), plan.triple()) {
+        return Ok(PackOutcome::Miss(note));
+    }
+    let backup = preserve_check_static_dest(plan)?;
+    match docker.extract(plan.dest(), plan.context(), &plan.docker_build_args()) {
+        Ok(()) => match check_static_dest(plan) {
+            Ok(()) => {
+                clear_backup(backup);
+                Ok(PackOutcome::Pass)
+            }
+            Err(e) => {
+                restore_preserved_dest(plan.dest(), backup)?;
+                Err(e)
+            }
+        },
+        Err(e) => {
+            restore_preserved_dest(plan.dest(), backup)?;
+            Err(classify_pack_extract_error(&e, plan))
+        }
+    }
+}
+
+fn preserve_check_static_dest(plan: &PackBuildPlan) -> Result<Option<PathBuf>, String> {
+    let dest = plan.dest();
+    if !dest.is_file() {
+        return Ok(None);
+    }
+    if check_static::check_path(dest).is_err() {
+        return Ok(None);
+    }
+    let engines = dest.parent().and_then(|p| p.parent()).ok_or_else(|| {
+        format!(
+            "pack dest {} is not engines/<pack>/<binary>",
+            dest.display()
+        )
+    })?;
+    let backup = engines.join(format!(".{}.{}.prev", plan.pack(), plan.binary));
+    fs::copy(dest, &backup)
+        .map_err(|e| format!("preserve check-static dest {}: {e}", dest.display()))?;
+    Ok(Some(backup))
+}
+
+fn restore_preserved_dest(dest: &Path, backup: Option<PathBuf>) -> Result<(), String> {
+    let Some(backup) = backup else {
+        return Ok(());
+    };
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    fs::copy(&backup, dest)
+        .map_err(|e| format!("restore check-static dest {}: {e}", dest.display()))?;
+    let _ = fs::remove_file(&backup);
+    Ok(())
+}
+
+fn clear_backup(backup: Option<PathBuf>) {
+    if let Some(backup) = backup {
+        let _ = fs::remove_file(backup);
+    }
+}
+
+fn classify_pack_extract_error(err: &str, plan: &PackBuildPlan) -> String {
+    let lower = err.to_ascii_lowercase();
+    let class = if lower.contains("not found")
+        || lower.contains("404")
+        || lower.contains("manifest unknown")
+    {
+        "image or tag not found (registry 404)"
+    } else if lower.contains("500") || lower.contains("internal server error") {
+        "registry 500"
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        "network timeout (git clone or registry pull)"
+    } else {
+        "docker extract failed"
+    };
+    format!(
+        "{} {}: {err} ({class}; not automatically a musl-triple CI gap — \
+         check-static is a separate class)",
+        plan.pack(),
+        plan.triple()
+    )
 }
 
 fn check_static_dest(plan: &PackBuildPlan) -> Result<(), String> {
@@ -876,7 +1070,7 @@ mod tests {
     use crate::musl::RecordingDockerPort;
     use progressive_lsp_engine::{
         full_pack_names, is_heavy_pack, slim_pack_names, BIOME_PACK, CLANGD_PACK, GOPLS_PACK,
-        PHPANTOM_PACK, PYTHON_PACK, RUST_PACK, SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
+        JAVA_PACK, PHPANTOM_PACK, PYTHON_PACK, RUST_PACK, SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
     };
 
     fn fixture_root() -> tempfile::TempDir {
@@ -896,6 +1090,11 @@ mod tests {
         fs::write(
             docker.join("engine-pack-go.Dockerfile"),
             "# test go pack\nFROM scratch\n",
+        )
+        .unwrap();
+        fs::write(
+            docker.join("engine-pack-graal.Dockerfile"),
+            "# test graal pack\nFROM scratch\n",
         )
         .unwrap();
         fs::write(
@@ -983,6 +1182,14 @@ kind = "zig"
 dockerfile = "docker/engine-pack-zig.Dockerfile"
 
 [[pack]]
+name = "java"
+binary = "javacs"
+repo = "https://github.com/georgewfraser/java-language-server.git"
+sha = "58daaa29a0e2fe22764283607da6801cf8b493b9"
+kind = "graal"
+dockerfile = "docker/engine-pack-graal.Dockerfile"
+
+[[pack]]
 name = "clangd"
 binary = "clangd"
 repo = "https://github.com/llvm/llvm-project.git"
@@ -1002,17 +1209,20 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
     #[test]
     fn pack_kind_is_value_object_go_cached_cmake() {
         assert_eq!(PackKind::parse("go").unwrap(), PackKind::Go);
+        assert_eq!(PackKind::parse("graal").unwrap(), PackKind::Graal);
+        assert_eq!(PackKind::parse("native-image").unwrap(), PackKind::Graal);
         assert_eq!(PackKind::parse("cached").unwrap(), PackKind::Cached);
         assert_eq!(PackKind::parse("cmake").unwrap(), PackKind::Cmake);
         assert!(PackKind::parse("python").is_err());
         assert_eq!(PackKind::Go, PackKind::Go.clone());
+        assert_eq!(PackKind::Graal, PackKind::Graal.clone());
     }
 
     #[test]
     fn pack_pin_is_value_object_content_addressed_by_sha() {
         let (pins, rust, zig, go) = parse_pins(SAMPLE_PINS).unwrap();
         assert_eq!(rust.expect("rust toolchain pin").channel(), "1.98.0");
-        assert_eq!(pins.len(), 7);
+        assert_eq!(pins.len(), 8);
         assert_eq!(pins[0].name(), PYTHON_PACK);
         assert_eq!(pins[0].binary(), "ty");
         assert_eq!(pins[0].sha().len(), 40);
@@ -1039,6 +1249,11 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         assert_eq!(gopls.sha().len(), 40);
         let tsgo = pins.iter().find(|p| p.name() == TSGO_PACK).unwrap();
         assert_eq!(tsgo.go_package(), "./cmd/tsgo");
+        let java = pins.iter().find(|p| p.name() == JAVA_PACK).unwrap();
+        assert_eq!(java.kind(), &PackKind::Graal);
+        assert_eq!(java.binary(), "javacs");
+        assert_eq!(java.dockerfile_rel(), "docker/engine-pack-graal.Dockerfile");
+        assert!(java.repo().contains("georgewfraser/java-language-server"));
         let clangd = pins.iter().find(|p| p.name() == CLANGD_PACK).unwrap();
         assert_eq!(clangd.kind(), &PackKind::Cached);
         assert_eq!(pins[0], pins[0].clone());
@@ -1460,7 +1675,7 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         assert_eq!(targets.len(), 2);
         assert!(!cache_fill);
         let slim = parse_pack_args(&["--slim".into(), "--both".into()]).unwrap();
-        assert_eq!(slim.0.len(), 5);
+        assert_eq!(slim.0.len(), 6);
         let full = parse_pack_args(&["--full".into()]).unwrap();
         assert_eq!(full.0, full_pack_names());
         let named = parse_pack_args(&["--pack".into(), "full".into()]).unwrap();
@@ -1474,6 +1689,9 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             .is_file());
         assert!(workspace_root()
             .join("docker/engine-pack-go.Dockerfile")
+            .is_file());
+        assert!(workspace_root()
+            .join("docker/engine-pack-graal.Dockerfile")
             .is_file());
         assert!(workspace_root()
             .join("docker/engine-pack-clangd.Dockerfile")
@@ -1503,8 +1721,29 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             fs::read_to_string(workspace_root().join("docker/engine-pack-go.Dockerfile")).unwrap();
         assert!(go_df.contains("CGO_ENABLED=0"));
         assert!(!go_df.contains("CGO_ENABLED=1"));
+        let graal_df =
+            fs::read_to_string(workspace_root().join("docker/engine-pack-graal.Dockerfile"))
+                .unwrap();
+        assert!(graal_df.contains("native-image --static --libc=musl"));
+        assert!(graal_df.contains("org.javacs.Main"));
+        assert!(graal_df.contains("25.0.0-muslib-ol9"));
+        assert!(graal_df.contains("until git clone"));
+        let graal_active: String = graal_df
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect();
+        assert!(
+            !graal_active.contains("ol9-muslib"),
+            "FROM must use $version-muslib-ol9, not ol9-muslib"
+        );
+        assert!(!graal_active.to_ascii_lowercase().contains("jdt"));
+        assert!(!graal_active.contains("jlink"));
+        let rust_df =
+            fs::read_to_string(workspace_root().join("docker/engine-pack.Dockerfile")).unwrap();
+        assert!(rust_df.contains("until git clone"));
+        assert!(rust_df.contains("git submodule retry"));
         let (pins, rust, zig, go) = load_pins(&workspace_root()).unwrap();
-        assert_eq!(pins.len(), 9);
+        assert_eq!(pins.len(), 10);
         assert!(zig.is_some());
         assert_eq!(go.expect("go toolchain pin").version(), "1.26");
         assert_eq!(rust.expect("rust toolchain pin").channel(), "1.98.0");
@@ -1518,6 +1757,7 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             TSGO_PACK,
             GOPLS_PACK,
             ZLS_PACK,
+            JAVA_PACK,
         ] {
             assert!(pins.iter().any(|p| p.name() == name));
         }
@@ -1525,6 +1765,10 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         assert_eq!(clangd.kind(), &PackKind::Cached);
         assert_eq!(clangd.sha().len(), 40);
         assert_ne!(clangd.sha(), "latest");
+        let java = pins.iter().find(|p| p.name() == JAVA_PACK).unwrap();
+        assert_eq!(java.kind(), &PackKind::Graal);
+        assert_eq!(java.binary(), "javacs");
+        assert_eq!(java.sha().len(), 40);
     }
 
     #[test]
@@ -1734,6 +1978,140 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             let name = d.file_name().unwrap();
             assert!(name == "gopls" || name == "zls", "{d:?}");
         }
+    }
+
+    #[test]
+    fn recording_docker_port_extracts_java_both_triples_without_daemon() {
+        let root = fixture_root();
+        let (pins, rust, zig, go) = load_pins(root.path()).unwrap();
+        let java = pins.iter().find(|p| p.name() == JAVA_PACK).unwrap();
+        let plan = PackBuildPlan::for_pin(
+            root.path(),
+            java,
+            AARCH64_MUSL,
+            rust.as_ref(),
+            zig.as_ref(),
+            go.as_ref(),
+        )
+        .unwrap();
+        assert_eq!(plan.kind(), &PackKind::Graal);
+        assert_eq!(plan.pack(), JAVA_PACK);
+        assert_eq!(plan.binary(), "javacs");
+        assert_eq!(
+            plan.dest(),
+            root.path()
+                .join("target/musl")
+                .join(AARCH64_MUSL)
+                .join("engines/java/javacs")
+        );
+        assert_eq!(plan.docker_platform(), "linux/arm64");
+        let args = plan.docker_build_args();
+        assert!(args.iter().any(|a| a == "PACK=java"));
+        assert!(args.iter().any(|a| a == "BINARY=javacs"));
+        assert!(args
+            .iter()
+            .any(|a| a == "UPSTREAM_SHA=58daaa29a0e2fe22764283607da6801cf8b493b9"));
+        assert!(args
+            .iter()
+            .any(|a| a.contains("engine-pack-graal.Dockerfile")));
+        assert!(!args
+            .iter()
+            .any(|a| a.to_ascii_lowercase().contains("jlink")));
+        assert!(!args.iter().any(|a| a.to_ascii_lowercase().contains("jdt")));
+
+        let docker = RecordingDockerPort::new();
+        run_at(
+            root.path(),
+            &["--pack".into(), "java".into(), "--both".into()],
+            &docker,
+        )
+        .unwrap();
+        let dests = docker.recorded_dests();
+        assert_eq!(
+            dests.len(),
+            1,
+            "aarch64 java is JAVA-T3.2 miss (no docker): {dests:?}"
+        );
+        assert!(dests[0].to_string_lossy().contains(X86_64_MUSL));
+        assert_eq!(dests[0].file_name().unwrap(), "javacs");
+        check_static::check_path(&dests[0]).unwrap();
+        let arm_dest = root
+            .path()
+            .join("target/musl")
+            .join(AARCH64_MUSL)
+            .join("engines/java/javacs");
+        assert!(!arm_dest.exists(), "must not ship a JAR or stub on aarch64");
+    }
+
+    #[test]
+    fn graal_aarch64_is_documented_miss_without_docker() {
+        let root = fixture_root();
+        let docker = RecordingDockerPort::new();
+        run_at(
+            root.path(),
+            &[
+                "--pack".into(),
+                "java".into(),
+                "--target".into(),
+                AARCH64_MUSL.into(),
+            ],
+            &docker,
+        )
+        .unwrap();
+        assert!(
+            docker.recorded_dests().is_empty(),
+            "JAVA-T3.2 aarch64 must not pull muslib: {:?}",
+            docker.recorded_dests()
+        );
+        let dest = root
+            .path()
+            .join("target/musl")
+            .join(AARCH64_MUSL)
+            .join("engines/java/javacs");
+        assert!(!dest.exists());
+        let note = documented_miss_for_pack(root.path(), JAVA_PACK, AARCH64_MUSL)
+            .unwrap()
+            .expect("aarch64 java miss");
+        assert!(note.contains("JAVA-T3.2"), "{note}");
+        assert!(
+            documented_miss_for_pack(root.path(), JAVA_PACK, X86_64_MUSL)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn failed_extract_keeps_check_static_dest() {
+        let root = fixture_root();
+        let dest = root
+            .path()
+            .join("target/musl")
+            .join(AARCH64_MUSL)
+            .join("engines/phpantom/phpantom");
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        let previous = check_static::fixture_static_elf64();
+        fs::write(&dest, &previous).unwrap();
+        check_static::check_path(&dest).unwrap();
+        let docker = RecordingDockerPort::failing();
+        let err = run_at(
+            root.path(),
+            &[
+                "--pack".into(),
+                "phpantom".into(),
+                "--target".into(),
+                AARCH64_MUSL.into(),
+            ],
+            &docker,
+        )
+        .unwrap_err();
+        assert!(
+            !err.contains("CI Linux must produce both musl triples"),
+            "{err}"
+        );
+        assert!(dest.is_file(), "failed rebuild must keep previous dest");
+        check_static::check_path(&dest).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), previous);
+        assert_eq!(docker.recorded_dests().len(), 1);
     }
 
     #[test]

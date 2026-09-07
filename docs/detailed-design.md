@@ -121,7 +121,7 @@ pub struct ResolveResult {
 **Chain of Responsibility** (order fixed):
 
 1. If `EngineSupervisor` reports ready for `(language, package)` → T3 adapter.
-2. Else `HeuristicResolver` / optional `StackGraphResolver` (Strategy pick).
+2. Else `HeuristicResolver` / optional `StackGraphResolver` (Strategy pick). Every v1 language has this slot ([t2-heuristic-coverage.md](t2-heuristic-coverage.md)).
 3. Else `TreeSitterResolver`.
 
 Scripts cannot insert a step. Tests: a `FakeResolver` at T2 must not be skipped when T3 is `NotReady`.
@@ -190,7 +190,7 @@ pub trait PackSelector {
 
 `Installer::plan` / `apply`: write `.tmp-*`, chmod, rename, re-hash. Mismatch → `InstallError::Hash`, no exec. **LocalFs** ships here. URL fetch **off by default**. SSH is not implemented here.
 
-**Census → packs (auto):** `Cargo.toml` → rust-analyzer; `compile_commands.json`/`CMakeLists.txt` → clangd; `pyproject.toml` → ty; `*.csproj` → csharp-ls; `tsconfig.json`/`package.json` → tsgo; `composer.json` → PHP T3; `go.mod`/`go.work` → gopls; `build.zig` → zls. Java → no T3 pack.
+**Census → packs (auto):** `Cargo.toml` → rust-analyzer; `compile_commands.json`/`CMakeLists.txt` → clangd; `pyproject.toml` → ty; `*.csproj` → csharp-ls (not selected in v1; T1/T2 ceiling); `tsconfig.json`/`package.json` → tsgo; `composer.json` → PHP T3; `go.mod`/`go.work` → gopls; `build.zig` → zls; Java markers (`pom.xml` / Gradle / `.classpath`) → Java static T3 pack.
 
 ## Script host (`progressive-lsp-script`)
 

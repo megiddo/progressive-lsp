@@ -1,4 +1,5 @@
-//! Java LanguageFactory and T1 Tree-sitter intelligence. No JDK. No JVM.
+//! Java LanguageFactory and T1/T2 intelligence. T3 via static javacs pack.
+//! No JDK / JVM / JDT-LS at runtime.
 
 #[cfg(test)]
 mod bakeoff;

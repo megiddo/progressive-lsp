@@ -72,6 +72,11 @@ main   # after log11 merge
                                                                     └── host7  # full flavor packs (last numbered host slice)
                                                                           └── fix-superhtml-x8664  # zig qemu faccessat
                                                                                 └── host-cleanup  # require superhtml; operator-cli merged; not host8
+                                                                                      └── poc-uri  # identity file: URIs
+                                                                                            └── t2-coverage
+                                                                                                  └── java-t3
+                                                                                                        └── t3-image
+                                                                                                              └── t3-rest
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -195,7 +200,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | M6.1 | `xtask dist` tarballs + SHA256 + slim/full | M0.8, M4 packs | **SIGNED OFF.** Per-triple musl tarballs + SHA256 + `manifest.json`. Darwin writes stub payloads; Linux CI is the real musl dist. Slim/full as M4. Dist only reads `xtask/allocator-matrix.toml`. |
 | M6.2 | Install CLI + `on_install_verify` | M0.7, M2.7 | **SIGNED OFF.** Verified prefix (hash + atomic replace). `FakeRemoteTransport` (ssh-like put/chmod/rename/hash; no SSH types). Abort refuses the new binary. |
 | M6.3 | Refresh control/lsp/plugin/consumer docs vs impl | M6.1 | **SIGNED OFF.** docs remain source of truth |
-| M6.4 | Conformance dashboard | M5.2 | **SIGNED OFF.** [conformance.md](conformance.md); C# T1/T2 only; Java no T3; T3 0% on Darwin stubs |
+| M6.4 | Conformance dashboard | M5.2 | **SIGNED OFF.** [conformance.md](conformance.md); C# T1/T2 only; Java T3 is a static pack (0% on Darwin stubs) |
 | M6.5 | Versioning: core semver vs engine SHAs | M6.1 | **SIGNED OFF.** Workspace **0.1.0** (first published v1; not 1.0.0 — native macOS/Windows hosts are post-v1). Proto `progressive.v1`. Engine SHAs in pack manifests only. Hygiene: llvm-cov **96.26%** lines (ignore xtask/main/tree-sitter). Mutants on install+script+control+protocol: **333 caught / 392 scored (84.9%)**, 30 unviable, 4 timeouts. |
 
 ## PD0 (`pd0` branch)
@@ -594,7 +599,7 @@ A branch’s scope is that milestone’s WPs only. No “while we’re here” l
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
 | PTS-1 | Additive `IndexStatus.ingest` (`not_started` / `running` / `done`); fill from session | poc-lsp-async | **SIGNED OFF.** Next proto tag; no new RPC. |
-| PTS-2 | `TierStrip` / `TierCell` for focused package (workspace aggregate fallback); IndexStatus / TierStatus requested on control IO thread | PTS-1 | **SIGNED OFF.** Java T3 `not supported`; Rust/CSS T2 `n/a`; stub refuse `skipped`. No-file strip paints T1/T2 from workspace ingest. |
+| PTS-2 | `TierStrip` / `TierCell` for focused package (workspace aggregate fallback); IndexStatus / TierStatus requested on control IO thread | PTS-1 | **SIGNED OFF.** C# T3 `not supported`; Rust/CSS T2 `n/a`; stub refuse `skipped`. No-file strip paints T1/T2 from workspace ingest. |
 | PTS-3 | `DiscoverOffer` + honest context / Navigate menus from LanguageCatalog × current tier | PTS-2 | **SIGNED OFF.** FakeLsp not called while disabled. |
 
 **Sign-off checklist (poc-tier-status)**
@@ -805,6 +810,55 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan` / `PackImageCopy` required-slim; `PackBuildPlan` host-arch injection; `XtaskCommand` / `PocArgs` CLI rows kept from `operator-cli`
 
+## Java T3 (static pack)
+
+**Status: WIRING LANDED; live backends are POC-JAVA.** Plan: [poc-tier-plan.md](poc-tier-plan.md), [spike/java-t3.md](../spike/java-t3.md), [t3-linux-hosts.md](t3-linux-hosts.md). Do not open `host8`. Do not ship JDT-LS or a JVM. C# stays T1/T2. Java T3: x86_64 fully static; aarch64 native-image + host libc exception.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| JAVA-T3.1 | `PackKind` + pin + Graal dockerfile; slim pack name `java`; Darwin stub | host-cleanup | **LANDED.** |
+| JAVA-T3.3 | Census + factory `EngineResolver` + poc-ide catalog | JAVA-T3.1 | **LANDED.** |
+| JAVA-T3.2a | Live x86_64 fully static `javacs` | JAVA-T3.1 | POC-JAVA. `check-static` pass. |
+| JAVA-T3.2b | Live aarch64 native-image `javacs` (libc allowed) | JAVA-T3.1 | POC-JAVA. No `libjvm`. |
+| JAVA-T3.2c | xtask: no aarch64 Java Miss/omit | JAVA-T3.2a, JAVA-T3.2b | Dest required both triples. |
+
+## POC tier stack
+
+**Status: DESIGNED.** Master: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md). Parent `host-cleanup`.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| URI.1 | Inventory `file:` URI producers/consumers | host-cleanup | Share `file_uri` / `path_to_file_uri`. |
+| URI.2 | Tests: identity mount + same `rootUri` native vs container | URI.1 | No daemon. |
+| URI.3 | Remove any rewriter/split | URI.2 | Do not add a mapper. |
+| T2-COV.1 | C / C++ heuristic T2 | POC-URI signed off | `#include`, name/arity. |
+| T2-COV.2 | Rust / Python heuristic T2 | T2-COV.1 | TSG opt-in. |
+| T2-COV.3 | CSS / HTML heuristic T2 | T2-COV.2 | Conformance T2 leaves N/A. |
+| IMG.1 | `javacs` required on both runtime-image triples | JAVA-T3.2c | |
+| IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | x86_64 scratch OK. |
+| IMG.3 | Image plan tests + live tag proof | IMG.2 | |
+| REST.1 | Dogfood image includes tsgo, gopls, zls | POC-IMG | Both ISAs. |
+| REST.2 | clangd both ISAs or honest miss | REST.1 | No `.so`; no default-PR cmake. |
+| REST.3 | Rust Linux sysroot honesty in container | REST.1 | |
+| REST.4 | Live POC proof notes | REST.1 | Not a cargo test. |
+
+## T2 heuristic coverage (every v1 language)
+
+**Status: DESIGNED, NOT LANDED.** [t2-heuristic-coverage.md](t2-heuristic-coverage.md). Branch `t2-coverage` after `poc-uri`. WPs T2-COV.* in the table above.
+
+## T3 Linux hosts
+
+**Status: LOCKED IN DOCS.** [t3-linux-hosts.md](t3-linux-hosts.md). Live work is POC-JAVA / POC-IMG / POC-REST, not a separate T3-HOST.1 duplicate. clangd is REST.2.
+
+## `./build lsp` freshness
+
+**Status: IMPLEMENTED.** Make/cmake semantics: **Fresh** (dest exists + input stamp matches) skips; **Stale** / **Missing** (dest missing or inputs changed) rebuilds that artifact. Default `./build lsp all` rebuilds revised code / pins / dockerfiles / `Cargo.lock` and skips unchanged dests. `--force` treats every artifact as stale. Tests inject `RecordingDockerPort`; no daemon.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| LSP-FRESH.1 | `LspArtifactStamp` / `Freshness` / `LspFlags`; parse `./build lsp {arch} [--force]` | operator-cli | Parse tests; stamp equality; Fresh skips, Stale/Missing rebuild; no docker. |
+| LSP-FRESH.2 | Per-artifact rebuild: musl core, each pack, runtime image | LSP-FRESH.1 | Unchanged inputs skip that dest; revised inputs rebuild it; `--force` rebuilds all. |
+
 ## HOST-3 sign-off recap (do not reopen)
 
 **Sign-off checklist (HOST-3)**
@@ -851,4 +905,5 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
-9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not open `host6` until HOST-5 is signed off. Do not open `host7` until HOST-6 is signed off. `host7` is the last numbered host slice — do not open `host8`. `host-cleanup` stacks on `fix-superhtml-x8664` (on `host7`); `operator-cli` merged into `host-cleanup` so `./build` is retained. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`. Do not mux client on `host5`. Do not build clangd/tsgo/gopls/zls on `host6`.
+9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged. `host7` is the last numbered host slice — do not open `host8`.
+10. POC-tier orchestrators: pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on `host-cleanup`. Do not start `t2-coverage` until POC-URI is signed off. Order: `poc-uri` → `t2-coverage` → `java-t3` → `t3-image` → `t3-rest`. Plan: [poc-tier-plan.md](poc-tier-plan.md).

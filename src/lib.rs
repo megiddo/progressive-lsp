@@ -328,6 +328,7 @@ where
     supervisor.register(Box::new(PackAdapter::biome()));
     supervisor.register(Box::new(PackAdapter::gopls()));
     supervisor.register(Box::new(PackAdapter::zls()));
+    supervisor.register(Box::new(PackAdapter::java()));
     let supervisor = Arc::new(supervisor);
     let host =
         Arc::new(ServeHost::new_with_log(layout, Arc::clone(&log))?.with_supervisor(supervisor));
@@ -339,10 +340,7 @@ where
     if let Some(path) = &opts.control_socket {
         let abs = control_socket::advertised_socket_path(path);
         let listener = control_socket::bind_control_socket(&abs, Arc::clone(&log))?;
-        let srv = ControlServer::new("")
-            .with_log(Arc::clone(&log))
-            .with_plane(Arc::clone(&host) as Arc<dyn progressive_lsp_control::ControlPlane>)
-            .with_progressive(true);
+        let srv = serve_control_server(Arc::clone(&host), Arc::clone(&log));
         control_socket::spawn_control_accept(
             listener,
             Arc::new(srv),
@@ -362,9 +360,7 @@ where
         .with_log(Arc::clone(&log))
         .with_intelligence(Arc::clone(&host) as _);
     if opts.mux {
-        let srv = ControlServer::new("")
-            .with_log(Arc::clone(&log))
-            .with_progressive(true);
+        let srv = serve_control_server(Arc::clone(&host), Arc::clone(&log));
         let mut reader = reader;
         let mut writer = writer;
         facade.serve_mux(
@@ -376,6 +372,15 @@ where
         facade.serve(reader, writer)?;
     }
     Ok(())
+}
+
+/// Socket and mux control share [`ServeHost`] as [`progressive_lsp_control::ControlPlane`].
+/// Mux without a plane answers IndexStatus as ingest `not_started`, which disables discover.
+fn serve_control_server(host: Arc<ServeHost>, log: Arc<dyn LogPort>) -> ControlServer {
+    ControlServer::new("")
+        .with_log(log)
+        .with_plane(host as Arc<dyn progressive_lsp_control::ControlPlane>)
+        .with_progressive(true)
 }
 
 pub fn run_install(opts: InstallOpts) -> Result<(), InstallError> {
@@ -560,6 +565,18 @@ mod tests {
                 mux: true,
             })
         );
+    }
+
+    #[test]
+    fn mux_and_socket_control_share_serve_host_plane() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(dir.path());
+        layout.ensure_dirs().unwrap();
+        let log: Arc<dyn LogPort> = Arc::new(MemoryLog::new());
+        let host = Arc::new(ServeHost::new_with_log(layout, Arc::clone(&log)).unwrap());
+        let srv = serve_control_server(host, log);
+        let dbg = format!("{srv:?}");
+        assert!(dbg.contains("has_plane: true"), "{dbg}");
     }
 
     #[test]

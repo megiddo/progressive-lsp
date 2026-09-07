@@ -38,10 +38,24 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
 
 WORKDIR /fetch
-RUN git clone "${UPSTREAM_REPO}" src \
-    && cd src \
-    && git checkout --detach "${UPSTREAM_SHA}" \
-    && git submodule update --init --recursive
+# Bounded retries: pack-container git clone/submodule can hit GitHub :443 timeout.
+RUN set -eux; \
+    n=0; \
+    until git clone "${UPSTREAM_REPO}" src; do \
+      n=$((n+1)); \
+      echo "git clone retry ${n}/3 (${UPSTREAM_REPO})" >&2; \
+      if [ "${n}" -ge 3 ]; then exit 1; fi; \
+      rm -rf src; \
+      sleep 5; \
+    done; \
+    git -C src checkout --detach "${UPSTREAM_SHA}"; \
+    n=0; \
+    until git -C src submodule update --init --recursive; do \
+      n=$((n+1)); \
+      echo "git submodule retry ${n}/3" >&2; \
+      if [ "${n}" -ge 3 ]; then exit 1; fi; \
+      sleep 5; \
+    done
 
 # SOURCE_SUBDIR is `ruff` for ty (the Rust workspace is the submodule). Empty otherwise.
 WORKDIR /fetch/src

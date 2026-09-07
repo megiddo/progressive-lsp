@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::freshness;
 use crate::musl::{AARCH64_MUSL, X86_64_MUSL};
 use crate::runtime_image::IMAGE_TAG;
 use crate::{allocator, check_static, dist, musl, pack, perf, poc, runtime_image};
@@ -68,6 +69,7 @@ impl LspArch {
         }
     }
 
+    #[cfg(test)]
     pub fn docker_args(self) -> Vec<String> {
         match self {
             Self::All => vec!["--both".into()],
@@ -75,6 +77,13 @@ impl LspArch {
             Self::Aarch64 => vec!["--target".into(), AARCH64_MUSL.into()],
         }
     }
+}
+
+/// Flags for `./build lsp {arch}`. Value object.
+/// `--force` treats every artifact as stale (make: rebuild everything).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LspFlags {
+    pub force: bool,
 }
 
 /// What `xtask build` produces. Value object.
@@ -234,6 +243,7 @@ pub enum XtaskCommand {
     LspArches,
     Lsp {
         arch: LspArch,
+        flags: LspFlags,
     },
     Ide,
     Build {
@@ -271,7 +281,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             print_help(HelpTopic::Lsp);
             Err("pass all, x86_64, or aarch64".into())
         }
-        XtaskCommand::Lsp { arch } => execute_lsp(arch),
+        XtaskCommand::Lsp { arch, flags } => freshness::execute_lsp(arch, flags),
         XtaskCommand::Ide => {
             poc::build_native_controller()?;
             poc::build_poc_bin()
@@ -324,17 +334,35 @@ fn parse_lsp(args: &[String]) -> Result<XtaskCommand, String> {
         }),
         Some(raw) => match LspArch::parse(raw) {
             Some(arch) => {
-                if args.len() > 1 {
-                    return Err(format!(
-                        "unexpected argument after architecture: {}\nTry: ./build help lsp",
-                        args[1]
-                    ));
-                }
-                Ok(XtaskCommand::Lsp { arch })
+                let flags = parse_lsp_flags(&args[1..])?;
+                Ok(XtaskCommand::Lsp { arch, flags })
             }
             None => Err(format!("unknown architecture: {raw}\n\n{LSP_ARCHES}")),
         },
     }
+}
+
+fn parse_lsp_flags(args: &[String]) -> Result<LspFlags, String> {
+    let mut flags = LspFlags::default();
+    for arg in args {
+        match arg.as_str() {
+            "--force" => {
+                if flags.force {
+                    return Err(
+                        "unexpected argument after architecture: --force\nTry: ./build help lsp"
+                            .into(),
+                    );
+                }
+                flags.force = true;
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument after architecture: {other}\nTry: ./build help lsp"
+                ));
+            }
+        }
+    }
+    Ok(flags)
 }
 
 fn parse_ide(args: &[String]) -> Result<XtaskCommand, String> {
@@ -486,7 +514,7 @@ pub fn print_help(topic: HelpTopic) {
 
 const ROOT_HELP: &str = "\
 Usage:
-  ./build lsp {all|x86_64|aarch64}
+  ./build lsp {all|x86_64|aarch64} [--force]
   ./build ide
   ./build run ide
   ./build run ide --folder DIR
@@ -500,6 +528,8 @@ Usage:
 lsp     Linux static language server (musl controller + backends +
         container image progressive-lsp-runtime:local). Needs Docker.
         Architecture is required. Omit it to list valid arches.
+        Rebuilds artifacts whose inputs changed; skips dests that are
+        fresh. --force rebuilds controller, backends, and image.
 
 ide     POC editor + native progressive-lsp. Does not start the window.
 
@@ -508,12 +538,15 @@ run ide Start the POC editor (rebuilds native progressive-lsp first).
 ";
 
 pub const LSP_ARCHES: &str = "\
-usage: ./build lsp {all|x86_64|aarch64}
+usage: ./build lsp {all|x86_64|aarch64} [--force]
 
 Valid architectures:
   all       both Linux musl triples
   x86_64    x86_64-unknown-linux-musl
   aarch64   aarch64-unknown-linux-musl
+
+  --force   rebuild controller, backends, and runtime image even when
+            dest ELFs / image stamp are fresh
 ";
 
 const IDE_HELP: &str = "\
@@ -534,7 +567,7 @@ Start the POC IDE. Stays running until you quit the editor window.
 
 --folder DIR must be an absolute path when using --container
 (bind-mount identity). Container mode needs Docker Desktop and
-./build lsp <arch> first. First T3 proof is Python or PHP source,
+./build lsp <arch> first. First T3 proof is Python, PHP, or Java source,
 not a Darwin Cargo tree.
 ";
 
@@ -554,19 +587,6 @@ Options (backends and package only)
   --target T    x86_64-unknown-linux-musl  or  aarch64-unknown-linux-musl
   --both        Both triples
 ";
-
-fn execute_lsp(arch: LspArch) -> Result<(), String> {
-    let docker = arch.docker_args();
-    eprintln!("./build lsp {}: (1/3) Linux musl controller", arch.as_str());
-    musl::run(&docker)?;
-    eprintln!("./build lsp {}: (2/3) backends", arch.as_str());
-    pack::run(&docker)?;
-    eprintln!(
-        "./build lsp {}: (3/3) runtime image {IMAGE_TAG}",
-        arch.as_str()
-    );
-    runtime_image::run(&docker)
-}
 
 fn execute_build(target: BuildTarget, flags: BuildFlags) -> Result<(), String> {
     match target {
@@ -730,18 +750,23 @@ mod tests {
         );
         assert_eq!(
             parse_line(&["lsp", "all"]).unwrap(),
-            XtaskCommand::Lsp { arch: LspArch::All }
+            XtaskCommand::Lsp {
+                arch: LspArch::All,
+                flags: LspFlags::default(),
+            }
         );
         assert_eq!(
             parse_line(&["lsp", "x86_64"]).unwrap(),
             XtaskCommand::Lsp {
-                arch: LspArch::X86_64
+                arch: LspArch::X86_64,
+                flags: LspFlags::default(),
             }
         );
         assert_eq!(
             parse_line(&["lsp", "aarch64"]).unwrap(),
             XtaskCommand::Lsp {
-                arch: LspArch::Aarch64
+                arch: LspArch::Aarch64,
+                flags: LspFlags::default(),
             }
         );
         let err = parse_line(&["lsp", "riscv64"]).unwrap_err();
@@ -753,6 +778,41 @@ mod tests {
         assert_eq!(parse_line(&["ide"]).unwrap(), XtaskCommand::Ide);
         let err = run(&["lsp".into()]).unwrap_err();
         assert!(err.contains("pass all, x86_64, or aarch64"), "{err}");
+    }
+
+    #[test]
+    fn lsp_force_parses_and_unknown_extra_args_fail_closed() {
+        assert_eq!(
+            parse_line(&["lsp", "all", "--force"]).unwrap(),
+            XtaskCommand::Lsp {
+                arch: LspArch::All,
+                flags: LspFlags { force: true },
+            }
+        );
+        assert_eq!(
+            parse_line(&["lsp", "aarch64", "--force"]).unwrap(),
+            XtaskCommand::Lsp {
+                arch: LspArch::Aarch64,
+                flags: LspFlags { force: true },
+            }
+        );
+        assert_eq!(LspFlags { force: true }, LspFlags { force: true }.clone());
+        assert_ne!(LspFlags::default(), LspFlags { force: true });
+        let err = parse_line(&["lsp", "all", "--wat"]).unwrap_err();
+        assert!(
+            err.contains("unexpected argument after architecture: --wat"),
+            "{err}"
+        );
+        let err = parse_line(&["lsp", "x86_64", "--force", "--wat"]).unwrap_err();
+        assert!(
+            err.contains("unexpected argument after architecture: --wat"),
+            "{err}"
+        );
+        let err = parse_line(&["lsp", "all", "--force", "--force"]).unwrap_err();
+        assert!(
+            err.contains("unexpected argument after architecture: --force"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1001,10 +1061,13 @@ mod tests {
         assert!(ROOT_HELP.contains("./build ide"));
         assert!(ROOT_HELP.contains("./build run ide"));
         assert!(ROOT_HELP.contains("--container"));
+        assert!(ROOT_HELP.contains("--force"));
         assert!(LSP_ARCHES.contains("Valid architectures"));
         assert!(LSP_ARCHES.contains("x86_64"));
         assert!(LSP_ARCHES.contains("aarch64"));
         assert!(LSP_ARCHES.contains("all"));
+        assert!(LSP_ARCHES.contains("--force"));
+        assert!(LSP_ARCHES.contains("[--force]"));
         assert!(IDE_HELP.contains("./build ide"));
         assert!(RUN_HELP.contains("./build run ide --folder DIR --container"));
         assert!(RUN_HELP.contains("absolute"));
@@ -1055,6 +1118,8 @@ mod tests {
         assert!(src.contains("debug/xtask"), "{src}");
         assert!(!src.contains("cargo \"$@\" &"), "{src}");
         assert!(src.contains("reap_orphaned_xtask_cargo"), "{src}");
+        assert!(src.contains("--force"), "{src}");
+        assert!(src.contains("run_xtask lsp \"$arch\" \"$@\""), "{src}");
         assert!(
             !src.contains("exec cargo xtask"),
             "nested cargo run hangs the inner build: {src}"

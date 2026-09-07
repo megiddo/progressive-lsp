@@ -61,9 +61,10 @@ Children that only implement one WP also get that WP id from [../implementation-
 ## Locks
 
 - One Linux `serve` per workspace. Native **or** container, never both.
-- Bind-mount identity: `-v $HOST_WS:$HOST_WS`. No URI rewriter.
+- Bind-mount identity: `-v $HOST_WS:$HOST_WS`. No URI rewriter. Same `file:` URIs as native open. Split Mac vs container URI handling in the POC is a defect ([../t3-linux-hosts.md](../t3-linux-hosts.md)).
 - Prefix inside the image is `/opt/plsp`, not the Mac `~/.progressivelsp`.
-- First live T3 proof is Python (ty) or PHP (phpantom) on mounted source. A Darwin rustc sysroot will not satisfy rust-analyzer in the container.
+- Container Linux **is** production Linux for that architecture. T3 that does not run in the container will not run on a real host of that ISA.
+- First live T3 proof on mounted source is Python (ty), PHP (phpantom), or Java (native pack). Java aarch64 may need host libc ([../t3-linux-hosts.md](../t3-linux-hosts.md)). A Darwin rustc sysroot will not satisfy rust-analyzer in the container.
 - Unix sockets through Docker Desktop are out. Control is `--mux` on stdio (`host6`).
 
 ## Sign-off

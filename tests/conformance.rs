@@ -186,7 +186,6 @@ fn t2_for(lang: &str, t1: &Cell) -> Cell {
 
 fn t3_for(lang: &str) -> Cell {
     match lang {
-        "java" => Cell::Na("no T3 in v1"),
         "csharp" => Cell::Na("T1/T2 ceiling"),
         _ => {
             // Darwin host: xtask dist / install write pack stubs, not musl ELFs.
@@ -237,7 +236,7 @@ Per language, per tier pass rates from `fixtures/matrix/` (LATEST+2) plus the
 Darwin T3 reality: pack stubs are not musl ELFs, so T3 is **0%** unless a cell
 is N/A. Numbers are computed by `tests/conformance.rs`. Do not invent 100%s.
 
-C# is T1/T2 only. Java has no T3. Linux CI with real engine packs is the
+C# is T1/T2 only. Java T3 is a static pack (0% on Darwin stubs). Linux CI with real engine packs is the
 place to re-score T3.
 
 | Language | T1 (syntax) | T2 (heuristics) | T3 (types) |
@@ -266,7 +265,10 @@ fn conformance_dashboard_from_fixtures() {
     let dest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/conformance.md");
     std::fs::write(&dest, &md).unwrap();
     let java = rows.iter().find(|r| r.language == "java").unwrap();
-    assert!(matches!(java.t3, Cell::Na(_)), "Java has no T3");
+    assert!(
+        matches!(java.t3, Cell::Pct { pass: 0, total: 1 }),
+        "Java T3 is a static pack; Darwin stubs score 0%"
+    );
     let csharp = rows.iter().find(|r| r.language == "csharp").unwrap();
     assert!(matches!(csharp.t3, Cell::Na(_)), "C# T1/T2 ceiling");
     assert!(matches!(csharp.t2, Cell::Pct { .. }));
@@ -283,6 +285,6 @@ fn conformance_dashboard_from_fixtures() {
         }
     }
     assert!(md.contains("C# is T1/T2 only"));
-    assert!(md.contains("Java has no T3"));
+    assert!(md.contains("Java T3 is a static pack"));
     assert!(md.contains("0/1 (0%)"));
 }

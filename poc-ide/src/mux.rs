@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 use progressive_lsp_control::{decode_frame, encode_frame, DecodeOutcome, Envelope};
@@ -31,37 +31,90 @@ fn map_control_mux(err: MuxError) -> IdeError {
     IdeError::control(err.to_string())
 }
 
+/// Inboxes, failure, and EOF share one mutex so `parked.wait` cannot lose a wakeup.
+struct MuxState {
+    lsp_inbox: VecDeque<Vec<u8>>,
+    control_inbox: VecDeque<Vec<u8>>,
+    failed: Option<String>,
+    reader_done: bool,
+}
+
+impl MuxState {
+    fn inbox_mut(&mut self, channel: u8) -> &mut VecDeque<Vec<u8>> {
+        if channel == CHANNEL_LSP {
+            &mut self.lsp_inbox
+        } else {
+            &mut self.control_inbox
+        }
+    }
+}
+
 struct MuxInner {
     writer: Mutex<Box<dyn Write + Send>>,
-    reader: Mutex<Box<dyn Read + Send>>,
-    lsp_inbox: Mutex<VecDeque<Vec<u8>>>,
-    control_inbox: Mutex<VecDeque<Vec<u8>>>,
-    failed: Mutex<Option<String>>,
+    state: Mutex<MuxState>,
+    parked: Condvar,
 }
 
 impl MuxInner {
-    fn new(writer: impl Write + Send + 'static, reader: impl Read + Send + 'static) -> Self {
+    fn new(writer: impl Write + Send + 'static) -> Self {
         Self {
             writer: Mutex::new(Box::new(writer)),
-            reader: Mutex::new(Box::new(reader)),
-            lsp_inbox: Mutex::new(VecDeque::new()),
-            control_inbox: Mutex::new(VecDeque::new()),
-            failed: Mutex::new(None),
+            state: Mutex::new(MuxState {
+                lsp_inbox: VecDeque::new(),
+                control_inbox: VecDeque::new(),
+                failed: None,
+                reader_done: false,
+            }),
+            parked: Condvar::new(),
         }
     }
 
+    fn spawn_reader(inner: Arc<Self>, mut reader: Box<dyn Read + Send>) -> JoinHandle<()> {
+        std::thread::Builder::new()
+            .name("poc-ide-mux".into())
+            .spawn(move || loop {
+                match read_mux_frame(&mut reader) {
+                    Ok(Some(frame)) => {
+                        if frame.channel != CHANNEL_LSP && frame.channel != CHANNEL_CONTROL {
+                            let _ = inner.fail(IdeError::lsp(format!(
+                                "unknown mux channel {}",
+                                frame.channel
+                            )));
+                            return;
+                        }
+                        inner.park(frame.channel, frame.payload);
+                    }
+                    Ok(None) => {
+                        // Peer EOF is not a mux error: writes (initialize, shutdown) must
+                        // still succeed after a Cursor/test reader is exhausted.
+                        if let Ok(mut st) = inner.state.lock() {
+                            st.reader_done = true;
+                        }
+                        inner.parked.notify_all();
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = inner.fail(map_mux(e));
+                        return;
+                    }
+                }
+            })
+            .expect("poc-ide-mux thread")
+    }
+
     fn fail(&self, err: IdeError) -> IdeError {
-        if let Ok(mut slot) = self.failed.lock() {
-            if slot.is_none() {
-                *slot = Some(err.to_string());
+        if let Ok(mut st) = self.state.lock() {
+            if st.failed.is_none() {
+                st.failed = Some(err.to_string());
             }
         }
+        self.parked.notify_all();
         err
     }
 
     fn check_failed(&self) -> Result<(), IdeError> {
-        match self.failed.lock() {
-            Ok(slot) => match slot.as_ref() {
+        match self.state.lock() {
+            Ok(st) => match st.failed.as_ref() {
                 Some(msg) => Err(IdeError::lsp(msg.clone())),
                 None => Ok(()),
             },
@@ -78,71 +131,44 @@ impl MuxInner {
         write_mux_frame(&mut *writer, channel, payload).map_err(map_mux)
     }
 
-    fn take_inbox(inbox: &Mutex<VecDeque<Vec<u8>>>) -> Option<Vec<u8>> {
-        inbox.lock().ok().and_then(|mut q| q.pop_front())
-    }
-
     fn park(&self, channel: u8, payload: Vec<u8>) {
-        let inbox = if channel == CHANNEL_LSP {
-            &self.lsp_inbox
-        } else {
-            &self.control_inbox
-        };
-        if let Ok(mut q) = inbox.lock() {
-            q.push_back(payload);
+        if let Ok(mut st) = self.state.lock() {
+            st.inbox_mut(channel).push_back(payload);
         }
+        self.parked.notify_all();
     }
 
     fn read_channel(&self, want: u8) -> Result<Vec<u8>, IdeError> {
-        self.check_failed()?;
-        let inbox = if want == CHANNEL_LSP {
-            &self.lsp_inbox
-        } else {
-            &self.control_inbox
-        };
-        if let Some(payload) = Self::take_inbox(inbox) {
-            return Ok(payload);
-        }
-        let mut reader = self
-            .reader
+        let mut st = self
+            .state
             .lock()
-            .map_err(|_| IdeError::lsp("mux read lock poisoned"))?;
+            .map_err(|_| IdeError::lsp("mux lock poisoned"))?;
         loop {
-            if let Some(payload) = Self::take_inbox(inbox) {
+            if let Some(payload) = st.inbox_mut(want).pop_front() {
                 return Ok(payload);
             }
-            let frame = match read_mux_frame(&mut *reader) {
-                Ok(Some(frame)) => frame,
-                Ok(None) => {
-                    return Err(self.fail(IdeError::lsp("eof waiting for mux frame")));
-                }
-                Err(e) => return Err(self.fail(map_mux(e))),
-            };
-            if frame.channel == want {
-                return Ok(frame.payload);
+            if let Some(msg) = st.failed.as_ref() {
+                return Err(IdeError::lsp(msg.clone()));
             }
-            if frame.channel == CHANNEL_LSP || frame.channel == CHANNEL_CONTROL {
-                self.park(frame.channel, frame.payload);
-                continue;
+            if st.reader_done {
+                return Err(IdeError::lsp("eof waiting for mux frame"));
             }
-            return Err(self.fail(IdeError::lsp(format!(
-                "unknown mux channel {}",
-                frame.channel
-            ))));
+            st = self
+                .parked
+                .wait(st)
+                .map_err(|_| IdeError::lsp("mux lock poisoned"))?;
         }
     }
 
     fn try_read_channel(&self, want: u8) -> Result<Option<Vec<u8>>, IdeError> {
-        self.check_failed()?;
-        let inbox = if want == CHANNEL_LSP {
-            &self.lsp_inbox
-        } else {
-            &self.control_inbox
-        };
-        if let Some(payload) = Self::take_inbox(inbox) {
-            return Ok(Some(payload));
+        let mut st = self
+            .state
+            .lock()
+            .map_err(|_| IdeError::lsp("mux lock poisoned"))?;
+        if let Some(msg) = st.failed.as_ref() {
+            return Err(IdeError::lsp(msg.clone()));
         }
-        Ok(None)
+        Ok(st.inbox_mut(want).pop_front())
     }
 }
 
@@ -152,6 +178,7 @@ pub struct MuxStdio {
     child: Option<Child>,
     stderr_drain: Option<Arc<ChildStderrDrain>>,
     stderr_thread: Option<JoinHandle<()>>,
+    reader_thread: Option<JoinHandle<()>>,
 }
 
 impl MuxStdio {
@@ -164,25 +191,31 @@ impl MuxStdio {
         writer: impl Write + Send + 'static,
         reader: impl Read + Send + 'static,
     ) -> Self {
+        let inner = Arc::new(MuxInner::new(writer));
+        let reader_thread = MuxInner::spawn_reader(Arc::clone(&inner), Box::new(reader));
         Self {
-            inner: Arc::new(MuxInner::new(writer, reader)),
+            inner,
             child: None,
             stderr_drain: None,
             stderr_thread: None,
+            reader_thread: Some(reader_thread),
         }
     }
 
     fn from_stdio(stdio: StdioLsp) -> Self {
         let (child, writer, reader, stderr_drain, stderr_thread) = stdio.into_io_parts();
+        let inner = Arc::new(MuxInner::new(writer));
+        let reader_thread = MuxInner::spawn_reader(Arc::clone(&inner), Box::new(reader));
         Self {
-            inner: Arc::new(MuxInner::new(writer, reader)),
+            inner,
             child,
             stderr_drain,
             stderr_thread,
+            reader_thread: Some(reader_thread),
         }
     }
 
-    pub fn split(self) -> (MuxLsp, MuxControl) {
+    pub fn split(mut self) -> (MuxLsp, MuxControl) {
         let inner = Arc::clone(&self.inner);
         let control = MuxControl {
             inner: Arc::clone(&inner),
@@ -194,8 +227,9 @@ impl MuxStdio {
             notifications: Vec::new(),
             stderr_drain: self.stderr_drain.clone(),
             _owner: MuxOwner {
-                child: self.child,
-                stderr_thread: self.stderr_thread,
+                child: self.child.take(),
+                stderr_thread: self.stderr_thread.take(),
+                reader_thread: self.reader_thread.take(),
             },
         };
         (lsp, control)
@@ -216,6 +250,7 @@ impl MuxStdio {
 struct MuxOwner {
     child: Option<Child>,
     stderr_thread: Option<JoinHandle<()>>,
+    reader_thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for MuxOwner {
@@ -225,6 +260,24 @@ impl Drop for MuxOwner {
             let _ = child.wait();
         }
         if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.reader_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for MuxStdio {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.reader_thread.take() {
             let _ = thread.join();
         }
     }
@@ -555,6 +608,25 @@ mod tests {
         assert_eq!(lsp_half.notification_len(), 0);
         assert!(lsp_half.stderr_drain().is_none());
         assert!(lsp_half.take_notifications().is_empty());
+    }
+
+    #[test]
+    fn mux_reader_thread_does_not_starve_lsp_while_control_waits() {
+        let framed = encode_lsp_json(&init_result_mux()).unwrap();
+        let mux = MuxStdio::from_pair(Vec::new(), Cursor::new(framed));
+        let (mut lsp, mut ctl) = mux.split();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = ctl.wait();
+        });
+        let ok = lsp
+            .request(
+                "initialize",
+                json!({"rootUri": "file:///ws", "capabilities": {}}),
+            )
+            .is_ok();
+        tx.send(ok).unwrap();
+        assert!(rx.recv().unwrap());
     }
 
     #[test]

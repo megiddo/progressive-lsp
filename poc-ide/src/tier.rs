@@ -547,13 +547,13 @@ mod tests {
     }
 
     #[test]
-    fn tier_strip_value_object_java_t3_not_supported_rust_t2_na() {
+    fn tier_strip_value_object_java_t3_offered_csharp_not_supported_rust_t2_na() {
         let c = catalog();
         let java = TierStrip::paint(&c, "java", IngestState::Done, Some(WireTier::Graph));
         assert_eq!(java.t1().state(), TierCellState::Done);
         assert_eq!(java.t2().state(), TierCellState::Done);
-        assert_eq!(java.t3().state(), TierCellState::NotSupported);
-        assert_eq!(java.t3().status(), "not supported");
+        assert_eq!(java.t3().state(), TierCellState::Skipped);
+        assert_eq!(java.t3().status(), "skipped");
         assert_eq!(java.t1().label(), "T1");
         assert_eq!(TierCellKind::T2.as_str(), "T2");
         assert_eq!(TierCellKind::T3.as_str(), "T3");
@@ -564,19 +564,27 @@ mod tests {
         assert_eq!(java_open.t1().status(), "processing");
         assert_eq!(java_open.t2().state(), TierCellState::Na);
         assert_eq!(java_open.t2().status(), "n/a");
-        assert_eq!(java_open.t3().state(), TierCellState::NotSupported);
+        assert_eq!(java_open.t3().state(), TierCellState::Na);
 
         let java_ingest = TierStrip::paint(&c, "java", IngestState::Running, None);
         assert_eq!(java_ingest.t1().state(), TierCellState::InProgress);
         assert_eq!(java_ingest.t2().state(), TierCellState::InProgress);
         assert_eq!(java_ingest.t2().status(), "processing");
-        assert_eq!(java_ingest.t3().state(), TierCellState::NotSupported);
+        assert_eq!(java_ingest.t3().state(), TierCellState::Na);
 
         let java_t1 = TierStrip::paint(&c, "java", IngestState::Running, Some(WireTier::Syntax));
         assert_eq!(java_t1.t1().state(), TierCellState::Done);
         assert_eq!(java_t1.t2().state(), TierCellState::InProgress);
         assert_eq!(java_t1.t2().status(), "processing");
-        assert_eq!(java_t1.t3().state(), TierCellState::NotSupported);
+        assert_eq!(java_t1.t3().state(), TierCellState::Na);
+
+        let java_t2 = TierStrip::paint(&c, "java", IngestState::Running, Some(WireTier::Graph));
+        assert_eq!(java_t2.t2().state(), TierCellState::Done);
+        assert_eq!(java_t2.t3().state(), TierCellState::InProgress);
+        assert_eq!(java_t2.t3().status(), "processing");
+
+        let java_types = TierStrip::paint(&c, "java", IngestState::Done, Some(WireTier::Types));
+        assert_eq!(java_types.t3().state(), TierCellState::Done);
 
         let rust = TierStrip::paint(&c, "rust", IngestState::Done, Some(WireTier::Syntax));
         assert_eq!(rust.t1().state(), TierCellState::Done);
@@ -718,6 +726,28 @@ mod tests {
                 .label("Find References"),
             "building T1 index"
         );
+
+        let pending = PackageTierMap::new();
+        assert_eq!(pending.ingest(), IngestState::NotStarted);
+        let ingest = pending.ingest_for_strip(LspSessionState::Ready);
+        assert_eq!(ingest, IngestState::Done);
+        let ready_before_index = DiscoverMenu::paint(
+            &catalog(),
+            "java",
+            LspSessionState::Ready,
+            &DiscoverFlight::idle(),
+            ingest,
+            None,
+        );
+        assert!(
+            ready_before_index
+                .item(DiscoverKind::Definition)
+                .can_submit(),
+            "strip paints T1 done on Ready; discover must not stay building T1"
+        );
+        assert!(ready_before_index
+            .item(DiscoverKind::References)
+            .can_submit());
 
         let waiting = menu(
             "java",
@@ -961,7 +991,7 @@ mod tests {
             Some(WireTier::Graph),
             T3HostOffer::NeedsContainer,
         );
-        assert_eq!(java.t3().state(), TierCellState::NotSupported);
+        assert_eq!(java.t3().state(), TierCellState::Skipped);
 
         let rust = DiscoverMenu::paint_for_open(
             &c,

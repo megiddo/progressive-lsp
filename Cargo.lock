@@ -3401,6 +3401,7 @@ name = "progressive-lsp-lang-java"
 version = "0.1.0"
 dependencies = [
  "progressive-lsp-core",
+ "progressive-lsp-engine",
  "progressive-lsp-index",
  "progressive-lsp-plugin",
  "progressive-lsp-resolve",

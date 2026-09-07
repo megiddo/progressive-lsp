@@ -13,7 +13,7 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 **Exit**
 
 - [x] [docs/README.md](README.md) links every file in this set.
-- [x] vision, requirements, architecture, detailed-design, design-patterns, testing, milestones, implementation-plan, branching exist and **agree** with locked decisions (static ELFs, no Node/JVM/CPython, Java T3 out, protobuf not `$/`, allocator matrix, `.progressivelsp`, Rhai catalog).
+- [x] vision, requirements, architecture, detailed-design, design-patterns, testing, milestones, implementation-plan, branching exist and **agree** with locked decisions (static ELFs, no Node/JVM/CPython **runtime**, Java T3 via static pack not JDT-LS, protobuf not `$/`, allocator matrix, `.progressivelsp`, Rhai catalog).
 - [x] [initial-progressive-lsp-design.md](initial-progressive-lsp-design.md) marked archive.
 
 **Sign-off checklist (D0)**
@@ -173,7 +173,7 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 **Status: SIGNED OFF** on branch `m5`. Do not start M6 until this section stays signed off. No dist tarball productization, no conformance dashboard, no `on_install_verify` as an M6-only exit (the install crate already exists from M0).
 
 - Content-addressed `IndexCache` under `$PREFIX/cache/` keyed `(grammar_ver, language_id, file_hash)`. Disk marker does not skip extract on cold start (symbols are in-memory only). Never written into the git worktree.
-- LATEST, LATEST-1, LATEST-2 fixtures per v1 language; one mixed-version workspace. C# T1/T2 only. Java no T3.
+- LATEST, LATEST-1, LATEST-2 fixtures per v1 language; one mixed-version workspace. C# T1/T2 only. Java T3 is a later static pack (not in this milestone’s exit).
 - Watch overflow → FilesSince catch-up with `truncated`; 10k-file external-edit burst via FakeWatcher/FakeClock within the published budget.
 - Grammar lag: newer-than-window syntax → ERROR nodes / unparsed note; server stays up (Java/PHP/JS/Python/Rust/C).
 - Performance gates recorded: open-buffer reparse ~10 ms class; T1/T2 definition p99 < 50 ms after index; core RSS without engines; T3 not charged to core.
@@ -280,7 +280,7 @@ Each language on a **pinned SHA** real corpus. Stock stdio LSP only. Spec: [inte
 - Native `cargo test -- --test-threads=1` is the PD2 unit gate on macOS.
 - `integration/harness/run-it2.sh auto` fetches URL+SHA corpora (no submodule mirrors) and runs stock stdio on the native Mach-O. In-tree fixtures + `csharp-mini` are supplements, not the only Java/C# proof.
 - T3 rows (`ty`, `rust-analyzer`, `clangd`, `tsgo`, `phpantom`, `biome`, `superhtml`, `gopls`, `zls`) are `skip_pack_missing` when the prefix holds Darwin stubs. That is **not** a typed hover green and must not be reported as clangd/ty T3 pass.
-- C# is `expected_ceiling` T1/T2. Java has no T3. `$/` / `workspace/filesSince` must be method-not-found.
+- C# is `expected_ceiling` T1/T2. Java T3 is a static pack when present. `$/` / `workspace/filesSince` must be method-not-found.
 - Linux CI with real musl packs is the T3 gate — same class as the M0 musl gap.
 
 ## PD3 — IT-3 extended protocol
@@ -883,7 +883,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 **Exit**
 
 - [x] `IndexStatusResponse.ingest` is `not_started` / `running` / `done`, filled from session ingest reality.
-- [x] Status strip paints T1 / T2 / T3 for the focused package (`processing` / `done` / `not supported` / `skipped` / `n/a`). Folder open starts workspace ingest; T1/T2 follow that ingest with no file focused. Java T3 is `not supported`. Stub refuse is `skipped`, not `done`.
+- [x] Status strip paints T1 / T2 / T3 for the focused package (`processing` / `done` / `not supported` / `skipped` / `n/a`). Folder open starts workspace ingest; T1/T2 follow that ingest with no file focused. C# T3 is `not supported`. Stub refuse is `skipped`, not `done`.
 - [x] Context and Navigate menus use `DiscoverOffer`. Disabled items do not call FakeLsp.
 
 **Sign-off checklist (poc-tier-status)**
@@ -1253,6 +1253,131 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
   |---|---|---|---|---|
   | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:3e14d4acd2f5c9e813e330a7f99e7e2e438e62fa3871d30da4a8f82970cb15fc` | ~119 MiB; superhtml **present** (8.1 MiB x86-64 static ELF via `docker cp /opt/plsp/engines/superhtml/superhtml`). clangd omitted (HOST-7 cache miss `3623fe661ae35c6c80ac221f14d85be76aa870f1`). `:local` left on native arm64 `sha256:3941096844b9994f876414b9efe0b3f9143823895a9a5f023b22e814a54a59a6` |
 
-## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
+## POC-URI — identity `file:` URIs
 
-Java in-house types (still no JVM). Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas).
+**Status: NOT STARTED.** Branch `poc-uri` on `host-cleanup`. Plan: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md).
+
+**Scope:** native and container Open Folder use the same `file:` URIs (identity mount). No rewriter.
+
+**Out:** T2 heuristics; Java pack extract; runtime image.
+
+**Exit**
+
+- [ ] URI.1 inventory
+- [ ] URI.2 tests (`DockerRunPlan` `-v WS:WS`; `rootUri` = `file_uri(WS)`)
+- [ ] URI.3 no mapper type; any split fixed without a rewriter
+
+**Sign-off checklist (POC-URI)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch — `cargo test` scoped; `--test-threads=1`; FakeRuntime only
+- [ ] 95% llvm-cov on crates that changed (ignore xtask / poc-ide `ui.rs` per testing.md)
+- [ ] 80% mutants if a listed crate changed
+- [ ] No `sleep`
+- [ ] `check-static` — N/A (no ELF)
+- [ ] Docs updated
+- [ ] [design-patterns.md](design-patterns.md) if types added
+
+## POC-T2 — heuristic T2 for every v1 language
+
+**Status: NOT STARTED.** Branch `t2-coverage` on signed-off `poc-uri`. Design: [t2-heuristic-coverage.md](t2-heuristic-coverage.md).
+
+**Scope:** C, C++, Rust, Python, CSS, HTML graph facts + factory T2 + poc-ide `has_t2`.
+
+**Out:** T3 packs; Docker daemon tests.
+
+**Exit**
+
+- [ ] T2-COV.1 C/C++
+- [ ] T2-COV.2 Rust/Python
+- [ ] T2-COV.3 CSS/HTML
+- [ ] Strip T2 not `n/a` for those languages after ingest
+- [ ] Fixtures; conformance T2 leaves N/A
+
+**Sign-off checklist (POC-T2)**
+
+- [ ] Exit criteria met
+- [ ] Tests on this branch
+- [ ] 95% llvm-cov
+- [ ] 80% mutants on listed crates that changed
+- [ ] No `sleep`
+- [ ] `check-static` — N/A
+- [ ] Docs + matrix + catalog agree
+- [ ] Patterns named
+
+## POC-JAVA — live Java T3 both Linux ISAs
+
+**Status: NOT STARTED.** Branch `java-t3` on signed-off `t2-coverage`. Wiring JAVA-T3.1/3 already landed.
+
+**Scope:** live `javacs`: x86_64 fully static; aarch64 native-image may need libc. No JAR/JDT/`libjvm`.
+
+**Out:** clangd; tsgo in image (POC-REST); URI rewriter.
+
+**Exit**
+
+- [ ] JAVA-T3.2a x86_64 `check-static` pass (live proof)
+- [ ] JAVA-T3.2b aarch64 native-image; libc OK; no `libjvm`
+- [ ] JAVA-T3.2c no aarch64 Miss/omit
+
+**Sign-off checklist (POC-JAVA)**
+
+- [ ] Exit criteria met
+- [ ] Unit tests: `RecordingDockerPort`; no daemon
+- [ ] Live pack proof recorded (not a cargo test); dests gitignored
+- [ ] 95% / 80% as applicable (xtask often N/A mutants)
+- [ ] No `sleep`
+- [ ] `check-static` on x86_64 `javacs` only for the static bar
+- [ ] Docs: [t3-linux-hosts.md](t3-linux-hosts.md), spike, host-deps
+- [ ] Patterns named
+
+## POC-IMG — runtime image copies Java
+
+**Status: NOT STARTED.** Branch `t3-image` on signed-off `java-t3`.
+
+**Scope:** `javacs` required both triples; aarch64 image glibc userspace for that process; x86_64 scratch OK.
+
+**Out:** tsgo/gopls/zls/clangd (POC-REST).
+
+**Exit**
+
+- [ ] IMG.1 required copy
+- [ ] IMG.2 aarch64 libc userspace documented
+- [ ] IMG.3 tests + live `:local` proof
+
+**Sign-off checklist (POC-IMG)**
+
+- [ ] Exit criteria met
+- [ ] Tests without daemon
+- [ ] Live image proof (orchestrator)
+- [ ] No `sleep`
+- [ ] Docs agree (scratch vs glibc base)
+- [ ] Patterns named
+
+## POC-REST — remaining T3 in the dogfood image
+
+**Status: NOT STARTED.** Branch `t3-rest` on signed-off `t3-image`. Last slice of this stack. Do not open `host8`.
+
+**Scope:** POC container image includes every T3 except C#. clangd fully static or honest miss.
+
+**Out:** C# T3; native macOS server host.
+
+**Exit**
+
+- [ ] REST.1 tsgo, gopls, zls both ISAs
+- [ ] REST.2 clangd or documented miss (no `.so`)
+- [ ] REST.3 Rust sysroot honesty
+- [ ] REST.4 live POC notes (Java + one slim + one full-pack language)
+
+**Sign-off checklist (POC-REST)**
+
+- [ ] Exit criteria met
+- [ ] Tests without daemon
+- [ ] Live proof notes
+- [ ] C# still `not supported`
+- [ ] No `sleep`
+- [ ] Docs + matrix updated
+- [ ] Patterns named
+
+## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
+
+Drop aarch64 Java libc exception when Graal fully-static ARM ships. Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas). C# T3 only if musl AOT `check-static` greens.

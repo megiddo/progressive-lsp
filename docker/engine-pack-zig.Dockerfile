@@ -42,10 +42,24 @@ RUN curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linu
 ENV PATH="/opt/zig:${PATH}"
 
 WORKDIR /fetch
-RUN git clone "${UPSTREAM_REPO}" src \
-    && cd src \
-    && git checkout --detach "${UPSTREAM_SHA}" \
-    && git submodule update --init --recursive
+# Bounded retries: pack-container git clone/submodule can hit GitHub :443 timeout.
+RUN set -eux; \
+    n=0; \
+    until git clone "${UPSTREAM_REPO}" src; do \
+      n=$((n+1)); \
+      echo "git clone retry ${n}/3 (${UPSTREAM_REPO})" >&2; \
+      if [ "${n}" -ge 3 ]; then exit 1; fi; \
+      rm -rf src; \
+      sleep 5; \
+    done; \
+    git -C src checkout --detach "${UPSTREAM_SHA}"; \
+    n=0; \
+    until git -C src submodule update --init --recursive; do \
+      n=$((n+1)); \
+      echo "git submodule retry ${n}/3" >&2; \
+      if [ "${n}" -ge 3 ]; then exit 1; fi; \
+      sleep 5; \
+    done
 
 WORKDIR /fetch/src
 # Cache on a real rw fs. `-j1` is leftover from the qemu miss; native

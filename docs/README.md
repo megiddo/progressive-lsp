@@ -14,9 +14,10 @@ This directory is the **source of truth** for the product. Implement from these 
 | Types, traits, errors | [detailed-design.md](detailed-design.md) |
 | Pattern map (mandatory) | [design-patterns.md](design-patterns.md) |
 | Coverage, mutants, alloc matrix | [testing.md](testing.md) |
-| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-11; host HOST-0–HOST-7 | [milestones.md](milestones.md) |
+| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-11; host HOST-0–HOST-7; POC tier POC-URI–POC-REST | [milestones.md](milestones.md) |
 | Global logging (`LogPort`, sqlite WAL) | [logging.md](logging.md), [plan](logging-plan.md), [agent context](logging/agent-context.md) |
 | Host stack (`host0`–`host7`; native vs container open) | [host/agent-context.md](host/agent-context.md) |
+| POC tier stack (T1/T2 complete + container T3) | [poc-tier-plan.md](poc-tier-plan.md), [poc-tier/agent-context.md](poc-tier/agent-context.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |
 
@@ -35,6 +36,9 @@ This directory is the **source of truth** for the product. Implement from these 
 | Extended protocol API | [user/progressive-v1-api.md](user/progressive-v1-api.md) |
 | Integration test designs | [../integration/README.md](../integration/README.md) |
 | T2 bake-off spike | [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md) |
+| T2 heuristics for every v1 language | [t2-heuristic-coverage.md](t2-heuristic-coverage.md) |
+| T3 Linux container = production; URIs; Java ISA | [t3-linux-hosts.md](t3-linux-hosts.md) |
+| POC tier completion (milestones + checklist) | [poc-tier-plan.md](poc-tier-plan.md) |
 | Per-language per-tier pass % | [conformance.md](conformance.md) |
 
 ## Agent rules
@@ -42,7 +46,8 @@ This directory is the **source of truth** for the product. Implement from these 
 1. Do not start milestone `mN+1` / `pdN+1` / `ideN+1` / `logN+1` / `hostN+1` until the previous is signed off ([branching.md](branching.md), [implementation-plan.md](implementation-plan.md)).
 2. Every new type maps to a named pattern in [design-patterns.md](design-patterns.md). Ad-hoc layers are a defect.
 3. 95% line coverage and 80% mutation kill rate on listed crates from the first library that lands ([testing.md](testing.md)).
-4. Shipped ELFs: no dynamic interpreter, no `DT_NEEDED` ([host-deps.md](host-deps.md)).
+4. Shipped ELFs: no dynamic interpreter, no `DT_NEEDED` except aarch64 Java T3 until Graal fully-static ARM ([t3-linux-hosts.md](t3-linux-hosts.md)).
 5. Stock LSP clients must work with stdio only. Do not put FilesSince on `$/` methods in v1 ([lsp-contract.md](lsp-contract.md)).
 6. LOG orchestrators pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. poc-ide `RunLog` is a separate schema.
-7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host2` from `host1`.
+7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host8`.
+8. POC-tier orchestrators pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on `host-cleanup`. Plan: [poc-tier-plan.md](poc-tier-plan.md).
