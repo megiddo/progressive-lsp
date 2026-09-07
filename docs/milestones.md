@@ -1085,7 +1085,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 - [x] `xtask runtime-image` stages prebuilt ELFs and tags `progressive-lsp-runtime:local` for both platforms (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
 - [x] Image layout matches `PrefixLayout` under `/opt/plsp`. ENTRYPOINT is the core ELF; default args are `serve --prefix /opt/plsp` (host5 attach still unwired).
 - [x] `RuntimeImagePlan` is a value object (platform, triple, dockerfile, core dest, pack dests, image tag). Darwin unit tests name the pattern and cover the plan without docker.
-- [x] `docker/runtime.Dockerfile` is `FROM scratch` and `COPY`s only. No rustc/cargo/clang/LLVM/zig/go. Missing required core ELF fail closed. `superhtml` × x86_64 may be omitted (HOST-3 miss).
+- [x] `docker/runtime.Dockerfile` is `FROM scratch` and `COPY`s only. No rustc/cargo/clang/LLVM/zig/go. Missing required core ELF fail closed. HOST-4 allowed omitting `superhtml` × x86_64 (HOST-3 miss). **Superseded by HOST-CLEANUP:** slim including superhtml is required on both triples.
 - [x] `RecordingDockerPort` is would-have-tagged (no daemon). Production is `CommandDockerPort` / `DockerPort::tag_image`. Tests never start docker.
 - [x] Docs: branching `host3 └── host4`; `host5`–`host7` still future. host-deps: runtime image is our artifact; docker CLI remains a host tool; tests still FakeRuntime.
 
@@ -1109,7 +1109,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
   | platform | triple | tag | image id | notes |
   |---|---|---|---|---|
   | `linux/arm64` | `aarch64-unknown-linux-musl` | `progressive-lsp-runtime:local` | `sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8` | native; ~85 MiB; ENTRYPOINT `/opt/plsp/bin/progressive-lsp`; CMD `serve --prefix /opt/plsp`; core + five slim packs |
-  | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:42a7314349631cf0fb04be66deed203bc281389c75a462d73af603fb77699ac1` | ~86 MiB; same ENTRYPOINT/CMD; `superhtml` omitted (HOST-3 qemu/Zig miss). `:local` left on native arm64 |
+  | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:42a7314349631cf0fb04be66deed203bc281389c75a462d73af603fb77699ac1` | ~86 MiB; same ENTRYPOINT/CMD; `superhtml` omitted (HOST-3 qemu/Zig miss). **Superseded by HOST-CLEANUP** (amd64 image now includes superhtml). `:local` left on native arm64 |
 
 - `DockerRuntime.start` remains unwired. Heavy packs remain HOST-7.
 
@@ -1215,6 +1215,43 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
   | zls | zls | PASS (~17 MiB static) | PASS (~17 MiB static) — same Zig path as superhtml: host-native `linux/arm64` + `ZIG_TARGET=x86_64-linux-musl`. qemu amd64 is not used. |
   | tsgo | tsgo | PASS (~25 MiB static) | PASS (~28 MiB static) |
   | clangd | clangd | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:aarch64-unknown-linux-musl` absent; not cmake | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:x86_64-unknown-linux-musl` absent; not cmake |
+
+This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. It is not the same class as the closed superhtml × x86_64 pack/image miss.
+
+## HOST-CLEANUP — superhtml required on both image triples
+
+**Status: SIGNED OFF** on branch `host-cleanup`. Parent is `fix-superhtml-x8664` (`59781cf`), stacked on signed-off `host7` (`5815fcd`). `operator-cli` (`a86f8db`) merged into this branch (`cbabe13`) so `./build` is retained — not a separate lost stash. This is a cleanup break, **not** host8. Do not open `host8`. Do not rewire attach/mux. Do not `--cache-fill` / cmake LLVM. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Three leftover gaps after the zig qemu `faccessat` fix: (1) `RuntimeImagePlan` requires `superhtml` on both triples (HOST-3 miss closed); (2) clangd cache miss stays a documented HOST-7 gap — not a superhtml-class miss; (3) Zig pack `--platform` is host-native on both ISAs (native linux/amd64 CI shape locked in unit tests; Darwin qemu amd64 is not used for Zig). Not attach. Not mux. Not cache-fill.
+
+**Exit**
+
+- [x] Slim packs including superhtml required on both triples; missing dest fail closed (same as ty/RA/phpantom/biome).
+- [x] Full packs (clangd/tsgo/gopls/zls) remain optional. clangd cache miss unchanged.
+- [x] Zig `RecordingDockerPort` / `for_pin_on_host_arch` covers both host ISAs (`linux/amd64` native CI argv; never qemu amd64 when host is arm64). Rust/go/cached still follow the triple.
+- [x] Live `xtask runtime-image` for `x86_64-unknown-linux-musl` includes superhtml.
+
+**Sign-off checklist (HOST-CLEANUP)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `CARGO_TARGET_DIR=target/host-cleanup cargo test -p xtask -- --test-threads=1` (**87 passed**)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **N/A to lower** (xtask excluded); workspace cov not re-run on this docs/image follow-up
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docs only)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (no new shipped ELF; image copies existing dests). Do not run `check-static` on a Darwin Mach-O
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan` / `PackImageCopy` required-slim; `PackBuildPlan` host-arch injection; `XtaskCommand` / `PocArgs` CLI rows kept from `operator-cli`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- Native linux/amd64 CI was **not** re-run in this Darwin session. There is no `.github/` workflow here. The Zig path no longer uses qemu amd64: on a native linux/amd64 host `host_native_docker_platform()` is `linux/amd64` without qemu. Unit tests lock that argv via injected host-arch. Rust/go/cached packs still follow the triple (qemu amd64 on Darwin for x86_64 is OK — those already PASS).
+- clangd cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:<triple>` is still absent. HOST-CLEANUP does not close this. Do not cmake. Do not `--cache-fill`.
+- HOST-CLEANUP live `cargo xtask runtime-image --target x86_64-unknown-linux-musl` on this Darwin host (Docker Desktop). Staging dest is gitignored. Do not commit musl ELFs.
+
+  | platform | triple | tag | image id | notes |
+  |---|---|---|---|---|
+  | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:3e14d4acd2f5c9e813e330a7f99e7e2e438e62fa3871d30da4a8f82970cb15fc` | ~119 MiB; superhtml **present** (8.1 MiB x86-64 static ELF via `docker cp /opt/plsp/engines/superhtml/superhtml`). clangd omitted (HOST-7 cache miss `3623fe661ae35c6c80ac221f14d85be76aa870f1`). `:local` left on native arm64 `sha256:3941096844b9994f876414b9efe0b3f9143823895a9a5f023b22e814a54a59a6` |
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 

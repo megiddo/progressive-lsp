@@ -56,7 +56,7 @@ Children that only implement one WP also get that WP id from [../implementation-
 | `host5` | `DockerRuntime.start`: `docker run -i --rm`, bind-mount `$WS:$WS`, `--prefix /opt/plsp`; poc-ide `StdioLsp` talks to docker stdin/stdout; no local Darwin serve | Mux; full packs |
 | `host6` | poc-ide mux client + `serve --mux` for control on the same stdio. Unix sockets through Docker Desktop forbidden | Full packs |
 | `host7` | Full flavor: clangd, tsgo, gopls, zls. PR CI still must not compile LLVM from scratch | host8 |
-| `host-cleanup` | Superhtml required on both image triples (HOST-3 miss closed); clangd cache miss stays HOST-7; Zig host-native `--platform` locked for both host ISAs | `host8`; attach/mux; `--cache-fill` cmake |
+| `host-cleanup` | Superhtml required on both image triples (HOST-3 miss closed); clangd cache miss stays HOST-7; Zig host-native `--platform` locked for both host ISAs; `operator-cli` (`./build`) merged in | `host8`; attach/mux; `--cache-fill` cmake |
 
 ## Locks
 

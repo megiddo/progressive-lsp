@@ -220,7 +220,14 @@ impl PackBuildPlan {
         zig: Option<&ZigToolchainPin>,
         go: Option<&GoToolchainPin>,
     ) -> Result<Self, String> {
-        Self::for_pin_on_host_arch(root, pin, triple, rust, zig, go, std::env::consts::ARCH)
+        let host_arch = match host_native_docker_platform()? {
+            "linux/amd64" => "x86_64",
+            "linux/arm64" => "aarch64",
+            other => {
+                return Err(format!("unexpected host docker platform {other}"));
+            }
+        };
+        Self::for_pin_on_host_arch(root, pin, triple, rust, zig, go, host_arch)
     }
 
     /// Zig `--platform` is the **host** ISA. Tests inject `x86_64` / `aarch64` so

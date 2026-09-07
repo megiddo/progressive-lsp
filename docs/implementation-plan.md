@@ -69,7 +69,9 @@ main   # after log11 merge
                                                   └── host4  # runtime image
                                                         └── host5  # docker run attach
                                                               └── host6  # mux client
-                                                                    └── host7  # full flavor packs (last host slice)
+                                                                    └── host7  # full flavor packs (last numbered host slice)
+                                                                          └── fix-superhtml-x8664  # zig qemu faccessat
+                                                                                └── host-cleanup  # require superhtml; operator-cli merged; not host8
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -702,7 +704,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| HOST-4.1 | `RuntimeImagePlan` / `PackImageCopy` value objects | host3 | **SIGNED OFF.** Darwin unit tests name the pattern and cover both triples without docker. Tag is `progressive-lsp-runtime:local`. Prefix in image is `/opt/plsp`. Unknown triple / missing dockerfile / missing required core ELF fail closed. `superhtml` × x86_64 may be omitted (HOST-3 miss). |
+| HOST-4.1 | `RuntimeImagePlan` / `PackImageCopy` value objects | host3 | **SIGNED OFF.** Darwin unit tests name the pattern and cover both triples without docker. Tag is `progressive-lsp-runtime:local`. Prefix in image is `/opt/plsp`. Unknown triple / missing dockerfile / missing required core ELF fail closed. HOST-4 allowed omitting `superhtml` × x86_64 (HOST-3 qemu miss). **Superseded by HOST-CLEANUP:** slim including superhtml is required on both triples. |
 | HOST-4.2 | `xtask runtime-image` + scratch Dockerfile + `DockerPort::tag_image` | HOST-4.1 | **SIGNED OFF.** Staging dir `target/runtime-image/<triple>` (not the git tree). `FROM scratch`; `COPY` only. `RecordingDockerPort` is would-have-tagged. Live tag both platforms (orchestrator proof). |
 | HOST-4.3 | Docs sign-off | HOST-4.2 | **SIGNED OFF.** milestones HOST-4; branching `host3 └── host4`; `host5`–`host7` still future. host-deps: runtime image is our artifact; docker CLI remains a host tool; tests still FakeRuntime. |
 
@@ -768,7 +770,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | HOST-7.1 | Full pack pins + `PackKind` `go`/`cached`/`cmake` | host6 | **SIGNED OFF.** 40-hex SHAs; `--pack full` allowed; slim default; unknown fail closed. |
 | HOST-7.2 | Go/Zig/clangd pack jobs + `check-static` | HOST-7.1 | **SIGNED OFF.** gopls/tsgo `CGO_ENABLED=0`; zls Zig musl; clangd cache COPY (miss documented); `--cache-fill` not PR CI. |
 | HOST-7.3 | Optional full packs on `xtask runtime-image` | HOST-7.2 | **SIGNED OFF.** Copy when present; omit as HOST-7 miss. No cargo/LLVM in `docker/runtime.Dockerfile`. |
-| HOST-7.4 | Docs sign-off | HOST-7.3 | **SIGNED OFF.** milestones HOST-7; branching `host6 └── host7`; no host8. host-deps: full packs via Docker/cache; PR CI must not compile LLVM. |
+| HOST-7.4 | Docs sign-off | HOST-7.3 | **SIGNED OFF.** milestones HOST-7; branching `host6 └── host7`; no host8. host-deps: full packs via Docker/cache; PR CI must not compile LLVM. clangd cache miss stays a HOST-7 gap (not closed by host-cleanup). |
 
 **Sign-off checklist (HOST-7)**
 
@@ -780,6 +782,28 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] `check-static` — fixture path in crate tests; live table in milestones
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `GoToolchainPin`, `PackKind` go/cached/cmake, heavy `PackBuildPlan`
+
+## HOST-CLEANUP (`host-cleanup` branch)
+
+**Status: SIGNED OFF** on `host-cleanup`. Parent is `fix-superhtml-x8664` (`59781cf`), stacked on signed-off `host7` (`5815fcd`). `operator-cli` (`a86f8db`) merged into this branch (`cbabe13`) so `./build` is retained — not a separate lost stash. This is a cleanup break, **not** host8. Do not open `host8`. Do not rewire attach/mux. Do not `--cache-fill` / cmake LLVM. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). `RunLog` stays a separate schema from the serve WAL. Allocator-matrix mimalloc placeholders stay.
+
+| ID | Work package | Depends-on | Notes |
+|---|---|---|---|
+| HOST-C.1 | Slim `PackImageCopy` required on both triples (including superhtml × x86_64) | fix-superhtml-x8664 | **SIGNED OFF.** Fail closed if dest missing. HOST-4 omit path deleted. |
+| HOST-C.2 | clangd cache miss stays honest | HOST-C.1 | **SIGNED OFF.** Full packs remain optional. Default `xtask pack` never cmake. `--cache-fill` not this slice. Cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1` still absent. |
+| HOST-C.3 | Zig host-native platform locked for both host ISAs | HOST-C.1 | **SIGNED OFF.** `for_pin_on_host_arch` injects `x86_64` → `linux/amd64` (native CI, no qemu) and `aarch64` → `linux/arm64`. Rust/go/cached still follow the triple. Native linux/amd64 CI was not re-run in this Darwin session. |
+| HOST-C.4 | Docs + live amd64 image with superhtml | HOST-C.1 | **SIGNED OFF.** milestones HOST-CLEANUP; branching `host7 └── fix-superhtml-x8664 └── host-cleanup` (`operator-cli` merged). Live `xtask runtime-image` amd64 includes superhtml. `:local` left on native arm64. |
+
+**Sign-off checklist (HOST-CLEANUP)**
+
+- [x] Exit criteria for this WP met
+- [x] Tests on this branch — `CARGO_TARGET_DIR=target/host-cleanup cargo test -p xtask -- --test-threads=1` (87 passed; see milestones)
+- [x] 95% llvm-cov on crates that exist — **N/A to lower** (xtask excluded); workspace cov not re-run on this docs/image follow-up
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docs only)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (no new shipped ELF; image copies existing dests). Do not run `check-static` on a Darwin Mach-O
+- [x] Docs in this tree updated
+- [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan` / `PackImageCopy` required-slim; `PackBuildPlan` host-arch injection; `XtaskCommand` / `PocArgs` CLI rows kept from `operator-cli`
 
 ## HOST-3 sign-off recap (do not reopen)
 
@@ -827,4 +851,4 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 6. POC orchestrators: pass [poc-ide/agent-context.md](poc-ide/agent-context.md) unchanged to every child.
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
-9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not open `host6` until HOST-5 is signed off. Do not open `host7` until HOST-6 is signed off. `host7` is the last host slice — do not open `host8`. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`. Do not mux client on `host5`. Do not build clangd/tsgo/gopls/zls on `host6`.
+9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host1` until HOST-0 is signed off. Do not open `host2` until HOST-1 is signed off. Do not open `host3` until HOST-2 is signed off. Do not open `host4` until HOST-3 is signed off. Do not open `host5` until HOST-4 is signed off. Do not open `host6` until HOST-5 is signed off. Do not open `host7` until HOST-6 is signed off. `host7` is the last numbered host slice — do not open `host8`. `host-cleanup` stacks on `fix-superhtml-x8664` (on `host7`); `operator-cli` merged into `host-cleanup` so `./build` is retained. Do not implement PackAdapter `Command` spawn on `host0`. Do not build engine packs on `host2`. Do not build the runtime image on `host3`. Do not `docker run` attach on `host4`. Do not mux client on `host5`. Do not build clangd/tsgo/gopls/zls on `host6`.
