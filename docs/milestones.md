@@ -1255,28 +1255,35 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-URI — identity `file:` URIs
 
-**Status: NOT STARTED.** Branch `poc-uri` on `host-cleanup`. Plan: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md).
+**Status: SIGNED OFF** on branch `poc-uri`. Parent is **current `main`** (`host-cleanup` merged; PR #6 / #7). Plan: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md). Do not start `t2-coverage` from this branch.
 
-**Scope:** native and container Open Folder use the same `file:` URIs (identity mount). No rewriter.
+**Scope:** native and container Open Folder use the same `file:` URIs (identity mount). No rewriter. poc-ide `file_uri` wraps core `path_to_file_uri`.
 
 **Out:** T2 heuristics; Java pack extract; runtime image.
 
 **Exit**
 
-- [ ] URI.1 inventory
-- [ ] URI.2 tests (`DockerRunPlan` `-v WS:WS`; `rootUri` = `file_uri(WS)`)
-- [ ] URI.3 no mapper type; any split fixed without a rewriter
+- [x] URI.1 inventory (producers/consumers share `file_uri` / `path_to_file_uri`; table in [poc-tier-plan.md](poc-tier-plan.md))
+- [x] URI.2 tests (`DockerRunPlan` `-v WS:WS`; `rootUri` = `file_uri(WS)` for native + container; rewriter type fail-closed)
+- [x] URI.3 no mapper type; no native vs container split — duplicate poc-ide codec now wraps core. Identity bind-mount is the product.
 
 **Sign-off checklist (POC-URI)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch — `cargo test` scoped; `--test-threads=1`; FakeRuntime only
-- [ ] 95% llvm-cov on crates that changed (ignore xtask / poc-ide `ui.rs` per testing.md)
-- [ ] 80% mutants if a listed crate changed
-- [ ] No `sleep`
-- [ ] `check-static` — N/A (no ELF)
-- [ ] Docs updated
-- [ ] [design-patterns.md](design-patterns.md) if types added
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p poc-ide --lib -- --test-threads=1` (**229 passed**); FakeRuntime / `DockerRunPlan` argv only (no daemon)
+- [x] 95% llvm-cov on crates that changed (ignore xtask / poc-ide `ui.rs` per testing.md) — **96.19%** lines
+- [x] 80% mutants if a listed crate changed — poc-ide in-diff **4 caught / 4 scored (100%)**
+- [x] No `sleep`
+- [x] `check-static` — N/A (no ELF)
+- [x] Docs updated (parent of `poc-uri` = current `main`)
+- [x] [design-patterns.md](design-patterns.md) — `file_uri` / `path_to_file_uri` wrap; no new rewriter type
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests never talk to a Docker daemon.
+- URI.3 found no native vs container `rootUri` split: both attach kinds already used `LspClient::initialize` → `file_uri`. The fix was sharing the core codec (not a mapper).
+- llvm-cov workspace **96.19%** lines (`xtask/` / `main.rs` / `tree-sitter` / `poc-ide/src/ui.rs` ignored). poc-ide `lsp.rs` **96.78%**, `runtime.rs` **99.76%**.
+- Mutants: poc-ide in-diff vs this branch’s URI patch **4/4 (100%)** caught.
 
 ## POC-T2 — heuristic T2 for every v1 language
 

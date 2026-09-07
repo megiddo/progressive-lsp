@@ -50,4 +50,4 @@ This directory is the **source of truth** for the product. Implement from these 
 5. Stock LSP clients must work with stdio only. Do not put FilesSince on `$/` methods in v1 ([lsp-contract.md](lsp-contract.md)).
 6. LOG orchestrators pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. poc-ide `RunLog` is a separate schema.
 7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host8`.
-8. POC-tier orchestrators pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on `host-cleanup`. Plan: [poc-tier-plan.md](poc-tier-plan.md).
+8. POC-tier orchestrators pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on current `main` (`host-cleanup` merged). Plan: [poc-tier-plan.md](poc-tier-plan.md).

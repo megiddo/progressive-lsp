@@ -981,4 +981,24 @@ esac
         let other = DockerRunPlan::new("docker", Path::new("/other")).unwrap();
         assert_ne!(plan, other);
     }
+
+    #[test]
+    fn docker_run_plan_identity_mount_shares_file_uri_workspace() {
+        let ws = Path::new("/Users/me/My Drive/ws");
+        let plan = DockerRunPlan::new("docker", ws).unwrap();
+        let argv = plan.argv();
+        let v = argv.iter().position(|a| a == "-v").expect("-v");
+        let w = argv.iter().position(|a| a == "-w").expect("-w");
+        assert_eq!(argv[v + 1], "/Users/me/My Drive/ws:/Users/me/My Drive/ws");
+        assert_eq!(argv[w + 1], "/Users/me/My Drive/ws");
+        assert_eq!(plan.workspace(), ws);
+        assert_eq!(
+            crate::lsp::file_uri(ws).unwrap(),
+            progressive_lsp_core::path_to_file_uri(ws)
+        );
+        assert!(!argv
+            .iter()
+            .any(|a| a == "/workspace" || a.contains(":/workspace")));
+        assert!(!argv.iter().any(|a| a == "-t"));
+    }
 }

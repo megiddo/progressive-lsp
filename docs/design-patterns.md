@@ -15,7 +15,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `LanguageFactory` | Abstract Factory | Produces grammar id + resolver chain for one language |
 | `ScriptEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai; watch tests do not hard-code Rhai |
 | `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path; `FileId::from_uri` percent-decodes so ingest and resolve share the OS path |
-| `path_to_file_uri` / `path_from_file_uri` | Adapter | Same percent-encoding as poc-ide `file_uri`; spaces and `@` round-trip; incoming `file:` URIs decode before index lookup |
+| `path_to_file_uri` / `path_from_file_uri` | Adapter | Canonical `file:` codec in `progressive-lsp-core`. poc-ide `file_uri` wraps `path_to_file_uri` after an absolute-path check; poc-ide `path_from_file_uri` wraps the core decode after a `file:` scheme check. Spaces and `@` round-trip; incoming `file:` URIs decode before index lookup. No rewriter / mapper type |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
 | `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info`; `PROGRESSIVE_LSP_LOG_LEVEL` is resolved on `LogLevel`, not in the overlay |
@@ -288,7 +288,7 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
 | `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux` only when mux is advertised but not selected; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
-| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX`; same codec as core `path_to_file_uri` |
+| `file_uri` | Adapter | Absolute path → `file:` URI via core `path_to_file_uri`; relative path is `NotAbsolute`. Native and container `LspClient::initialize` both send this `rootUri`. No rewriter |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
 | `RunLog` | Repository | One sqlite file (or `:memory:`) per run; append + query; write failure is `IdeError::Log`, never a panic. Discover rows include `path`, `uri`, `line`, `character`, `location_count` |
 | `RunLogPath` | Value object | `{dir}/poc-ide-{unix_ms}-{pid}.sqlite`; tests inject dir / path |

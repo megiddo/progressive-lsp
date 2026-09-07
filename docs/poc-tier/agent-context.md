@@ -2,7 +2,7 @@
 
 **Pointer-based context.** Every orchestrator and implementer on `poc-uri` → `t3-rest` gets the **same** payload. Do not paste this tree into prompts.
 
-Parent of `poc-uri` is `host-cleanup`. Do not open `host8`. Do not reopen HOST-0–HOST-7 WPs. Do not `git stash`. Do not `git config`. Do not `--no-verify`. Do not force-push `main`. git-branchless (`git sl`). No Graphite.
+Parent of `poc-uri` is **current `main`** (`host-cleanup` merged; PR #6 / #7). Do not stack on the old `host-cleanup` ref. Do not open `host8`. Do not reopen HOST-0–HOST-7 WPs. Do not `git stash`. Do not `git config`. Do not `--no-verify`. Do not force-push `main`. git-branchless (`git sl`). No Graphite.
 
 ## Payload to pass (copy this block)
 
@@ -26,7 +26,7 @@ READ:
   spike/java-t3.md
 MILESTONE: <POC-URI | POC-T2 | POC-JAVA | POC-IMG | POC-REST>
 BRANCH: <poc-uri | t2-coverage | java-t3 | t3-image | t3-rest>
-PARENT_BRANCH: <host-cleanup | poc-uri | t2-coverage | java-t3 | t3-image>
+PARENT_BRANCH: <current main | poc-uri | t2-coverage | java-t3 | t3-image>
 STEPS: the 8-step orchestrator loop in this file
 Pass CONTEXT_POLICY + READ paths + MILESTONE + BRANCH to every child unchanged.
 ```
@@ -36,7 +36,7 @@ Children that implement one WP also get that WP id from [../implementation-plan.
 ## Orchestrator loop
 
 1. Last branch clean. Never stash. Never discard user work.
-2. Stack from signed-off parent only. Confirm `git sl`. Do not branch from `main`.
+2. Stack from signed-off parent only. Confirm `git sl`. `poc-uri` stacks on current `main` (`host-cleanup` already merged). Later slices stack on the signed-off parent branch, not a fresh `main` cut.
 3. Implement that milestone’s WPs only.
 4. Every new type is a row in [../design-patterns.md](../design-patterns.md).
 5. Validate patterns.

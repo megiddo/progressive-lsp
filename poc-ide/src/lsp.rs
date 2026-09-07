@@ -828,31 +828,14 @@ pub fn file_uri(path: &Path) -> Result<String, IdeError> {
     if !path.is_absolute() {
         return Err(IdeError::NotAbsolute(path.to_path_buf()));
     }
-    let raw = path.to_string_lossy();
-    let mut out = String::from("file://");
-    for b in raw.as_bytes() {
-        match *b {
-            b'/' | b'-' | b'_' | b'.' | b'~' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => {
-                out.push(*b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    Ok(out)
+    Ok(progressive_lsp_core::path_to_file_uri(path))
 }
 
 pub fn path_from_file_uri(uri: &str) -> Result<PathBuf, IdeError> {
-    let rest = uri
-        .strip_prefix("file://")
-        .ok_or_else(|| IdeError::lsp(format!("not a file uri: {uri}")))?;
-    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
-    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    let decoded = percent_decode(rest);
-    if decoded.starts_with('/') {
-        Ok(PathBuf::from(decoded))
-    } else {
-        Ok(PathBuf::from(format!("/{decoded}")))
+    if !uri.starts_with("file://") {
+        return Err(IdeError::lsp(format!("not a file uri: {uri}")));
     }
+    Ok(progressive_lsp_core::path_from_file_uri(uri))
 }
 
 pub fn encode_message(body: impl AsRef<[u8]>) -> Vec<u8> {
@@ -998,37 +981,6 @@ fn from_link(link: LocationLink) -> LspLocation {
         range.end.line,
         range.end.character,
     )
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Some(h) = hex_byte(bytes[i + 1], bytes[i + 2]) {
-                out.push(h);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_byte(a: u8, b: u8) -> Option<u8> {
-    Some((hex_val(a)? << 4) | hex_val(b)?)
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn to_vec(value: &Value) -> Result<Vec<u8>, IdeError> {
@@ -1441,6 +1393,7 @@ mod tests {
                 .is_some(),
             "initialize must send processId: {init_params}"
         );
+        assert_eq!(init_params["rootUri"], file_uri(Path::new("/ws")).unwrap());
         assert_eq!(init_params["rootUri"], "file:///ws");
         assert!(
             init_params.get("capabilities").is_some(),
@@ -1452,6 +1405,25 @@ mod tests {
             .sent()
             .iter()
             .all(|c| !c.method.contains("filesSince") && !c.method.starts_with("$/")));
+    }
+
+    #[test]
+    fn initialize_root_uri_equals_file_uri_for_native_and_container_attach() {
+        let ws = Path::new("/Users/me/My Drive/ws");
+        let expected = file_uri(ws).unwrap();
+        assert_eq!(expected, progressive_lsp_core::path_to_file_uri(ws));
+        assert_eq!(expected, "file:///Users/me/My%20Drive/ws");
+
+        let mut native = LspClient::new(scripted_init(None)).with_mode(ServeMode::ControlSocket);
+        native.initialize(ws).unwrap();
+        let native_params = native.into_inner().sent()[0].params.clone();
+        assert_eq!(native_params["rootUri"], expected);
+
+        let mut container = LspClient::new(scripted_init(None)).with_mode(ServeMode::Mux);
+        container.initialize(ws).unwrap();
+        let container_params = container.into_inner().sent()[0].params.clone();
+        assert_eq!(container_params["rootUri"], expected);
+        assert_eq!(native_params["rootUri"], container_params["rootUri"]);
     }
 
     #[test]
@@ -1733,15 +1705,10 @@ mod tests {
             path_from_file_uri("file:///Users/me/My%20Drive/a.rs").unwrap(),
             PathBuf::from("/Users/me/My Drive/a.rs")
         );
-        assert_eq!(percent_decode("%2F"), "/");
-        assert_eq!(percent_decode("%zz"), "%zz");
-        assert_eq!(percent_decode("%2"), "%2");
-        assert_eq!(percent_decode("A%2fb"), "A/b");
-        assert_eq!(hex_val(b'0'), Some(0));
-        assert_eq!(hex_val(b'9'), Some(9));
-        assert_eq!(hex_val(b'a'), Some(10));
-        assert_eq!(hex_val(b'F'), Some(15));
-        assert_eq!(hex_val(b'g'), None);
+        assert_eq!(
+            file_uri(Path::new("/Users/me/My Drive/a.rs")).unwrap(),
+            progressive_lsp_core::path_to_file_uri(Path::new("/Users/me/My Drive/a.rs"))
+        );
         assert_eq!(incremental_edit("abc", "abc"), (0, 3, 0, 3, String::new()));
         assert_eq!(incremental_edit("abc", "aXc"), (0, 1, 0, 2, "X".into()));
         assert_eq!(incremental_edit("", "hi"), (0, 0, 0, 0, "hi".into()));

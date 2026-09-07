@@ -72,11 +72,14 @@ main   # after log11 merge
                                                                     └── host7  # full flavor packs (last numbered host slice)
                                                                           └── fix-superhtml-x8664  # zig qemu faccessat
                                                                                 └── host-cleanup  # require superhtml; operator-cli merged; not host8
-                                                                                      └── poc-uri  # identity file: URIs
-                                                                                            └── t2-coverage
-                                                                                                  └── java-t3
-                                                                                                        └── t3-image
-                                                                                                              └── t3-rest
+                                                                                      # merged to main (PR #6 / #7)
+
+main   # after host-cleanup + Java T3 wiring merge
+  └── poc-uri  # identity file: URIs
+        └── t2-coverage
+              └── java-t3
+                    └── t3-image
+                          └── t3-rest
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -824,13 +827,13 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 
 ## POC tier stack
 
-**Status: DESIGNED.** Master: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md). Parent `host-cleanup`.
+**Status: POC-URI SIGNED OFF.** Master: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md). Parent of `poc-uri` is current `main` (`host-cleanup` merged).
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| URI.1 | Inventory `file:` URI producers/consumers | host-cleanup | Share `file_uri` / `path_to_file_uri`. |
-| URI.2 | Tests: identity mount + same `rootUri` native vs container | URI.1 | No daemon. |
-| URI.3 | Remove any rewriter/split | URI.2 | Do not add a mapper. |
+| URI.1 | Inventory `file:` URI producers/consumers | current `main` | **SIGNED OFF.** Share `file_uri` / `path_to_file_uri`. Table in [poc-tier-plan.md](poc-tier-plan.md). |
+| URI.2 | Tests: identity mount + same `rootUri` native vs container | URI.1 | **SIGNED OFF.** No daemon. Rewriter type fail-closed. |
+| URI.3 | Remove any rewriter/split | URI.2 | **SIGNED OFF.** No mapper. Duplicate poc-ide codec now wraps core. |
 | T2-COV.1 | C / C++ heuristic T2 | POC-URI signed off | `#include`, name/arity. |
 | T2-COV.2 | Rust / Python heuristic T2 | T2-COV.1 | TSG opt-in. |
 | T2-COV.3 | CSS / HTML heuristic T2 | T2-COV.2 | Conformance T2 leaves N/A. |
@@ -906,4 +909,4 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
 9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged. `host7` is the last numbered host slice — do not open `host8`.
-10. POC-tier orchestrators: pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on `host-cleanup`. Do not start `t2-coverage` until POC-URI is signed off. Order: `poc-uri` → `t2-coverage` → `java-t3` → `t3-image` → `t3-rest`. Plan: [poc-tier-plan.md](poc-tier-plan.md).
+10. POC-tier orchestrators: pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on current `main` (`host-cleanup` merged). Do not start `t2-coverage` until POC-URI is signed off. Order: `poc-uri` → `t2-coverage` → `java-t3` → `t3-image` → `t3-rest`. Plan: [poc-tier-plan.md](poc-tier-plan.md).

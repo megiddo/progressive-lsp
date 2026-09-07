@@ -15,7 +15,7 @@ Related: [t2-heuristic-coverage.md](t2-heuristic-coverage.md), [t3-linux-hosts.m
 | No JVM / JDT / Node / CPython / host `php` as our runtime | Unchanged. |
 | C# | T1/T2 ceiling. No csharp-ls pack. |
 | Java first | Live Java T3 before other remaining T3 pack work. |
-| No `host8` | Stack new branches on `host-cleanup`. |
+| No `host8` | Stack `poc-uri` on current `main` (`host-cleanup` merged). Do not open `host8`. |
 | Unit tests | Mocks only. No Docker daemon, registry, or AWS in `cargo test`. |
 
 ## Target (POC)
@@ -36,12 +36,12 @@ C# T3 never. clangd T3 is the last, hardest remaining pack (LLVM).
 | T2 | Landed for Java, C#, JS, TS, PHP, Go, Zig. Missing C, C++, Rust, Python, CSS, HTML. |
 | T3 wiring | Supervisor + packs named. Catalog offers T3 except C#. |
 | T3 live in default container | Some engines already static-build; Java not live; C/C++ clangd cache miss; JS/TS/Go/Zig not in the default slim image. |
-| URIs | Design is identity mount. Treat any Mac vs container URI split as a defect to close first. |
+| URIs | Identity mount signed off (POC-URI). Native and container send the same `file:` URI via `file_uri` → core `path_to_file_uri`. No rewriter. |
 
-## Stack (after `host-cleanup`)
+## Stack (on current `main`; `host-cleanup` merged)
 
 ```text
-host-cleanup
+main               # host-cleanup + Java T3 wiring / freshness (PR #6 / #7)
   └── poc-uri          # POC-URI: identity file: URIs (native == container)
         └── t2-coverage    # POC-T2: heuristic T2 for C/C++/Rust/Python/CSS/HTML
               └── java-t3      # POC-JAVA: live Java T3 both Linux ISAs
@@ -49,7 +49,7 @@ host-cleanup
                           └── t3-rest      # POC-REST: remaining T3 engines in the dogfood image
 ```
 
-Do not start a branch until the parent milestone is signed off. Do not open `host8`.
+Do not start a branch until the parent milestone is signed off. Do not open `host8`. Do not stack `poc-uri` on the old `host-cleanup` ref (that ref lacks PR #7).
 
 ---
 
@@ -67,11 +67,29 @@ Do not start a branch until the parent milestone is signed off. Do not open `hos
 | URI.2 | Tests: `DockerRunPlan` `-v WS:WS -w WS`; initialize `rootUri` equals `file_uri(WS)` for native and container attach. Fail closed if a rewriter type appears. |
 | URI.3 | Fix any split found. Do not add a rewriter to “fix” it. |
 
+**URI.1 inventory (producers / consumers share the core codec)**
+
+| Site | Role | Codec |
+|---|---|---|
+| `progressive-lsp-core::path_to_file_uri` | produce | canonical encode |
+| `progressive-lsp-core::path_from_file_uri` | consume | canonical decode |
+| `FileId::from_uri` | consume | `path_from_file_uri` |
+| `progressive-lsp-index` ingest | produce symbol `uri` | `path_to_file_uri` |
+| `src/serve_host.rs` `root_from_params` / session didOpen | consume | `path_from_file_uri` |
+| `poc-ide::file_uri` | produce initialize / didOpen / discover | wraps `path_to_file_uri` after absolute check |
+| `poc-ide::path_from_file_uri` | consume jump locations | wraps core decode after `file:` check |
+| `LspClient::initialize` (native + container) | produce `rootUri` | `file_uri(WS)` — same function both attach kinds |
+| `DockerRunPlan` | mount identity | `-v $HOST_WS:$HOST_WS -w $HOST_WS` (not a URI type) |
+| Integration harness | produce (IT only) | raw `file://` format — not the unit gate |
+| Resolve TSG / stack-graph | produce opt-in T2 locations | `format!("file://{path}")` — not native vs container |
+
+No `UriRewriter` / `UriMapper` in poc-ide or serve. URI.3 found no native vs container split: both attach kinds already called `LspClient::initialize` → `file_uri`. The defect was a **duplicate codec** in poc-ide; `file_uri` now wraps core. Identity bind-mount is the product. Do not add a rewriter.
+
 **Exit**
 
-- [ ] Native Open Folder and Open Folder in Container send the same `file:` URI for the same absolute path.
-- [ ] No URI mapper type in poc-ide or serve.
-- [ ] Unit tests name `file_uri` / `DockerRunPlan`; no daemon.
+- [x] Native Open Folder and Open Folder in Container send the same `file:` URI for the same absolute path.
+- [x] No URI mapper type in poc-ide or serve.
+- [x] Unit tests name `file_uri` / `DockerRunPlan`; no daemon.
 
 ---
 
@@ -182,17 +200,17 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### Locks still true
 
-- [ ] One serve
-- [ ] No URI rewriter
+- [x] One serve
+- [x] No URI rewriter
 - [ ] No JVM/JDT as Java T3
 - [ ] C# T1/T2 only
 - [ ] aarch64 Java libc is the only static exception
 
 ### POC-URI
 
-- [ ] URI.1 inventory
-- [ ] URI.2 tests
-- [ ] URI.3 fixes
+- [x] URI.1 inventory
+- [x] URI.2 tests
+- [x] URI.3 fixes
 
 ### POC-T2
 
