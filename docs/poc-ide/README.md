@@ -31,16 +31,17 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 
 `poc-ide/` is a workspace member. Library = testable domain. `src/main.rs` = composition root (eframe + `rfd`). Consumers of the server may depend on `progressive-lsp-control`; this sample does.
 
-Supported proof launch (builds `progressive-lsp` first so poc-ide does not spawn a stale binary):
+Supported proof launch (`./build`; `./build help` / `help lsp` / `help ide` / `help run`):
 
 ```text
-cargo xtask poc
-cargo xtask poc -- --folder DIR
-cargo xtask poc -- --folder DIR --container
-cargo xtask poc -- --file PATH
+./build lsp {all|x86_64|aarch64}        # Linux static LSP (controller + backends + image)
+./build ide                             # POC editor binary (does not start it)
+./build run ide                         # start the POC editor
+./build run ide --folder DIR
+./build run ide --folder DIR --container
 ```
 
-`xtask poc` runs `cargo build --bin progressive-lsp`, then `cargo run -p poc-ide` with `PROGRESSIVE_LSP` set to that artifact. Args after `--` are forwarded to poc-ide.
+Omit the architecture after `./build lsp` to print the valid list. `run ide` rebuilds native `progressive-lsp`, then `cargo run -p poc-ide` with `PROGRESSIVE_LSP` set to that artifact. Container mode needs Docker Desktop, `./build lsp <arch>`, and an **absolute** folder path. `./build` is a shell wrapper around `cargo xtask` (no Python/Node).
 
 Bare `cargo run -p poc-ide` is **not** the supported proof launch: it does not rebuild `progressive-lsp`. Spawn of `progressive-lsp serve` still uses (first hit wins): `PROGRESSIVE_LSP` env, `target/{debug,release}/progressive-lsp`, then `progressive-lsp` on `PATH`.
 

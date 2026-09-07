@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use progressive_lsp_engine::{
     binary_name_for_pack, full_pack_names, hex_of, is_heavy_pack, pack_dir, slim_pack_names,
-    stub_pack_bytes, CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK,
+    stub_pack_bytes,
 };
 use progressive_lsp_install::{
     hex_encode, sha256, DistArtifact, DistManifest, Manifest, ManifestArtifact, DIST_PAYLOAD_STUB,
@@ -200,7 +200,10 @@ fn read_allocator_matrix() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use progressive_lsp_engine::{discover_pack, is_pack_stub, PYTHON_PACK, RUST_PACK};
+    use progressive_lsp_engine::{
+        discover_pack, is_pack_stub, CLANGD_PACK, GOPLS_PACK, PYTHON_PACK, RUST_PACK, TSGO_PACK,
+        ZLS_PACK,
+    };
     use progressive_lsp_install::DistManifest;
 
     #[test]

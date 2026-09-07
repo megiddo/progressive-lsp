@@ -9,6 +9,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use crate::check_static;
@@ -69,10 +70,12 @@ impl MuslBuildPlan {
         &self.triple
     }
 
+    #[cfg(test)]
     pub fn docker_platform(&self) -> &str {
         &self.docker_platform
     }
 
+    #[cfg(test)]
     pub fn dockerfile(&self) -> &Path {
         &self.dockerfile
     }
@@ -81,6 +84,7 @@ impl MuslBuildPlan {
         &self.dest
     }
 
+    #[cfg(test)]
     pub fn rust_target(&self) -> &str {
         &self.rust_target
     }
@@ -193,11 +197,13 @@ impl DockerPort for CommandDockerPort {
 }
 
 /// Test double. Records dest/args and writes a fixture ELF — never a Docker daemon.
+#[cfg(test)]
 pub struct RecordingDockerPort {
     dests: Mutex<Vec<PathBuf>>,
     args: Mutex<Vec<Vec<String>>>,
 }
 
+#[cfg(test)]
 impl RecordingDockerPort {
     pub fn new() -> Self {
         Self {
@@ -215,12 +221,14 @@ impl RecordingDockerPort {
     }
 }
 
+#[cfg(test)]
 impl Default for RecordingDockerPort {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 impl DockerPort for RecordingDockerPort {
     fn extract(&self, dest: &Path, _context: &Path, args: &[String]) -> Result<(), String> {
         self.dests

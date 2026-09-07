@@ -7,12 +7,14 @@ use std::process::Command;
 use crate::workspace_root;
 
 /// Value object. Argv after `xtask poc`. Split at `--`; the spawn shell is not unit-tested.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PocArgs {
     Help,
     Run { forwarded: Vec<String> },
 }
 
+#[cfg(test)]
 pub fn run(args: &[String]) -> Result<(), String> {
     match parse_poc_args(args)? {
         PocArgs::Help => {
@@ -25,6 +27,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
 /// Split at the first `--`. Left side is xtask flags (`-h` / `--help` only).
 /// Right side is forwarded to `poc-ide`. Leftover flags without `--` error.
+#[cfg(test)]
 pub fn parse_poc_args(args: &[String]) -> Result<PocArgs, String> {
     let dash = args.iter().position(|a| a == "--");
     let (own, forwarded) = match dash {
@@ -44,28 +47,35 @@ pub fn parse_poc_args(args: &[String]) -> Result<PocArgs, String> {
     Ok(PocArgs::Run { forwarded })
 }
 
+#[cfg(test)]
 pub fn print_poc_help() {
-    eprintln!(
-        "\
-xtask poc [-- <poc-ide args>...]
-  Build progressive-lsp, then cargo run -p poc-ide with PROGRESSIVE_LSP
-  set to that artifact. Args after -- are forwarded to poc-ide.
-
-  cargo xtask poc
-  cargo xtask poc -- --folder DIR
-  cargo xtask poc -- --file PATH
-
-  This is the supported proof launch. Bare `cargo run -p poc-ide` does
-  not rebuild progressive-lsp and may spawn a stale binary.
-"
-    );
+    crate::cli::print_help(crate::cli::HelpTopic::Run);
 }
 
-fn spawn_poc(forwarded: &[String]) -> Result<(), String> {
+fn cargo_bin() -> String {
+    env::var("CARGO").unwrap_or_else(|_| "cargo".into())
+}
+
+/// Nested cargo under `cargo run -p xtask` inherits the jobserver and can
+/// wait forever with no `Compiling` lines. Drop those env vars.
+const NESTED_CARGO_DROP_ENV: &[&str] = &["MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS"];
+
+fn cargo_cmd() -> Command {
+    let mut cmd = Command::new(cargo_bin());
+    for key in NESTED_CARGO_DROP_ENV {
+        cmd.env_remove(*key);
+    }
+    // TTY progress bar suppresses `Compiling` lines. Stream them instead.
+    cmd.env("CARGO_TERM_PROGRESS_WHEN", "never");
+    cmd.env("CARGO_TERM_COLOR", "always");
+    cmd
+}
+
+/// Native `progressive-lsp` for this machine (what poc-ide spawns without `--container`).
+pub(crate) fn build_native_controller() -> Result<(), String> {
     let root = workspace_root();
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    eprintln!("xtask poc: cargo build --bin progressive-lsp");
-    let status = Command::new(&cargo)
+    eprintln!("xtask: cargo build --bin progressive-lsp");
+    let status = cargo_cmd()
         .args(["build", "--bin", "progressive-lsp"])
         .current_dir(&root)
         .status()
@@ -75,12 +85,37 @@ fn spawn_poc(forwarded: &[String]) -> Result<(), String> {
             "cargo build --bin progressive-lsp failed ({status})"
         ));
     }
+    Ok(())
+}
+
+/// POC IDE binary only. Does not start the window.
+pub(crate) fn build_poc_bin() -> Result<(), String> {
+    let root = workspace_root();
+    eprintln!("xtask: cargo build -p poc-ide");
+    let status = cargo_cmd()
+        .args(["build", "-p", "poc-ide"])
+        .current_dir(&root)
+        .status()
+        .map_err(|e| format!("cargo build -p poc-ide: {e}"))?;
+    if !status.success() {
+        return Err(format!("cargo build -p poc-ide failed ({status})"));
+    }
+    Ok(())
+}
+
+pub(crate) fn run_poc_ide(forwarded: &[String]) -> Result<(), String> {
+    spawn_poc(forwarded)
+}
+
+fn spawn_poc(forwarded: &[String]) -> Result<(), String> {
+    let root = workspace_root();
+    build_native_controller()?;
     let artifact = serve_artifact(&root)?;
     eprintln!(
-        "xtask poc: PROGRESSIVE_LSP={} cargo run -p poc-ide",
+        "xtask run: PROGRESSIVE_LSP={} cargo run -p poc-ide",
         artifact.display()
     );
-    let mut cmd = Command::new(&cargo);
+    let mut cmd = cargo_cmd();
     cmd.args(["run", "-p", "poc-ide"])
         .current_dir(&root)
         .env("PROGRESSIVE_LSP", &artifact);
@@ -177,5 +212,14 @@ mod tests {
     fn run_help_does_not_spawn() {
         run(&["--help".into()]).unwrap();
         print_poc_help();
+    }
+
+    #[test]
+    fn nested_cargo_drops_jobserver_env() {
+        assert_eq!(
+            NESTED_CARGO_DROP_ENV,
+            &["MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS"]
+        );
+        let _ = cargo_cmd();
     }
 }

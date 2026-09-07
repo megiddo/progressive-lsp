@@ -59,6 +59,7 @@ pub struct PackPin {
     dockerfile: String,
 }
 
+#[cfg(test)]
 impl PackPin {
     pub fn name(&self) -> &str {
         &self.name
@@ -103,6 +104,7 @@ pub struct RustToolchainPin {
     channel: String,
 }
 
+#[cfg(test)]
 impl RustToolchainPin {
     pub fn channel(&self) -> &str {
         &self.channel
@@ -120,6 +122,7 @@ pub struct ZigToolchainPin {
 }
 
 impl ZigToolchainPin {
+    #[cfg(test)]
     pub fn version(&self) -> &str {
         &self.version
     }
@@ -174,6 +177,7 @@ pub struct GoToolchainPin {
     version: String,
 }
 
+#[cfg(test)]
 impl GoToolchainPin {
     pub fn version(&self) -> &str {
         &self.version
@@ -363,6 +367,7 @@ impl PackBuildPlan {
         &self.pack
     }
 
+    #[cfg(test)]
     pub fn binary(&self) -> &str {
         &self.binary
     }
@@ -371,10 +376,12 @@ impl PackBuildPlan {
         &self.triple
     }
 
+    #[cfg(test)]
     pub fn docker_platform(&self) -> &str {
         &self.docker_platform
     }
 
+    #[cfg(test)]
     pub fn dockerfile(&self) -> &Path {
         &self.dockerfile
     }
@@ -383,14 +390,17 @@ impl PackBuildPlan {
         &self.dest
     }
 
+    #[cfg(test)]
     pub fn rust_target(&self) -> &str {
         &self.rust_target
     }
 
+    #[cfg(test)]
     pub fn pinned_sha(&self) -> &str {
         &self.pinned_sha
     }
 
+    #[cfg(test)]
     pub fn repo(&self) -> &str {
         &self.repo
     }
@@ -403,6 +413,7 @@ impl PackBuildPlan {
         &self.context
     }
 
+    #[cfg(test)]
     pub fn go_package(&self) -> Option<&str> {
         self.go_package.as_deref()
     }

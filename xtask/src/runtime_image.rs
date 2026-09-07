@@ -38,18 +38,22 @@ pub struct PackImageCopy {
 }
 
 impl PackImageCopy {
+    #[cfg(test)]
     pub fn pack(&self) -> &str {
         &self.pack
     }
 
+    #[cfg(test)]
     pub fn binary(&self) -> &str {
         &self.binary
     }
 
+    #[cfg(test)]
     pub fn src(&self) -> &Path {
         &self.src
     }
 
+    #[cfg(test)]
     pub fn required(&self) -> bool {
         self.required
     }
@@ -69,6 +73,8 @@ pub struct RuntimeImagePlan {
     core_dest: PathBuf,
     pack_dests: Vec<PackImageCopy>,
     image_tag: String,
+    /// Image prefix. Tests read via [`Self::prefix`]; production stages under `staging/prefix`.
+    #[cfg_attr(not(test), allow(dead_code))]
     prefix: String,
     staging: PathBuf,
 }
@@ -118,6 +124,7 @@ impl RuntimeImagePlan {
         })
     }
 
+    #[cfg(test)]
     pub fn triple(&self) -> &str {
         &self.triple
     }
@@ -126,14 +133,17 @@ impl RuntimeImagePlan {
         &self.docker_platform
     }
 
+    #[cfg(test)]
     pub fn dockerfile(&self) -> &Path {
         &self.dockerfile
     }
 
+    #[cfg(test)]
     pub fn core_dest(&self) -> &Path {
         &self.core_dest
     }
 
+    #[cfg(test)]
     pub fn pack_dests(&self) -> &[PackImageCopy] {
         &self.pack_dests
     }
@@ -142,10 +152,12 @@ impl RuntimeImagePlan {
         &self.image_tag
     }
 
+    #[cfg(test)]
     pub fn prefix(&self) -> &str {
         &self.prefix
     }
 
+    #[cfg(test)]
     pub fn staging(&self) -> &Path {
         &self.staging
     }
