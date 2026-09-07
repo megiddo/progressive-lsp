@@ -13,5 +13,6 @@ These are notes, not blockers for M0 crate sign-off. Hygiene applies if a spike 
 | [tsgo / gopls](tsgo-gopls.md) | Notes only | `CGO_ENABLED=0`; no Node |
 | [superhtml / zls](superhtml-zls.md) | Notes only | Zig static; degrade without project `zig` |
 | [PHP T3](php-t3.md) | Notes only | PHPantom preferred; static phpactor only if fully static |
+| [Java T3](java-t3.md) | In progress | Graal native-image musl ELF or fail closed; no JDT-LS / JVM runtime |
 
 Do not vendor huge engines in this tree.

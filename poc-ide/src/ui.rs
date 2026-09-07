@@ -740,7 +740,7 @@ impl PocIdeApp {
             self.focused_language(),
             self.lsp_session,
             &self.discover_flight,
-            self.tiers.ingest(),
+            self.tiers.ingest_for_strip(self.lsp_session),
             self.focused_tier(),
             T3HostOffer::from_open(self.host, self.open_mode),
         )
@@ -772,12 +772,8 @@ impl PocIdeApp {
                 }
             }
             StatusModalKind::T3 => {
-                if self.open_mode == OpenMode::Container {
-                    if self.launch_journal.is_empty() {
-                        LaunchJournal::container_plan()
-                    } else {
-                        self.launch_journal.clone()
-                    }
+                if !self.catalog.t3_supported(self.focused_language()) {
+                    LaunchJournal::t3_not_supported()
                 } else if !T3HostOffer::from_open(self.host, self.open_mode).is_offered() {
                     LaunchJournal::native_t3_skipped()
                 } else {
@@ -876,9 +872,6 @@ impl PocIdeApp {
         let journal = self.journal_for_kind(kind);
         let title = match kind {
             StatusModalKind::Container => "Container launch".to_string(),
-            StatusModalKind::T3 if self.open_mode == OpenMode::Container => {
-                "T3 — container host".to_string()
-            }
             _ => format!("{} status", kind.as_str()),
         };
         let mut close = false;

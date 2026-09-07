@@ -4,7 +4,7 @@
 
 progressive-lsp is a language-intelligence server: it parses your project, builds an index, and answers the same LSP questions every modern editor already knows how to ask. It is **not** an IDE, and it is **not** SSH, git, a file tree, or a terminal. Those stay in your editor (or remote-IDE host). This process only does language intelligence.
 
-It aims to support **C, C++, C#, Rust, JavaScript, TypeScript, CSS, HTML, Python, PHP, Java, Go, and Zig**. Java is syntax plus heuristics only — there is no Java language server and no JVM. PHP navigation works out of the box; full types need an optional PHP pack.
+It aims to support **C, C++, C#, Rust, JavaScript, TypeScript, CSS, HTML, Python, PHP, Java, Go, and Zig**. Java types come from an optional **static** Java pack — there is no JVM and no JDT-LS. PHP navigation works out of the box; full types need an optional PHP pack.
 
 You care because the **server is one static Linux binary**. You do not need Node, a JDK, or Python installed to *run* it. Optional engine packs (rust-analyzer, clangd, and friends) add richer types when you want them; without a pack you still get highlighting and navigation at a simpler level.
 
@@ -67,13 +67,13 @@ Cache, logs, and sockets live under the home prefix (`$HOME/.progressivelsp/` or
 
 Packs are optional extras next to the core binary: rust-analyzer, clangd, ty (Python), tsgo, gopls, zls, and similar engines for C#, CSS, HTML, and PHP. A missing pack is not a failure — you still get highlighting and navigation, just without that language’s full type engine.
 
-Java never uses a JVM language server. PHP full types need the PHP pack; without it, go-to-definition and references still work.
+Java uses a statically compiled language server pack, never a JVM. PHP full types need the PHP pack; without it, go-to-definition and references still work.
 
 ## Troubleshooting
 
 - The binary must be a **Linux static** build. On a Mac, run it on remote Linux and speak LSP to that process.
 - The control socket is **optional**. Stock editors only need `serve` on stdio. See [progressive.v1](progressive-v1-api.md) only if you want extra features.
-- Java does **not** need a JDK for the server. Syntax and navigation do not start a JVM.
+- Java does **not** need a JDK for the server. Syntax and navigation do not start a JVM. Typed Java navigation needs the static Java pack.
 - Do not expect tsserver, JDT, pylsp, or other Node/Java/Python language servers. This process is the server; packs are statically compiled engines, not those stacks.
 - Weak go-to-definition usually means that language’s pack is not installed — install it, or keep using the simpler built-in index. The server does **not** fail the request: T2/T1 still answer. Sqlite `operation=resolve` **info** “pack skipped” is once per `(language, package)` — a second go-to-definition does not duplicate that row. An **empty** go-to-definition / implementation / references (zero locations) is an **info** row with extras `location_count=0`, path, line, character, `language_id`, `package_id`, `tier` — not a silent miss. A hit stays **debug**. In poc-ide the same miss shows in the footer, `RunLog`, and the serve WAL (three places; two sqlite schemas).
 - Product logs are a SQLite WAL file under `$PREFIX/log/` named `serve-<unix_ms>-<pid>.sqlite` (plus `-wal` / `-shm` while the process is up). `$PREFIX` is the home from Install (`$HOME/.progressivelsp`, `PROGRESSIVE_LSP_HOME`, or `--prefix`). Override the file with `PROGRESSIVE_LSP_LOG` set to an **absolute** path. Override `[log].level` with `PROGRESSIVE_LSP_LOG_LEVEL` (`error` / `warn` / `info` / `debug` / `trace`; invalid → warn + `info`). Omit both the env and `[log].level` → `info`. If the primary `serve-*.sqlite` is missing after `serve` ran, sqlite **open failed**: look next for `serve-fallback-*.sqlite` in the same `log/` directory, then the temp WAL `progressive-lsp-serve-<unix_ms>-<pid>.sqlite` (`progressive-lsp-serve-*.sqlite`) under the process temp directory. `serve` **stdout** stays JSON-RPC — do not look for logs there. `--help` / usage stay on **stderr**.

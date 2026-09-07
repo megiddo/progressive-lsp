@@ -201,8 +201,8 @@ fn read_allocator_matrix() -> Result<String, String> {
 mod tests {
     use super::*;
     use progressive_lsp_engine::{
-        discover_pack, is_pack_stub, CLANGD_PACK, GOPLS_PACK, PYTHON_PACK, RUST_PACK, TSGO_PACK,
-        ZLS_PACK,
+        discover_pack, is_pack_stub, CLANGD_PACK, GOPLS_PACK, JAVA_PACK, PYTHON_PACK, RUST_PACK,
+        TSGO_PACK, ZLS_PACK,
     };
     use progressive_lsp_install::DistManifest;
 
@@ -213,6 +213,7 @@ mod tests {
         let prefix = progressive_lsp_core::PrefixLayout::from_path(dir.path());
         assert!(discover_pack(&prefix, PYTHON_PACK).is_ok());
         assert!(discover_pack(&prefix, RUST_PACK).is_ok());
+        assert!(discover_pack(&prefix, JAVA_PACK).is_ok());
         assert!(discover_pack(&prefix, CLANGD_PACK).is_err());
         assert!(discover_pack(&prefix, TSGO_PACK).is_err());
         assert!(discover_pack(&prefix, GOPLS_PACK).is_err());

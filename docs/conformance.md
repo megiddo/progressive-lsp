@@ -4,8 +4,8 @@ Per language, per tier pass rates from `fixtures/matrix/` (LATEST+2) plus the
 Darwin T3 reality: pack stubs are not musl ELFs, so T3 is **0%** unless a cell
 is N/A. Numbers are computed by `tests/conformance.rs`. Do not invent 100%s.
 
-C# is T1/T2 only. Java has no T3. Linux CI with real engine packs is the
-place to re-score T3.
+C# is T1/T2 only. Java T3 is a native pack (0% on Darwin stubs; aarch64 may need host libc). Linux CI with real engine packs is the
+place to re-score T3. T2 `N/A` rows below are **pre-T2-COV**; after [t2-heuristic-coverage.md](t2-heuristic-coverage.md) they become scored cells.
 
 | Language | T1 (syntax) | T2 (heuristics) | T3 (types) |
 |---|---|---|---|
@@ -15,7 +15,7 @@ place to re-score T3.
 | css | 3/3 (100%) | N/A (no T2) | 0/1 (0%) |
 | go | 3/3 (100%) | 3/3 (100%) | 0/1 (0%) |
 | html | 3/3 (100%) | N/A (no T2) | 0/1 (0%) |
-| java | 3/3 (100%) | 3/3 (100%) | N/A (no T3 in v1) |
+| java | 3/3 (100%) | 3/3 (100%) | 0/1 (0%) |
 | javascript | 3/3 (100%) | 3/3 (100%) | 0/1 (0%) |
 | php | 3/3 (100%) | 3/3 (100%) | 0/1 (0%) |
 | python | 2/3 (67%) | N/A (optional TSG unused) | 0/1 (0%) |

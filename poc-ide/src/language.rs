@@ -53,7 +53,7 @@ impl LanguageCatalog {
         language_id != "plaintext" && stock_language_ids().contains(&language_id)
     }
 
-    /// Method × min tier × ceiling from the language matrix. Java has no T3 offers.
+    /// Method × min tier × ceiling from the language matrix. Java has T3 offers.
     pub fn discover_offers(&self, language_id: &str) -> &'static [DiscoverOffer] {
         offers_for(language_id)
     }
@@ -70,16 +70,16 @@ impl LanguageCatalog {
         !matches!(language_id, "rust" | "css" | "html" | "plaintext") && self.is_known(language_id)
     }
 
-    /// Java none; C# T1/T2 ceiling; others have a types engine in the matrix.
+    /// C# T1/T2 ceiling; Java and other typed languages have a types engine in the matrix.
     pub fn t3_supported(&self, language_id: &str) -> bool {
-        self.is_known(language_id) && !matches!(language_id, "java" | "csharp")
+        self.is_known(language_id) && language_id != "csharp"
     }
 
     pub fn ceiling(&self, language_id: &str) -> Option<WireTier> {
         if !self.is_known(language_id) {
             return None;
         }
-        if matches!(language_id, "java" | "csharp") {
+        if language_id == "csharp" {
             Some(WireTier::Graph)
         } else {
             Some(WireTier::Types)
@@ -352,8 +352,8 @@ const T1_THEN_T3: &[DiscoverOffer] = &[
 
 fn offers_for(language_id: &str) -> &'static [DiscoverOffer] {
     match language_id {
-        "java" | "csharp" => T1_T2_CEILING,
-        "javascript" | "typescript" | "php" | "go" | "zig" => T2_THEN_T3,
+        "csharp" => T1_T2_CEILING,
+        "java" | "javascript" | "typescript" | "php" | "go" | "zig" => T2_THEN_T3,
         "rust" | "css" | "html" | "python" | "c" | "cpp" => T1_THEN_T3,
         _ => &[],
     }
@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn discover_offer_value_object_java_has_no_t3_csharp_ceiling() {
+    fn discover_offer_value_object_java_t3_csharp_ceiling() {
         let catalog = LanguageCatalog::new();
         assert!(catalog.is_known("java"));
         assert!(catalog.is_known("csharp"));
@@ -555,19 +555,19 @@ mod tests {
         assert!(!catalog.has_t2("html"));
         assert!(!catalog.has_t2("plaintext"));
         assert!(catalog.has_t2("javascript"));
-        assert!(!catalog.t3_supported("java"));
+        assert!(catalog.t3_supported("java"));
         assert!(!catalog.t3_supported("csharp"));
         assert!(catalog.t3_supported("rust"));
         assert!(catalog.t3_supported("python"));
         assert!(!catalog.t3_supported("plaintext"));
-        assert_eq!(catalog.ceiling("java"), Some(WireTier::Graph));
+        assert_eq!(catalog.ceiling("java"), Some(WireTier::Types));
         assert_eq!(catalog.ceiling("csharp"), Some(WireTier::Graph));
         assert_eq!(catalog.ceiling("rust"), Some(WireTier::Types));
         assert_eq!(catalog.ceiling("plaintext"), None);
 
         let java = catalog.discover_offers("java");
         assert_eq!(java.len(), 3);
-        assert!(java.iter().all(|o| o.ceiling() == WireTier::Graph));
+        assert!(java.iter().all(|o| o.ceiling() == WireTier::Types));
         assert!(java.iter().all(|o| !o.is_t3_only()));
         assert_eq!(
             catalog

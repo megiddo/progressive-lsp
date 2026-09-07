@@ -35,9 +35,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /fetch
-RUN git clone "${UPSTREAM_REPO}" src \
-    && cd src \
-    && git checkout --detach "${UPSTREAM_SHA}"
+# Bounded retries: pack-container git clone can hit GitHub :443 timeout.
+RUN set -eux; \
+    n=0; \
+    until git clone "${UPSTREAM_REPO}" src; do \
+      n=$((n+1)); \
+      echo "git clone retry ${n}/3 (${UPSTREAM_REPO})" >&2; \
+      if [ "${n}" -ge 3 ]; then exit 1; fi; \
+      rm -rf src; \
+      sleep 5; \
+    done; \
+    git -C src checkout --detach "${UPSTREAM_SHA}"
 
 # cmake LLVM/clangd — cache-fill path only. Fail closed; do not COPY a dynamic ELF.
 WORKDIR /fetch/src

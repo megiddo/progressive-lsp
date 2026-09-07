@@ -11,7 +11,7 @@ use progressive_lsp_resolve::{
 use crate::adapter::{ChildHandle, ChildIo, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx};
 use crate::capabilities::EngineCapabilities;
 use crate::discovery::{
-    discover_pack_opt, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, PHPANTOM_PACK, PYTHON_PACK,
+    discover_pack_opt, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, JAVA_PACK, PHPANTOM_PACK, PYTHON_PACK,
     SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
 };
 
@@ -94,6 +94,10 @@ impl FakeEngineAdapter {
 
     pub fn zls() -> Self {
         Self::new(ZLS_PACK, LanguageId::new("zig"))
+    }
+
+    pub fn java() -> Self {
+        Self::new(JAVA_PACK, LanguageId::new("java"))
     }
 
     pub fn with_binary(self, binary: EngineBinary) -> Self {

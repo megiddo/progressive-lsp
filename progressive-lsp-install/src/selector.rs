@@ -47,7 +47,7 @@ impl PackSelector for ExplicitPacks {
     }
 }
 
-/// Census → packs (auto). Java has no T3 pack.
+/// Census → packs (auto). Java markers select the static `java` pack. C# has no T3 pack.
 #[derive(Clone, Debug, Default)]
 pub struct CensusSelector;
 
@@ -78,7 +78,9 @@ impl PackSelector for CensusSelector {
         if c.build_zig {
             packs.push(PackId::new("zls"));
         }
-        let _ = c.java_markers;
+        if c.java_markers {
+            packs.push(PackId::new("java"));
+        }
         packs
     }
 }
@@ -119,13 +121,12 @@ mod tests {
             ("go", |c| c.go_mod = true, "gopls"),
             ("gowork", |c| c.go_work = true, "gopls"),
             ("zig", |c| c.build_zig = true, "zls"),
+            ("java", |c| c.java_markers = true, "java"),
         ];
         for (name, set, pack) in cases {
             let got = CensusSelector.select(&probe_with(set));
             assert_eq!(got, vec![PackId::new(*pack)], "{name}");
         }
-        let java_only = CensusSelector.select(&probe_with(|c| c.java_markers = true));
-        assert!(java_only.is_empty(), "Java has no T3 pack");
         let csharp = CensusSelector.select(&probe_with(|c| c.csproj = true));
         assert!(csharp.is_empty(), "C# T1/T2 ceiling: no csharp-ls pack");
     }

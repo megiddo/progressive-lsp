@@ -649,6 +649,7 @@ fn canonical_pack(name: &str) -> &str {
     match name {
         "ty" => "python",
         "rust-analyzer" => "rust",
+        "javacs" => "java",
         other => other,
     }
 }
@@ -1166,6 +1167,8 @@ mod tests {
         assert!(parse_sha256_hex("zz").is_err());
         assert_eq!(canonical_pack("ty"), "python");
         assert_eq!(canonical_pack("python"), "python");
+        assert_eq!(canonical_pack("javacs"), "java");
+        assert_eq!(canonical_pack("java"), "java");
         assert!(
             script_paths_on_chain(&layout, Some(workspace.path()), &Config::empty()).is_empty()
                 || true

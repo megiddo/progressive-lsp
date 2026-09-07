@@ -156,10 +156,7 @@ impl DockerPort for CommandDockerPort {
                 )
             })?;
         if !status.success() {
-            return Err(format!(
-                "docker build failed for {} (exit {status}). CI Linux must produce both musl triples.",
-                dest.display()
-            ));
+            return Err(docker_extract_fail_message(dest, status));
         }
         if !dest.is_file() {
             return Err(format!(
@@ -201,6 +198,7 @@ impl DockerPort for CommandDockerPort {
 pub struct RecordingDockerPort {
     dests: Mutex<Vec<PathBuf>>,
     args: Mutex<Vec<Vec<String>>>,
+    fail_extract: bool,
 }
 
 #[cfg(test)]
@@ -209,6 +207,16 @@ impl RecordingDockerPort {
         Self {
             dests: Mutex::new(Vec::new()),
             args: Mutex::new(Vec::new()),
+            fail_extract: false,
+        }
+    }
+
+    /// Records dest/args, wipes dest (BuildKit-style), returns Err. No daemon.
+    pub fn failing() -> Self {
+        Self {
+            dests: Mutex::new(Vec::new()),
+            args: Mutex::new(Vec::new()),
+            fail_extract: true,
         }
     }
 
@@ -239,6 +247,15 @@ impl DockerPort for RecordingDockerPort {
             .lock()
             .expect("RecordingDockerPort")
             .push(args.to_vec());
+        if self.fail_extract {
+            if dest.is_file() {
+                let _ = fs::remove_file(dest);
+            }
+            return Err(format!(
+                "recording extract failed for {} (no daemon; simulated registry/git fail)",
+                dest.display()
+            ));
+        }
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
@@ -259,6 +276,16 @@ impl DockerPort for RecordingDockerPort {
             .push(args.to_vec());
         Ok(())
     }
+}
+
+fn docker_extract_fail_message(dest: &Path, status: impl std::fmt::Display) -> String {
+    format!(
+        "docker build failed for {} (exit {status}). \
+         Registry 404/500 and git clone timeouts are fetch failures; \
+         a missing or non-static ELF is check-static. \
+         This is not automatically a musl-triple CI gap.",
+        dest.display()
+    )
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -481,5 +508,20 @@ mod tests {
     fn command_docker_port_exists_for_production() {
         let _ = CommandDockerPort;
         let _ = RecordingDockerPort::default();
+        let _ = RecordingDockerPort::failing();
+    }
+
+    #[test]
+    fn docker_extract_fail_is_not_a_musl_triple_ci_gap() {
+        let msg = docker_extract_fail_message(Path::new("/tmp/ty"), "1");
+        assert!(
+            msg.contains("fetch failures") || msg.contains("404/500"),
+            "{msg}"
+        );
+        assert!(
+            !msg.contains("CI Linux must produce both musl triples"),
+            "{msg}"
+        );
+        assert!(msg.contains("check-static"), "{msg}");
     }
 }

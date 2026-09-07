@@ -14,6 +14,7 @@ pub const SUPERHTML_PACK: &str = "superhtml";
 pub const BIOME_PACK: &str = "biome";
 pub const GOPLS_PACK: &str = "gopls";
 pub const ZLS_PACK: &str = "zls";
+pub const JAVA_PACK: &str = "java";
 
 pub const TY_BINARY: &str = "ty";
 pub const RA_BINARY: &str = "rust-analyzer";
@@ -24,6 +25,7 @@ pub const SUPERHTML_BINARY: &str = "superhtml";
 pub const BIOME_BINARY: &str = "biome";
 pub const GOPLS_BINARY: &str = "gopls";
 pub const ZLS_BINARY: &str = "zls";
+pub const JAVA_BINARY: &str = "javacs";
 
 /// Slim default: Java-only / light workspaces. Excludes clangd, tsgo, gopls, zls.
 pub fn slim_pack_names() -> &'static [&'static str] {
@@ -33,6 +35,7 @@ pub fn slim_pack_names() -> &'static [&'static str] {
         PHPANTOM_PACK,
         SUPERHTML_PACK,
         BIOME_PACK,
+        JAVA_PACK,
     ]
 }
 
@@ -44,6 +47,7 @@ pub fn full_pack_names() -> &'static [&'static str] {
         PHPANTOM_PACK,
         SUPERHTML_PACK,
         BIOME_PACK,
+        JAVA_PACK,
         CLANGD_PACK,
         TSGO_PACK,
         GOPLS_PACK,
@@ -70,6 +74,7 @@ pub fn binary_name_for_pack(pack_name: &str) -> Option<&'static str> {
         BIOME_PACK => Some(BIOME_BINARY),
         GOPLS_PACK => Some(GOPLS_BINARY),
         ZLS_PACK => Some(ZLS_BINARY),
+        JAVA_PACK => Some(JAVA_BINARY),
         _ => None,
     }
 }
@@ -181,12 +186,14 @@ mod tests {
         assert_eq!(binary_name_for_pack(BIOME_PACK), Some(BIOME_BINARY));
         assert_eq!(binary_name_for_pack(GOPLS_PACK), Some(GOPLS_BINARY));
         assert_eq!(binary_name_for_pack(ZLS_PACK), Some(ZLS_BINARY));
+        assert_eq!(binary_name_for_pack(JAVA_PACK), Some(JAVA_BINARY));
         assert!(binary_name_for_pack("csharp-ls").is_none());
         assert_eq!(
             pack_dir(&prefix, "python"),
             prefix.engines_dir().join("python")
         );
         assert!(slim_pack_names().contains(&PYTHON_PACK));
+        assert!(slim_pack_names().contains(&JAVA_PACK));
         assert!(!slim_pack_names().contains(&CLANGD_PACK));
         assert!(full_pack_names().contains(&CLANGD_PACK));
         assert!(is_heavy_pack(CLANGD_PACK));

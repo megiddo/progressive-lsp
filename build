@@ -8,7 +8,7 @@ cd "$ROOT"
 usage() {
   cat <<'EOF'
 Usage:
-  ./build lsp {all|x86_64|aarch64}
+  ./build lsp {all|x86_64|aarch64} [--force]
   ./build ide
   ./build run ide
   ./build run ide --folder DIR
@@ -22,6 +22,8 @@ Usage:
 lsp     Linux static language server (musl controller + backends +
         container image progressive-lsp-runtime:local). Needs Docker.
         Architecture is required. Omit it to list valid arches.
+        Rebuilds artifacts whose inputs changed; skips dests that are
+        fresh. --force rebuilds controller, backends, and image.
 
 ide     POC editor + native progressive-lsp. Does not start the window.
 
@@ -33,12 +35,15 @@ EOF
 
 print_lsp_arches() {
   cat <<'EOF'
-usage: ./build lsp {all|x86_64|aarch64}
+usage: ./build lsp {all|x86_64|aarch64} [--force]
 
 Valid architectures:
   all       both Linux musl triples
   x86_64    x86_64-unknown-linux-musl
   aarch64   aarch64-unknown-linux-musl
+
+  --force   rebuild controller, backends, and runtime image even when
+            dest ELFs / image stamp are fresh
 EOF
 }
 
@@ -63,7 +68,7 @@ Start the POC IDE. Stays running until you quit the editor window.
 
 --folder DIR must be an absolute path when using --container
 (bind-mount identity). Container mode needs Docker Desktop and
-./build lsp <arch> first. First T3 proof is Python or PHP source,
+./build lsp <arch> first. First T3 proof is Python, PHP, or Java source,
 not a Darwin Cargo tree.
 EOF
 }
@@ -142,7 +147,8 @@ case "$cmd" in
         exit 0
         ;;
       all|x86_64|aarch64|amd64|arm64|x86_64-unknown-linux-musl|aarch64-unknown-linux-musl)
-        run_xtask lsp "$arch"
+        shift
+        run_xtask lsp "$arch" "$@"
         ;;
       *)
         echo "unknown architecture: $arch" >&2

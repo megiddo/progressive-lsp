@@ -35,7 +35,7 @@ TSG becomes default only if it wins **held-out correctness** and **memory** (RSS
 - **Correctness (stitch):** TSG column is `skip_runtime`, not a win.
 - **Memory / time:** no fair RSS comparison; runtime path is far slower when it panics.
 - **Default:** heuristic. TSG remains an opt-in Strategy (`[t2] java = "stack-graphs"`).
-- Java v1 ceiling unchanged (no JVM). No `third_party/stack-graphs` vendor.
+- Java T2 default unchanged (heuristic). Java T3 is a static pack, not JVM. No `third_party/stack-graphs` vendor.
 
 ## How to re-run
 

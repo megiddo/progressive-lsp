@@ -101,6 +101,15 @@ tag = "0.15.1"
 dockerfile = "docker/engine-pack-zig.Dockerfile"
 
 [[pack]]
+name = "java"
+binary = "javacs"
+repo = "https://github.com/georgewfraser/java-language-server.git"
+sha = "58daaa29a0e2fe22764283607da6801cf8b493b9"
+kind = "graal"
+tag = "0.2.49"
+dockerfile = "docker/engine-pack-graal.Dockerfile"
+
+[[pack]]
 name = "clangd"
 binary = "clangd"
 repo = "https://github.com/llvm/llvm-project.git"

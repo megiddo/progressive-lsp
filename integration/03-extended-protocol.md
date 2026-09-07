@@ -10,7 +10,7 @@ Three is enough. They hit different control-plane interactions.
 
 | ID | Language / pack | Corpus | Why this one |
 |---|---|---|---|
-| P-java | Java, **no** T3 pack | Maven multi-package (junit4 pin or `fixtures/java-multi`) | Ingest + `TierReady` without engines; proves control is not “the clangd API” |
+| P-java | Java, static T3 pack when present (else T1/T2) | Maven multi-package (junit4 pin or `fixtures/java-multi`) | Ingest + `TierReady`; with pack, `syntax` → `types`. Without pack, proves control is not “the clangd API” |
 | P-py | Python + **ty** | Flask pin (same as IT-2) | T3 handoff: `syntax` → `types`; `InstallPacks` / engines dir |
 | P-ts | TypeScript + **tsgo** (oxc T2) | zod or preact pin | Busy tree: WatchBatch + FilesSince overflow/catch-up |
 

@@ -53,4 +53,4 @@ May include: `prefix`, `packs`, `scripts` (paths or names on the merge chain). F
 
 ## Conformance
 
-Per-language, per-tier pass rates: [conformance.md](conformance.md) (generated from `fixtures/matrix/`). A stock client test harness must pass without opening a control socket. C# is T1/T2 only. Java has no T3. T3 is 0% on Darwin stubs; Linux CI with real musl packs is the place to re-score T3.
+Per-language, per-tier pass rates: [conformance.md](conformance.md) (generated from `fixtures/matrix/`). A stock client test harness must pass without opening a control socket. C# is T1/T2 only. Java T3 is a static pack (0% on Darwin stubs). Linux CI with real musl packs is the place to re-score T3.

@@ -19,9 +19,9 @@ pub use capabilities::EngineCapabilities;
 pub use discovery::{
     binary_name_for_pack, discover_pack, discover_pack_opt, full_pack_names, hex_of, is_heavy_pack,
     is_pack_stub, pack_dir, slim_pack_names, stub_pack_bytes, BIOME_BINARY, BIOME_PACK,
-    CLANGD_BINARY, CLANGD_PACK, GOPLS_BINARY, GOPLS_PACK, PHPANTOM_BINARY, PHPANTOM_PACK,
-    PYTHON_PACK, RA_BINARY, RUST_PACK, SUPERHTML_BINARY, SUPERHTML_PACK, TSGO_BINARY, TSGO_PACK,
-    TY_BINARY, ZLS_BINARY, ZLS_PACK,
+    CLANGD_BINARY, CLANGD_PACK, GOPLS_BINARY, GOPLS_PACK, JAVA_BINARY, JAVA_PACK, PHPANTOM_BINARY,
+    PHPANTOM_PACK, PYTHON_PACK, RA_BINARY, RUST_PACK, SUPERHTML_BINARY, SUPERHTML_PACK,
+    TSGO_BINARY, TSGO_PACK, TY_BINARY, ZLS_BINARY, ZLS_PACK,
 };
 pub use fake::{FakeAnswers, FakeEngineAdapter};
 pub use hooks::{
@@ -56,6 +56,7 @@ mod tests {
         let _ = BIOME_PACK;
         let _ = GOPLS_PACK;
         let _ = ZLS_PACK;
+        let _ = JAVA_PACK;
         let _ = TY_BINARY;
         let _ = RA_BINARY;
         let _ = CLANGD_BINARY;
@@ -65,6 +66,7 @@ mod tests {
         let _ = BIOME_BINARY;
         let _ = GOPLS_BINARY;
         let _ = ZLS_BINARY;
+        let _ = JAVA_BINARY;
         let _ = PackAdapter::python();
         let _ = PackAdapter::clangd();
         let _ = ChildIo::lsp_with_stderr_pipe();

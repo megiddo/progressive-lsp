@@ -204,6 +204,15 @@ impl LaunchJournal {
         }
     }
 
+    /// C# T1/T2 ceiling (no csharp-ls pack). Java uses the same T3 journal as other typed languages.
+    pub fn t3_not_supported() -> Self {
+        Self {
+            steps: vec![LaunchStep::new("t3_engine", "T3 types")
+                .with_state(StepState::Skipped)
+                .with_detail("not supported (no T3 pack)")],
+        }
+    }
+
     /// Native Linux T3: one serve, no Docker plan.
     pub fn native_t3_from_wire(
         current: Option<WireTier>,
@@ -709,6 +718,9 @@ mod tests {
         let skipped = LaunchJournal::native_t3_skipped();
         assert_eq!(skipped.steps()[0].state(), StepState::Skipped);
         assert!(skipped.steps()[0].detail().unwrap().contains("Container"));
+        let no_t3 = LaunchJournal::t3_not_supported();
+        assert_eq!(no_t3.steps()[0].state(), StepState::Skipped);
+        assert!(no_t3.steps()[0].detail().unwrap().contains("not supported"));
 
         let t1 = LaunchJournal::t1_from_ingest(IngestState::Running);
         assert_eq!(t1.steps()[0].state(), StepState::Ok);

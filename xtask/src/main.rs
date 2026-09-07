@@ -4,6 +4,7 @@ mod allocator;
 mod check_static;
 mod cli;
 mod dist;
+mod freshness;
 mod musl;
 mod pack;
 mod perf;

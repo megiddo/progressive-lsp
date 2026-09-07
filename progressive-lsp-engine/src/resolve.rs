@@ -84,6 +84,10 @@ impl EngineResolver {
         Self::new(supervisor, LanguageId::new("zig"), PackageId::new("pkg"))
     }
 
+    pub fn java(supervisor: Arc<EngineSupervisor>) -> Self {
+        Self::new(supervisor, LanguageId::new("java"), PackageId::new("pkg"))
+    }
+
     fn package(&self, q: &ResolveQuery) -> PackageId {
         let bound = self.supervisor.package_for_file(&q.file);
         if bound.as_str() == "pkg" {
@@ -235,7 +239,8 @@ mod tests {
             .is_ready());
         assert!(!EngineResolver::biome(empty.clone()).resolve(&q).is_ready());
         assert!(!EngineResolver::gopls(empty.clone()).resolve(&q).is_ready());
-        assert!(!EngineResolver::zls(empty).resolve(&q).is_ready());
+        assert!(!EngineResolver::zls(empty.clone()).resolve(&q).is_ready());
+        assert!(!EngineResolver::java(empty).resolve(&q).is_ready());
     }
 
     #[test]

@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Java LanguageFactory and T1 Tree-sitter resolver (no JDK)"
+description = "Java LanguageFactory T1/T2 + optional static javacs T3 (no JVM at runtime)"
 
 [dependencies]
 progressive-lsp-core.workspace = true
+progressive-lsp-engine.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-resolve = { workspace = true }

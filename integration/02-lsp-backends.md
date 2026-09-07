@@ -2,7 +2,7 @@
 
 **Goal:** Each **language backend** answers standard LSP on a real project tree. Stock client only (stdio JSON-RPC). No protobuf. No `$/` extensions.
 
-“Backend” here means the intelligence path for that language: Tree-sitter ± heuristics ± optional T3 engine pack. Java has no T3 in v1.
+“Backend” here means the intelligence path for that language: Tree-sitter ± heuristics ± optional T3 engine pack. Java T3 is a static pack (not JDT-LS).
 
 ## Shared protocol script
 

@@ -11,12 +11,12 @@ Related: [requirements.md](requirements.md), [architecture.md](architecture.md),
 1. **Intelligence vs presentation.** We own symbols, types, and indexes. The client owns pixels and keybindings.
 2. **Stock LSP always works.** `progressive-lsp serve` on stdio is enough for definition, references, hover, tokens, and disk-watch reindex. No protobuf required.
 3. **Progressive clients opt in.** `progressive.v1` protobuf adds FilesSince, WatchBatch, live config, pack install, tier status. Discovery is LSP `capabilities.experimental.progressiveLsp`.
-4. **Progressive result quality.** Tree-sitter (T1) → heuristics / stack graphs (T2) → full engine (T3). Never block the editor on package ingest.
-5. **Static artifacts only.** No `DT_NEEDED` on files we ship. musl-static is the default flavor; glibc-static is an optional second flavor with the same bar.
+4. **Progressive result quality.** Tree-sitter (T1) → heuristics (T2, every v1 language) → full engine (T3). Never block the editor on package ingest.
+5. **Static artifacts only.** No `DT_NEEDED` on files we ship, except aarch64 Java T3 until Graal fully-static ARM exists ([t3-linux-hosts.md](t3-linux-hosts.md)). musl-static is the default flavor; glibc-static is an optional second flavor with the same bar.
 6. **Few host dependencies.** Core boots with zero language runtimes. Engine packs are optional. Project compilers (`go`, `zig`, `rustc` sysroot) are project artifacts, not our libc.
 7. **Git-safe home.** Writable state lives in `$HOME/.progressivelsp/`. A workspace overlay is optional and shareable; cache/sockets never belong in a git tree.
 8. **Named patterns, tested cores.** Every component maps to [design-patterns.md](design-patterns.md). Coverage and mutants are merge gates ([testing.md](testing.md)).
-9. **Leverage existing engines.** clangd, rust-analyzer, ty, tsgo, gopls, zls, csharp-ls, biome/superhtml, PHPantom — statically compiled. Do not reimplement a compiler when an allowed-language engine exists.
+9. **Leverage existing engines.** clangd, rust-analyzer, ty, tsgo, gopls, zls, csharp-ls, biome/superhtml, PHPantom, Java static pack — statically compiled. Do not reimplement a compiler when an allowed-language engine exists.
 10. **Upstream lag is a matrix, not hope.** LATEST + two prior language versions, pinned grammars/engines, fixtures, degrade instead of panic ([language-matrix.md](language-matrix.md)).
 
 ## Anti-goals
@@ -28,7 +28,7 @@ Related: [requirements.md](requirements.md), [architecture.md](architecture.md),
 | Dynamic linking of our ELFs | The painful solution already exists. |
 | `$/` JSON-RPC for FilesSince / pack install in v1 | Legal LSP extension, nonstandard *use*; stock clients ignore it anyway. |
 | Scripts that implement go-to-definition | Resolver chain only. |
-| Java T3 via JDT-LS | JVM forbidden. Java is T1/T2 in v1. |
+| Java T3 via JDT-LS / a JVM at runtime | JVM forbidden as our runtime. Java T3 is Graal native-image of a javac-based LS (x86_64 fully static; aarch64 may need host libc). |
 | Host `php` on PATH as T3 | Someone else’s dynamic binary. |
 | Collaboration, CRDTs, in-product agents | Out of scope. |
 

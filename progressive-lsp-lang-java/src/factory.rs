@@ -1,8 +1,9 @@
-//! Java LanguageFactory. Produces grammar id + T1/T2 resolver chain.
+//! Java LanguageFactory. T3 EngineResolver when supervisor ready; T2 then T1.
 
 use std::sync::Arc;
 
-use progressive_lsp_core::{LanguageId, T2Backend};
+use progressive_lsp_core::{LanguageId, PackageId, T2Backend};
+use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
     GraphIndex, ResolverChain, SymbolIndex, T2Strategy, TreeSitterResolver,
@@ -15,6 +16,7 @@ pub struct JavaLanguageFactory {
     index: Option<Arc<dyn SymbolIndex>>,
     graph: Option<Arc<dyn GraphIndex>>,
     t2: T2Strategy,
+    supervisor: Option<Arc<EngineSupervisor>>,
 }
 
 impl JavaLanguageFactory {
@@ -23,6 +25,7 @@ impl JavaLanguageFactory {
             index: None,
             graph: None,
             t2: T2Strategy::default_heuristic(),
+            supervisor: None,
         }
     }
 
@@ -31,6 +34,7 @@ impl JavaLanguageFactory {
             index: Some(index),
             graph: None,
             t2: T2Strategy::default_heuristic(),
+            supervisor: None,
         }
     }
 
@@ -39,7 +43,13 @@ impl JavaLanguageFactory {
             index: Some(graph.clone()),
             graph: Some(graph),
             t2: T2Strategy::default_heuristic(),
+            supervisor: None,
         }
+    }
+
+    pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
     }
 
     pub fn with_t2(mut self, t2: T2Strategy) -> Self {
@@ -65,6 +75,16 @@ impl JavaLanguageFactory {
             Box::new(TreeSitterResolver::new(graph)),
         ])
     }
+
+    fn t3_resolver(&self) -> Option<Box<dyn progressive_lsp_resolve::Resolver>> {
+        self.supervisor.as_ref().map(|s| {
+            Box::new(EngineResolver::new(
+                s.clone(),
+                language_id(),
+                PackageId::new("pkg"),
+            )) as Box<dyn progressive_lsp_resolve::Resolver>
+        })
+    }
 }
 
 impl Default for JavaLanguageFactory {
@@ -84,10 +104,18 @@ impl LanguageFactory for JavaLanguageFactory {
 
     fn resolver_chain(&self) -> ResolverChain {
         if let Some(g) = &self.graph {
-            return self.bind_t2(g.clone());
+            return ResolverChain::with_tiers(
+                self.t3_resolver(),
+                Some(self.t2.build(g.clone())),
+                Box::new(TreeSitterResolver::new(g.clone())),
+            );
         }
         match &self.index {
-            Some(idx) => self.bind(idx.clone()),
+            Some(idx) => ResolverChain::with_tiers(
+                self.t3_resolver(),
+                None,
+                Box::new(TreeSitterResolver::new(idx.clone())),
+            ),
             None => ResolverChain::empty(),
         }
     }
@@ -161,5 +189,58 @@ mod tests {
             ResolveOutcome::Ready(r) => assert_eq!(r.locations[0].uri, "file:///injected"),
             ResolveOutcome::NotReady => panic!("injected T2"),
         }
+    }
+
+    #[test]
+    fn java_t3_when_fake_engine_ready_else_t2() {
+        use progressive_lsp_core::{FakeClock, FileId, PrefixLayout, Tier};
+        use progressive_lsp_engine::{
+            EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind,
+        };
+        use progressive_lsp_index::{IndexService, SharedIndex};
+        use progressive_lsp_resolve::{
+            Position, QueryKind, ResolveOutcome, ResolveQuery, Resolver,
+        };
+        use std::path::PathBuf;
+
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let tmp = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(tmp.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = FakeEngineAdapter::java();
+        fake.set_answers(FakeEngineAdapter::typed_fixture("App", "file:///App.java"));
+        fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
+        let fake = fake.with_binary(EngineBinary {
+            pack_name: "java".into(),
+            path: PathBuf::from("/p/javacs"),
+            sha256: [0; 32],
+        });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        sup.try_spawn(
+            "java",
+            &LanguageId::new("java"),
+            &PackageId::new("pkg"),
+            PathBuf::from("/ws").as_path(),
+        )
+        .unwrap();
+        let factory =
+            JavaLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())))
+                .with_supervisor(Arc::new(sup));
+        assert_eq!(factory.resolver_chain().len(), 3);
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("Main.java"),
+            Position::default(),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Types);
+                assert!(r.locations.iter().any(|l| l.uri.contains("App.java")));
+            }
+            other => panic!("{other:?}"),
+        }
+        let t2_only =
+            JavaLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())));
+        assert_eq!(t2_only.resolver_chain().len(), 2);
     }
 }

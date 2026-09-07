@@ -248,7 +248,7 @@ These strings match `Location.data.tier` on stock LSP results.
 
 **Success / error.** `code == 0` — `rows` are current. `code != 0` — ignore `rows`.
 
-**Relates to.** `TierReady` (push when a package upgrades), `IndexStatus`, LSP `workDoneProgress`, `Location.data.tier`. Java stays at syntax/graph — there is no types engine. PHP reaches `types` only if the PHP pack is installed.
+**Relates to.** `TierReady` (push when a package upgrades), `IndexStatus`, LSP `workDoneProgress`, `Location.data.tier`. Java reaches `types` only if the static Java pack is installed. PHP reaches `types` only if the PHP pack is installed. C# stays at syntax/graph.
 
 ### TierReady (push)
 

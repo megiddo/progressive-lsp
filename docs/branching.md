@@ -84,6 +84,11 @@ main   # after log11 merge
                                                                     └── host7  # full flavor packs (last numbered host slice)
                                                                           └── fix-superhtml-x8664  # zig qemu faccessat
                                                                                 └── host-cleanup  # require superhtml; operator-cli merged; not host8
+                                                                                      └── poc-uri
+                                                                                            └── t2-coverage
+                                                                                                  └── java-t3
+                                                                                                        └── t3-image
+                                                                                                              └── t3-rest
 ```
 
 ## Rules
@@ -97,4 +102,4 @@ main   # after log11 merge
 
 ## Suggested branch names
 
-`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` signed off; `log5`–`log11` stacked on `log4` (current `main`, not `poc-no-console`). POC-proof: `poc-proof-log` → `poc-no-stall` signed off. Host stack: `host0` on `poc-no-stall`; `host1` on `host0`; `host2` on `host1`; `host3` on `host2`; `host4` on `host3`; `host5` on `host4`; `host6` on `host5`; `host7` stacked on `host6` (last numbered host slice). `fix-superhtml-x8664` stacks on `host7`; `host-cleanup` stacks on `fix-superhtml-x8664`. `operator-cli` (`a86f8db`) merged into `host-cleanup` (`cbabe13`) so `./build` is retained — not a separate lost stash. Do not open a follow-on host8. Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.
+`docs-0`, `m0`–`m6` as above (v1). Post-dev: `pd0`–`pd4` stacked on `main` (merged). POC IDE: `ide0`–`ide5` stacked on current `main`. Logging: `log0`–`log4` signed off; `log5`–`log11` stacked on `log4` (current `main`, not `poc-no-console`). POC-proof: `poc-proof-log` → `poc-no-stall` signed off. Host stack: `host0` on `poc-no-stall`; `host1` on `host0`; `host2` on `host1`; `host3` on `host2`; `host4` on `host3`; `host5` on `host4`; `host6` on `host5`; `host7` stacked on `host6` (last numbered host slice). `fix-superhtml-x8664` stacks on `host7`; `host-cleanup` stacks on `fix-superhtml-x8664`. POC tier: `poc-uri` → `t2-coverage` → `java-t3` → `t3-image` → `t3-rest` on `host-cleanup` ([poc-tier-plan.md](poc-tier-plan.md)). `operator-cli` merged into `host-cleanup` so `./build` is retained. Do not open `host8`. Feature slices inside a milestone may be stacked on that milestone (`ide1-tree`, `ide1-layout`) but must merge back to `ide1` before `ide2` starts.

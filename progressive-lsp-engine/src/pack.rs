@@ -10,7 +10,7 @@ use crate::adapter::{
     SpawnPort,
 };
 use crate::discovery::{
-    discover_pack_opt, is_pack_stub, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, PHPANTOM_PACK,
+    discover_pack_opt, is_pack_stub, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, JAVA_PACK, PHPANTOM_PACK,
     PYTHON_PACK, RUST_PACK, SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
 };
 
@@ -81,6 +81,10 @@ impl PackAdapter {
 
     pub fn zls() -> Self {
         Self::new(ZLS_PACK, LanguageId::new("zig"))
+    }
+
+    pub fn java() -> Self {
+        Self::new(JAVA_PACK, LanguageId::new("java"))
     }
 }
 
@@ -182,6 +186,8 @@ mod tests {
         assert_eq!(PackAdapter::biome().language_id().as_str(), "css");
         assert_eq!(PackAdapter::gopls().language_id().as_str(), "go");
         assert_eq!(PackAdapter::zls().language_id().as_str(), "zig");
+        assert_eq!(PackAdapter::java().language_id().as_str(), "java");
+        assert_eq!(PackAdapter::java().pack_name(), JAVA_PACK);
         assert!(PackAdapter::new("phpantom", LanguageId::new("php"))
             .extra_languages()
             .is_empty());
