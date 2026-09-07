@@ -58,9 +58,7 @@ impl WorkspaceSource for DirectoryAdapter {
         }
         let mut model = WorkspaceModel::new("directory", root.to_path_buf());
         let mut pkg = PackageEntry::new(
-            root.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("root"),
+            root.file_name().and_then(|s| s.to_str()).unwrap_or("root"),
             root.to_path_buf(),
         );
         let mut roots = Vec::new();
@@ -94,7 +92,9 @@ mod tests {
         assert_eq!(model.kind, "directory");
         assert_eq!(model.packages.len(), 1);
         let roots = &model.packages[0].source_roots;
-        assert!(roots.iter().any(|r| r.ends_with("src/main/java") || r.ends_with("java")));
+        assert!(roots
+            .iter()
+            .any(|r| r.ends_with("src/main/java") || r.ends_with("java")));
         assert_eq!(DirectoryAdapter::collect_java_files(dir.path()).len(), 1);
     }
 
@@ -119,7 +119,10 @@ mod tests {
         let files = DirectoryAdapter::collect_java_files(dir.path());
         assert_eq!(files.len(), 1);
         let model = DirectoryAdapter.detect(dir.path()).unwrap();
-        assert!(model.packages[0].source_roots.iter().any(|r| r.ends_with("src")));
+        assert!(model.packages[0]
+            .source_roots
+            .iter()
+            .any(|r| r.ends_with("src")));
     }
 
     #[test]

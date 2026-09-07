@@ -20,9 +20,7 @@ pub enum DecodeOutcome {
 }
 
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, CodecError> {
-    let len = u32::try_from(payload.len()).map_err(|_| {
-        CodecError::PayloadTooLarge(u32::MAX)
-    })?;
+    let len = u32::try_from(payload.len()).map_err(|_| CodecError::PayloadTooLarge(u32::MAX))?;
     if len > MAX_PAYLOAD_BYTES {
         return Err(CodecError::PayloadTooLarge(len));
     }

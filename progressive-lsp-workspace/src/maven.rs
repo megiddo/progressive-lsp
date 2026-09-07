@@ -48,8 +48,12 @@ fn xml_tag(src: &str, tag: &str) -> Option<String> {
 fn package_from_pom(dir: &Path) -> Option<PackageEntry> {
     let pom = dir.join("pom.xml");
     let text = std::fs::read_to_string(&pom).ok()?;
-    let id = MavenAdapter::parse_artifact_id(&text)
-        .unwrap_or_else(|| dir.file_name().and_then(|s| s.to_str()).unwrap_or("maven").into());
+    let id = MavenAdapter::parse_artifact_id(&text).unwrap_or_else(|| {
+        dir.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("maven")
+            .into()
+    });
     let src = dir.join("src/main/java");
     Some(PackageEntry::new(id, dir.to_path_buf()).with_source_root(src))
 }

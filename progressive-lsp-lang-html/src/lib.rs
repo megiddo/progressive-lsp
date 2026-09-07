@@ -130,8 +130,18 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
     }
 }
 
-fn make(file: &FileId, uri: &str, name: &str, line: u32, col: u32, kind: SymbolKind) -> IndexedSymbol {
-    let range = Range::new(Position::new(line, col), Position::new(line, col + name.len() as u32));
+fn make(
+    file: &FileId,
+    uri: &str,
+    name: &str,
+    line: u32,
+    col: u32,
+    kind: SymbolKind,
+) -> IndexedSymbol {
+    let range = Range::new(
+        Position::new(line, col),
+        Position::new(line, col + name.len() as u32),
+    );
     IndexedSymbol {
         file: file.clone(),
         uri: uri.to_string(),
@@ -183,7 +193,11 @@ fn encode(toks: &[(u32, u32, u32, u32)]) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in toks {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -214,17 +228,28 @@ mod tests {
         let tree = p.parse(src, None).unwrap();
         let file = FileId::new("a.html");
         let syms = HtmlIndexer.extract(&file, "file:///a.html", src, &tree);
-        assert!(syms.iter().any(|s| s.name == "div" && s.kind == SymbolKind::Class));
-        assert!(syms.iter().any(|s| s.name == "span" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "div" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "span" && s.kind == SymbolKind::Class));
         assert!(syms.iter().any(|s| s.name == "main"));
-        assert!(syms.iter().any(|s| s.name == "id" && s.kind == SymbolKind::Field));
-        assert!(syms.iter().any(|s| s.name.contains("box") || s.name.contains("extra") || s.name == "class"));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "id" && s.kind == SymbolKind::Field));
+        assert!(syms
+            .iter()
+            .any(|s| s.name.contains("box") || s.name.contains("extra") || s.name == "class"));
         assert!(syms.iter().all(|s| !s.name.is_empty()));
         assert_eq!(
             encode(&[(0, 1, 3, 2), (0, 8, 4, 8)]),
             vec![0, 1, 3, 2, 0, 0, 7, 4, 8, 0]
         );
-        assert_eq!(encode(&[(0, 1, 2, 2), (1, 0, 3, 8)]), vec![0, 1, 2, 2, 0, 1, 0, 3, 8, 0]);
+        assert_eq!(
+            encode(&[(0, 1, 2, 2), (1, 0, 3, 8)]),
+            vec![0, 1, 2, 2, 0, 1, 0, 3, 8, 0]
+        );
         let toks = tokens_from_tree(src, &tree);
         assert!(!toks.is_empty());
         assert_eq!(toks.len() % 5, 0);
@@ -287,8 +312,9 @@ mod tests {
             PathBuf::from("/ws").as_path(),
         )
         .unwrap();
-        let factory = HtmlLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
-            .with_supervisor(Arc::new(sup));
+        let factory =
+            HtmlLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
+                .with_supervisor(Arc::new(sup));
         assert_eq!(factory.resolver_chain().len(), 2);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("a.html"),

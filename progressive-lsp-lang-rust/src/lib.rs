@@ -174,7 +174,10 @@ impl LanguageFactory for RustLanguageFactory {
                 ResolverChain::with_tiers(
                     t3,
                     None,
-                    Box::new(RustT1Resolver::new(TreeSitterResolver::new(g.clone()), note)),
+                    Box::new(RustT1Resolver::new(
+                        TreeSitterResolver::new(g.clone()),
+                        note,
+                    )),
                 )
             }
             None => ResolverChain::empty(),
@@ -210,8 +213,14 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -234,7 +243,11 @@ pub fn tokens_from_tree(source: &str, tree: &Tree) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in &raw {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -322,15 +335,25 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("sysroot/lib/rustlib")).unwrap();
         assert!(detect_sysroot(dir.path()).is_some());
 
-        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"greet\"\n").unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"greet\"\n",
+        )
+        .unwrap();
         let greet = dir.path().join("greet.rs");
         let main = dir.path().join("main.rs");
-        std::fs::write(&greet, "struct Point { x: i32 }\nfn greet(name: &str) -> &str { name }\n").unwrap();
+        std::fs::write(
+            &greet,
+            "struct Point { x: i32 }\nfn greet(name: &str) -> &str { name }\n",
+        )
+        .unwrap();
         std::fs::write(&main, "fn run() { greet(\"x\"); }\n").unwrap();
         assert_eq!(CargoTomlAdapter.detect(dir.path()).unwrap().kind, "cargo");
         let mut svc = IndexService::new();
         svc.ingest_package(
-            &PackageIngest::new("greet", "rust").with_file(&greet).with_file(&main),
+            &PackageIngest::new("greet", "rust")
+                .with_file(&greet)
+                .with_file(&main),
             &RustIndexer,
         );
         let src = std::fs::read_to_string(&main).unwrap();
@@ -351,7 +374,9 @@ mod tests {
             &greet_tree,
         );
         assert!(syms.iter().any(|s| s.name == "greet"));
-        assert!(syms.iter().any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
         let shared = SharedIndex::new(svc);
         let factory = RustLanguageFactory::with_graph(Arc::new(shared));
         assert_eq!(factory.grammar_id(), "tree-sitter-rust");
@@ -364,7 +389,10 @@ mod tests {
             ResolveOutcome::Ready(r) => {
                 assert_eq!(r.tier, Tier::Syntax);
                 assert!(r.locations.iter().any(|l| l.uri.contains("greet.rs")));
-                assert!(r.hover.is_none(), "definition must not take the hover-note path");
+                assert!(
+                    r.hover.is_none(),
+                    "definition must not take the hover-note path"
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -388,7 +416,10 @@ mod tests {
         let prefix = PrefixLayout::from_path(tmp.path());
         prefix.ensure_dirs().unwrap();
         let fake = FakeEngineAdapter::rust_analyzer();
-        fake.set_answers(FakeEngineAdapter::typed_fixture("greet", "file:///greet.rs"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "greet",
+            "file:///greet.rs",
+        ));
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         let fake = fake.with_binary(EngineBinary {
             pack_name: "rust".into(),
@@ -459,7 +490,10 @@ mod tests {
         let f = dir.path().join("lib.rs");
         std::fs::write(&f, "fn greet() {}\n").unwrap();
         let mut svc = IndexService::new();
-        svc.ingest_package(&PackageIngest::new("pkg", "rust").with_file(&f), &RustIndexer);
+        svc.ingest_package(
+            &PackageIngest::new("pkg", "rust").with_file(&f),
+            &RustIndexer,
+        );
         let factory = RustLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)))
             .with_supervisor(Arc::new(sup))
             .with_pack(true)

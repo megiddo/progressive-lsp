@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use progressive_lsp_control::ControlServer;
 use progressive_lsp_core::{
-    apply_worktree_excludes, ClockPort, Config, InstallError, LogComponent, LogPort, LogScope,
-    MemoryLog, NeverFailLog, PrefixLayout, SystemClock,
+    apply_worktree_excludes, ClockPort, Config, InstallError, LevelFilter, LogComponent, LogLevel,
+    LogPort, LogScope, MemoryLog, NeverFailLog, PrefixLayout, SystemClock, ENV_LOG_LEVEL,
 };
 use progressive_lsp_engine::{
     binary_name_for_pack, stub_pack_bytes, EngineSupervisor, PackAdapter,
@@ -18,8 +18,8 @@ use progressive_lsp_install::{
     PackSelector,
 };
 use progressive_lsp_log::{
-    CliUsageAdapter, LogCrateBridge, LogOpenPlan, ServeLogPath, SqliteLogRepository,
-    StderrEmitAdapter, TracingBridge,
+    CliUsageAdapter, ConfigWarnAdapter, LogCrateBridge, LogOpenPlan, ServeLogPath,
+    SqliteLogRepository, StderrEmitAdapter, TracingBridge,
 };
 use progressive_lsp_plugin::PluginRegistry;
 use progressive_lsp_protocol::LspFacade;
@@ -268,18 +268,40 @@ fn wire_process_log(
     Arc<dyn LogPort>,
     Option<Arc<NeverFailLog<SqliteLogRepository>>>,
 ) {
+    wire_process_log_in(layout, mem, std::env::var_os(ENV_LOG_LEVEL))
+}
+
+fn wire_process_log_in(
+    layout: &PrefixLayout,
+    mem: MemoryLog,
+    env_level: Option<OsString>,
+) -> (
+    Arc<dyn LogPort>,
+    Option<Arc<NeverFailLog<SqliteLogRepository>>>,
+) {
     let clock = Arc::new(SystemClock);
     let unix_ms = clock.unix_ms();
     let pid = std::process::id();
-    let config_path = std::fs::read_to_string(layout.config_path())
+    let load = std::fs::read_to_string(layout.config_path())
         .ok()
-        .and_then(|src| Config::from_toml(&src).ok())
-        .and_then(|load| load.config.log_path);
+        .and_then(|src| Config::from_toml(&src).ok());
+    let config_path = load.as_ref().and_then(|l| l.config.log_path.clone());
+    let config_level = load
+        .as_ref()
+        .map(|l| l.config.log_level)
+        .unwrap_or(LogLevel::Info);
     let named =
         ServeLogPath::from_env_or_config(layout.log_dir(), unix_ms, pid, config_path.as_deref());
-    LogOpenPlan::new(layout.log_dir(), std::env::temp_dir(), unix_ms, pid, clock)
-        .with_primary(named)
-        .execute(mem)
+    let (inner, durable) =
+        LogOpenPlan::new(layout.log_dir(), std::env::temp_dir(), unix_ms, pid, clock)
+            .with_primary(named)
+            .execute(mem);
+    let (min, warning) = LogLevel::from_env_or_config(env_level.as_deref(), config_level);
+    if let Some(msg) = warning {
+        ConfigWarnAdapter::new(Arc::clone(&inner)).emit_warnings(&[msg]);
+    }
+    let log: Arc<dyn LogPort> = Arc::new(LevelFilter::new(inner, min));
+    (log, durable)
 }
 
 pub fn serve_with_io_and_log<R, W>(
@@ -957,10 +979,24 @@ mod tests {
         out
     }
 
+    fn take_log_level_env() -> Option<OsString> {
+        let old = std::env::var_os(ENV_LOG_LEVEL);
+        std::env::remove_var(ENV_LOG_LEVEL);
+        old
+    }
+
+    fn restore_log_level_env(old: Option<OsString>) {
+        match old {
+            Some(v) => std::env::set_var(ENV_LOG_LEVEL, v),
+            None => std::env::remove_var(ENV_LOG_LEVEL),
+        }
+    }
+
     #[test]
     fn serve_handshake_writes_one_wal_sqlite_log_repository() {
         let _g = ENV_LOG.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        let old_level = take_log_level_env();
         std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH);
         let prefix = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
@@ -993,6 +1029,7 @@ mod tests {
             Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
             None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
         }
+        restore_log_level_env(old_level);
     }
 
     #[test]
@@ -1030,6 +1067,7 @@ mod tests {
         std::fs::write(&blocker, b"x").unwrap();
         let wal = blocker.join("serve.sqlite");
         let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        let old_level = take_log_level_env();
         std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, &wal);
         let result = serve_with_io(
             ServeOpts {
@@ -1045,6 +1083,7 @@ mod tests {
             Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
             None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
         }
+        restore_log_level_env(old_level);
         result.unwrap();
         assert!(!wal.exists());
         let files = sqlite_files(&prefix.path().join("log"));
@@ -1078,6 +1117,7 @@ mod tests {
         let blocked = prefix.path().join("blocked-primary");
         std::fs::create_dir_all(&blocked).unwrap();
         let old = std::env::var(progressive_lsp_log::ENV_LOG_PATH).ok();
+        let old_level = take_log_level_env();
         std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, &blocked);
         let mem = MemoryLog::new();
         mem.info("bootstrap-ring");
@@ -1086,6 +1126,7 @@ mod tests {
             Some(v) => std::env::set_var(progressive_lsp_log::ENV_LOG_PATH, v),
             None => std::env::remove_var(progressive_lsp_log::ENV_LOG_PATH),
         }
+        restore_log_level_env(old_level);
         let durable = durable.expect("LogOpenPlan fallback");
         let path = durable.inner().path().to_path_buf();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -1105,6 +1146,92 @@ mod tests {
         );
         drop(log);
         drop(durable);
+    }
+
+    #[test]
+    fn wire_process_log_in_default_min_is_info_filter() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let (log, durable) = wire_process_log_in(&layout, MemoryLog::new(), None);
+        log.debug("hidden-debug");
+        log.info("kept-info");
+        let durable = durable.expect("WAL");
+        durable.inner().flush();
+        let msgs = progressive_lsp_log::actor::read_messages(durable.inner().path()).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("kept-info")), "{msgs:?}");
+        assert!(!msgs.iter().any(|m| m.contains("hidden-debug")), "{msgs:?}");
+    }
+
+    #[test]
+    fn wire_process_log_in_env_debug_keeps_debug() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let (log, durable) =
+            wire_process_log_in(&layout, MemoryLog::new(), Some(OsString::from("debug")));
+        log.debug("env-debug");
+        let durable = durable.expect("WAL");
+        durable.inner().flush();
+        let msgs = progressive_lsp_log::actor::read_messages(durable.inner().path()).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("env-debug")), "{msgs:?}");
+    }
+
+    #[test]
+    fn wire_process_log_in_invalid_env_warns_and_defaults_info() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(layout.config_path(), "[log]\nlevel = \"debug\"\n").unwrap();
+        let (log, durable) =
+            wire_process_log_in(&layout, MemoryLog::new(), Some(OsString::from("verbose")));
+        log.debug("still-hidden");
+        log.info("still-kept");
+        let durable = durable.expect("WAL");
+        durable.inner().flush();
+        let msgs = progressive_lsp_log::actor::read_messages(durable.inner().path()).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains(ENV_LOG_LEVEL) && m.contains("verbose")),
+            "{msgs:?}"
+        );
+        assert!(msgs.iter().any(|m| m.contains("still-kept")), "{msgs:?}");
+        assert!(!msgs.iter().any(|m| m.contains("still-hidden")), "{msgs:?}");
+    }
+
+    #[test]
+    fn wire_process_log_in_empty_env_uses_config_level() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(layout.config_path(), "[log]\nlevel = \"debug\"\n").unwrap();
+        let (log, durable) =
+            wire_process_log_in(&layout, MemoryLog::new(), Some(OsString::from("")));
+        log.debug("empty-env-config");
+        let durable = durable.expect("WAL");
+        durable.inner().flush();
+        let msgs = progressive_lsp_log::actor::read_messages(durable.inner().path()).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("empty-env-config")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn wire_process_log_in_env_overrides_config_level() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        std::fs::write(layout.config_path(), "[log]\nlevel = \"debug\"\n").unwrap();
+        let (log, durable) =
+            wire_process_log_in(&layout, MemoryLog::new(), Some(OsString::from("error")));
+        log.warn("dropped-warn");
+        log.error("kept-error");
+        let durable = durable.expect("WAL");
+        durable.inner().flush();
+        let msgs = progressive_lsp_log::actor::read_messages(durable.inner().path()).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("kept-error")), "{msgs:?}");
+        assert!(!msgs.iter().any(|m| m.contains("dropped-warn")), "{msgs:?}");
     }
 
     #[test]

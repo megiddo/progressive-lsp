@@ -23,7 +23,12 @@ impl IndexClass {
         }
     }
 
-    pub fn classify(path: &Path, open: &BTreeSet<PathBuf>, recent: &BTreeSet<PathBuf>, package_prefix: Option<&str>) -> Self {
+    pub fn classify(
+        path: &Path,
+        open: &BTreeSet<PathBuf>,
+        recent: &BTreeSet<PathBuf>,
+        package_prefix: Option<&str>,
+    ) -> Self {
         if is_vendor(path) {
             return Self::Vendor;
         }
@@ -86,7 +91,12 @@ impl PriorityIndex {
     }
 
     pub fn classify(&self, path: &Path) -> IndexClass {
-        IndexClass::classify(path, &self.open, &self.recent, self.package_prefix.as_deref())
+        IndexClass::classify(
+            path,
+            &self.open,
+            &self.recent,
+            self.package_prefix.as_deref(),
+        )
     }
 
     /// Drain dirty paths in priority order. Generation values are not reordered.
@@ -113,7 +123,10 @@ mod tests {
             PathBuf::from("other/X.java"),
             PathBuf::from("src/com/example/Same.java"),
         ]);
-        let got: Vec<_> = ordered.into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let got: Vec<_> = ordered
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(
             got,
             vec![

@@ -151,7 +151,10 @@ fn mixed_version_workspace_indexes_all_sources() {
         svc.index_text(&path, &src, indexer.as_ref(), false);
         n += 1;
     }
-    assert!(n >= 7, "mixed workspace should cover several languages, got {n}");
+    assert!(
+        n >= 7,
+        "mixed workspace should cover several languages, got {n}"
+    );
     assert_eq!(svc.file_count(), n);
 }
 

@@ -106,7 +106,14 @@ impl LanguageFactory for PhpLanguageFactory {
 
 fn extract_symbols(file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
     let mut out = Vec::new();
-    walk(tree.root_node(), source.as_bytes(), file, uri, None, &mut out);
+    walk(
+        tree.root_node(),
+        source.as_bytes(),
+        file,
+        uri,
+        None,
+        &mut out,
+    );
     out
 }
 
@@ -179,7 +186,17 @@ fn walk(
                 } else {
                     SymbolKind::Class
                 };
-                out.push(sym(file, uri, name, kind, node, name_n, None, fqn.clone(), ns.map(str::to_string)));
+                out.push(sym(
+                    file,
+                    uri,
+                    name,
+                    kind,
+                    node,
+                    name_n,
+                    None,
+                    fqn.clone(),
+                    ns.map(str::to_string),
+                ));
                 walk_named_children(node, src, file, uri, Some(&fqn), out);
                 return;
             }
@@ -226,7 +243,13 @@ fn walk(
     walk_named_children(node, src, file, uri, ns, out);
 }
 
-fn walk_graph_children(node: Node, src: &[u8], file: &FileId, ns: Option<&str>, facts: &mut GraphFacts) {
+fn walk_graph_children(
+    node: Node,
+    src: &[u8],
+    file: &FileId,
+    ns: Option<&str>,
+    facts: &mut GraphFacts,
+) {
     let mut current = ns.map(str::to_string);
     let mut c = node.walk();
     for child in node.children(&mut c) {
@@ -252,7 +275,9 @@ fn walk_graph(node: Node, src: &[u8], file: &FileId, ns: Option<&str>, facts: &m
                 if matches!(child.kind(), "qualified_name" | "namespace_name") {
                     let path = text(child, src);
                     if path.contains('\\') {
-                        facts.imports.push(ImportDecl::new(file.clone(), path.replace('\\', ".")));
+                        facts
+                            .imports
+                            .push(ImportDecl::new(file.clone(), path.replace('\\', ".")));
                     }
                 }
             }
@@ -267,10 +292,7 @@ fn walk_graph(node: Node, src: &[u8], file: &FileId, ns: Option<&str>, facts: &m
                 None => name,
             };
             if let Some(base) = child_of_kind(node, "base_clause") {
-                let parent = text(base, src)
-                    .replace("extends", "")
-                    .trim()
-                    .to_string();
+                let parent = text(base, src).replace("extends", "").trim().to_string();
                 if !parent.is_empty() {
                     facts.edges.push(TypeEdge::new(fqn, parent));
                 }
@@ -301,8 +323,14 @@ fn text(node: Node, src: &[u8]) -> String {
 
 fn node_range(node: Node) -> Range {
     Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     )
 }
 
@@ -368,7 +396,11 @@ fn encode(toks: &[(u32, u32, u32, u32)]) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in toks {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -410,7 +442,9 @@ mod tests {
             .expect("class");
         assert_eq!(greeter.fqn, "App\\Greeter");
         assert_eq!(greeter.container.as_deref(), Some("App"));
-        assert!(syms.iter().any(|s| s.name == "IFace" && s.kind == SymbolKind::Interface));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "IFace" && s.kind == SymbolKind::Interface));
         let run = syms
             .iter()
             .find(|s| s.name == "run" && s.kind == SymbolKind::Method)
@@ -419,7 +453,10 @@ mod tests {
         assert_eq!(run.fqn, "App\\Greeter\\run");
         let facts = PhpIndexer.extract_graph(&file, src, &tree);
         assert_eq!(facts.package.as_deref(), Some("App"));
-        assert!(facts.imports.iter().any(|i| i.simple == "Hello" || i.path.contains("Hello")));
+        assert!(facts
+            .imports
+            .iter()
+            .any(|i| i.simple == "Hello" || i.path.contains("Hello")));
         assert!(
             facts
                 .edges
@@ -439,7 +476,10 @@ mod tests {
             encode(&[(0, 1, 4, 1), (0, 8, 5, 2)]),
             vec![0, 1, 4, 1, 0, 0, 7, 5, 2, 0]
         );
-        assert_eq!(encode(&[(0, 1, 2, 1), (1, 0, 3, 2)]), vec![0, 1, 2, 1, 0, 1, 0, 3, 2, 0]);
+        assert_eq!(
+            encode(&[(0, 1, 2, 1), (1, 0, 3, 2)]),
+            vec![0, 1, 2, 1, 0, 1, 0, 3, 2, 0]
+        );
         let _ = tree_sitter_language();
         let braced = "<?php\nnamespace Braced { class Inner {} }\n";
         let braced_tree = parse(braced);
@@ -456,7 +496,8 @@ mod tests {
             "braced namespace {:?}",
             braced_syms.iter().map(|s| &s.fqn).collect::<Vec<_>>()
         );
-        let braced_facts = PhpIndexer.extract_graph(&FileId::new("Inner.php"), braced, &braced_tree);
+        let braced_facts =
+            PhpIndexer.extract_graph(&FileId::new("Inner.php"), braced, &braced_tree);
         assert_eq!(braced_facts.package.as_deref(), Some("Braced"));
         let mut svc = IndexService::new();
         svc.index_text(std::path::Path::new("Greeter.php"), src, &PhpIndexer, false);
@@ -545,7 +586,9 @@ mod tests {
     #[test]
     fn php_t3_via_fake_phpantom_else_t2() {
         use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
-        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use progressive_lsp_engine::{
+            EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind,
+        };
         use std::path::PathBuf;
 
         let clock = Arc::new(FakeClock::at_unix_ms(1));
@@ -553,7 +596,10 @@ mod tests {
         let prefix = PrefixLayout::from_path(tmp.path());
         prefix.ensure_dirs().unwrap();
         let fake = FakeEngineAdapter::phpantom();
-        fake.set_answers(FakeEngineAdapter::typed_fixture("Hello", "file:///Hello.php"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "Hello",
+            "file:///Hello.php",
+        ));
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         let fake = fake.with_binary(EngineBinary {
             pack_name: "phpantom".into(),
@@ -584,7 +630,8 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        let t2_only = PhpLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())));
+        let t2_only =
+            PhpLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())));
         assert_eq!(t2_only.resolver_chain().len(), 2);
     }
 }

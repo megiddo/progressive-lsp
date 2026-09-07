@@ -92,7 +92,10 @@ mod tests {
         assert_eq!(rss_from_ps_output(true, "  42\n"), Some(42 * 1024));
         assert!(rss_sample_label().contains("allocator"));
         match sample_rss_bytes() {
-            Some(n) => assert!(n > 1024, "rss bytes should be a real process sample, got {n}"),
+            Some(n) => assert!(
+                n > 1024,
+                "rss bytes should be a real process sample, got {n}"
+            ),
             None => assert!(
                 !cfg!(any(target_os = "macos", target_os = "linux")),
                 "macos/linux must expose RSS"

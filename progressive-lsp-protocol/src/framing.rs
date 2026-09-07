@@ -57,9 +57,10 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Option<Vec<u8>>, Frami
         }
         if let Some((name, value)) = trimmed.split_once(':') {
             if name.eq_ignore_ascii_case("content-length") {
-                let parsed = value.trim().parse::<usize>().map_err(|_| {
-                    FramingError::InvalidContentLength(value.trim().to_string())
-                })?;
+                let parsed = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| FramingError::InvalidContentLength(value.trim().to_string()))?;
                 content_length = Some(parsed);
             }
         }

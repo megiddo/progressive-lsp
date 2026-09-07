@@ -124,6 +124,9 @@ mod tests {
         let create = WorkDoneProgress::create_request(9, "ingest-lib");
         assert_eq!(create["method"], WORK_DONE_CREATE);
         assert_eq!(create["params"]["token"], "ingest-lib");
-        assert_eq!(WorkDoneProgress::report("t", "m", 200).percentage, Some(100));
+        assert_eq!(
+            WorkDoneProgress::report("t", "m", 200).percentage,
+            Some(100)
+        );
     }
 }

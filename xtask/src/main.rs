@@ -1,10 +1,14 @@
-//! cargo xtask: musl, check-static, bench-alloc.
+//! cargo xtask: build / run help, plus musl, check-static, bench-alloc, poc.
 
 mod allocator;
 mod check_static;
+mod cli;
 mod dist;
 mod musl;
+mod pack;
 mod perf;
+mod poc;
+mod runtime_image;
 mod tarball;
 
 use std::env;
@@ -19,31 +23,7 @@ fn main() {
 }
 
 fn run(args: Vec<String>) -> Result<(), String> {
-    let cmd = args.first().map(String::as_str).unwrap_or("help");
-    match cmd {
-        "musl" => musl::run(&args[1..]),
-        "check-static" => check_static::run(&args[1..]),
-        "bench-alloc" => allocator::run(&args[1..]),
-        "bench-perf" => perf::run(&args[1..]),
-        "dist" => dist::run(&args[1..]),
-        "help" | "-h" | "--help" => {
-            print_help();
-            Ok(())
-        }
-        other => Err(format!("unknown command: {other}")),
-    }
-}
-
-fn print_help() {
-    eprintln!(
-        "\
-xtask musl [--target TRIPLE] [--both]
-xtask check-static <ELF>...
-xtask bench-alloc
-xtask bench-perf
-xtask dist [--slim|--full|--pack slim|full|python,rust,...] [--libc musl|glibc-static] --dest DIR
-"
-    );
+    cli::run(&args)
 }
 
 fn workspace_root() -> PathBuf {
@@ -61,7 +41,10 @@ mod tests {
     fn help_and_unknown() {
         run(vec!["help".into()]).unwrap();
         assert!(run(vec!["nope".into()]).is_err());
-        print_help();
+        run(vec!["poc".into(), "--help".into()]).unwrap();
+        run(vec!["build".into(), "--help".into()]).unwrap();
+        run(vec!["run".into(), "--help".into()]).unwrap();
+        cli::print_help(cli::HelpTopic::Root);
         assert!(workspace_root().join("Cargo.toml").is_file());
     }
 }

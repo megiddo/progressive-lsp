@@ -156,9 +156,23 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
 fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
     if matches!(node.kind(), "import_statement" | "export_statement") {
         let text = node.utf8_text(src).unwrap_or("");
-        for part in text.split(|c: char| c == '"' || c == '\'' || c == '`' || c.is_whitespace() || c == '{' || c == '}' || c == ',' || c == ';') {
+        for part in text.split(|c: char| {
+            c == '"'
+                || c == '\''
+                || c == '`'
+                || c.is_whitespace()
+                || c == '{'
+                || c == '}'
+                || c == ','
+                || c == ';'
+        }) {
             let p = part.trim();
-            if p.is_empty() || matches!(p, "import" | "export" | "from" | "as" | "default" | "*" | "{" | "}") {
+            if p.is_empty()
+                || matches!(
+                    p,
+                    "import" | "export" | "from" | "as" | "default" | "*" | "{" | "}"
+                )
+            {
                 continue;
             }
             if p.starts_with('.') || p.contains('/') {
@@ -176,8 +190,14 @@ fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -200,7 +220,11 @@ pub fn tokens_from_tree(source: &str, tree: &Tree) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in &raw {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -246,21 +270,45 @@ mod tests {
         assert_eq!(grammar_id(), "tree-sitter-javascript");
         assert_eq!(JavaScriptIndexer.language_id().as_str(), "javascript");
         assert_eq!(JavaScriptIndexer.grammar_id(), "tree-sitter-javascript");
-        assert_eq!(JavaScriptLanguageFactory::new().language_id().as_str(), "javascript");
-        assert_eq!(JavaScriptLanguageFactory::new().grammar_id(), "tree-sitter-javascript");
-        assert_eq!(JavaScriptLanguageFactory::typescript().language_id().as_str(), "typescript");
-        assert_eq!(JavaScriptLanguageFactory::typescript().grammar_id(), "tree-sitter-javascript");
-        assert!(JavaScriptLanguageFactory::default().resolver_chain().is_empty());
+        assert_eq!(
+            JavaScriptLanguageFactory::new().language_id().as_str(),
+            "javascript"
+        );
+        assert_eq!(
+            JavaScriptLanguageFactory::new().grammar_id(),
+            "tree-sitter-javascript"
+        );
+        assert_eq!(
+            JavaScriptLanguageFactory::typescript()
+                .language_id()
+                .as_str(),
+            "typescript"
+        );
+        assert_eq!(
+            JavaScriptLanguageFactory::typescript().grammar_id(),
+            "tree-sitter-javascript"
+        );
+        assert!(JavaScriptLanguageFactory::default()
+            .resolver_chain()
+            .is_empty());
         let src = "class App { greet(name) { return name; } }\nfunction run() { return greet; }\n";
         let mut p = tree_sitter::Parser::new();
         p.set_language(&tree_sitter_language()).unwrap();
         let tree = p.parse(src, None).unwrap();
         let file = FileId::new("a.js");
         let syms = JavaScriptIndexer.extract(&file, "file:///a.js", src, &tree);
-        assert!(syms.iter().any(|s| s.name == "App" && s.kind == SymbolKind::Class));
-        assert!(syms.iter().any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
-        assert!(syms.iter().any(|s| s.name == "run" && s.kind == SymbolKind::Method));
-        assert!(syms.iter().any(|s| s.name == "name" && s.kind == SymbolKind::Variable));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "App" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "run" && s.kind == SymbolKind::Method));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "name" && s.kind == SymbolKind::Variable));
         let app = syms.iter().find(|s| s.name == "App").unwrap();
         assert_eq!(
             app.range.end.character,
@@ -292,14 +340,21 @@ mod tests {
             }
             ResolveOutcome::NotReady => panic!("ready"),
         }
-        let facts = JavaScriptIndexer.extract_graph(&FileId::new("b.js"), "import { greet } from \"./greet.js\";\n", &p.parse("import { greet } from \"./greet.js\";\n", None).unwrap());
+        let facts = JavaScriptIndexer.extract_graph(
+            &FileId::new("b.js"),
+            "import { greet } from \"./greet.js\";\n",
+            &p.parse("import { greet } from \"./greet.js\";\n", None)
+                .unwrap(),
+        );
         assert!(!facts.imports.is_empty());
     }
 
     #[test]
     fn ts_t3_go_to_type_via_fake_tsgo() {
         use progressive_lsp_core::{FakeClock, PrefixLayout, Tier};
-        use progressive_lsp_engine::{EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind};
+        use progressive_lsp_engine::{
+            EngineBinary, EngineSupervisor, FakeEngineAdapter, ReadyKind,
+        };
         use progressive_lsp_index::IndexService;
         use std::path::PathBuf;
 

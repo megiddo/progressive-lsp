@@ -228,6 +228,7 @@ impl ControlServer {
             status: Some(Status::ok()),
             packages: Vec::new(),
             cache_entries: 0,
+            ingest: IngestState::NotStarted.as_str().into(),
         }
     }
 
@@ -466,6 +467,7 @@ mod tests {
                     generation: 2,
                 }],
                 cache_entries: 4,
+                ingest: IngestState::Done.as_str().into(),
             }
         }
         fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {
@@ -527,6 +529,7 @@ mod tests {
         let idx = srv.index_status(&IndexStatusRequest {});
         assert!(idx.packages.is_empty());
         assert_eq!(idx.cache_entries, 0);
+        assert_eq!(idx.ingest_state(), IngestState::NotStarted);
         assert!(srv.tier_status(&TierStatusRequest {}).rows.is_empty());
         assert!(srv
             .reload_scripts(&ReloadScriptsRequest {})
@@ -704,6 +707,7 @@ mod tests {
         let idx = srv.index_status(&IndexStatusRequest {});
         assert_eq!(idx.packages[0].package_id, "lib");
         assert_eq!(idx.cache_entries, 4);
+        assert_eq!(idx.ingest_state(), IngestState::Done);
         assert_eq!(srv.tier_status(&TierStatusRequest {}).rows[0].tier, "graph");
         assert!(
             srv.files_since(&FilesSinceRequest { since: None })

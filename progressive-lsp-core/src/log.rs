@@ -3,9 +3,13 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
+use std::ffi::OsStr;
 use std::panic::Location;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+/// Env override for `[log].level`. Empty / unset → config (default `info`).
+pub const ENV_LOG_LEVEL: &str = "PROGRESSIVE_LSP_LOG_LEVEL";
 
 /// Maximum `LogRecord.message` size (64 KiB). Truncate on a char boundary.
 pub const MESSAGE_MAX_BYTES: usize = 64 * 1024;
@@ -109,9 +113,28 @@ impl LogLevel {
         }
     }
 
-    /// Keep this record when filtering to `min` (Facade, LOG-3).
+    /// Keep this record when filtering to `min` (`LevelFilter`).
     pub fn at_least(self, min: Self) -> bool {
         self.rank() <= min.rank()
+    }
+
+    /// `PROGRESSIVE_LSP_LOG_LEVEL` wins over `[log].level`. Tests inject `env`.
+    /// Empty / unset → `config`. Known env → that level. Unknown → [`LogLevel::Info`]
+    /// plus a warning the caller can emit. Never fails boot.
+    pub fn from_env_or_config(env: Option<&OsStr>, config: Self) -> (Self, Option<String>) {
+        let Some(raw) = env.filter(|s| !s.is_empty()) else {
+            return (config, None);
+        };
+        let raw = raw.to_string_lossy();
+        match Self::parse_known(raw.as_ref()) {
+            Some(level) => (level, None),
+            None => (
+                Self::Info,
+                Some(format!(
+                    "invalid {ENV_LOG_LEVEL} ignored, defaulting to info: {raw}"
+                )),
+            ),
+        }
     }
 }
 
@@ -482,6 +505,35 @@ impl<S: LogSink> LogPort for NeverFailLog<S> {
     }
 }
 
+/// Decorator / Filter. Drops records where `!record.level.at_least(min)`.
+pub struct LevelFilter {
+    inner: Arc<dyn LogPort>,
+    min: LogLevel,
+}
+
+impl LevelFilter {
+    pub fn new(inner: Arc<dyn LogPort>, min: LogLevel) -> Self {
+        Self { inner, min }
+    }
+
+    pub fn min(&self) -> LogLevel {
+        self.min
+    }
+
+    pub fn inner(&self) -> &Arc<dyn LogPort> {
+        &self.inner
+    }
+}
+
+impl LogPort for LevelFilter {
+    fn emit(&self, record: LogRecord) {
+        if !record.level.at_least(self.min) {
+            return;
+        }
+        self.inner.emit(record);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +613,86 @@ mod tests {
         assert!(!LogLevel::Trace.at_least(LogLevel::Error));
         assert!(LogLevel::Warn.at_least(LogLevel::Warn));
         assert!(!LogLevel::Info.at_least(LogLevel::Warn));
+        assert_eq!(ENV_LOG_LEVEL, "PROGRESSIVE_LSP_LOG_LEVEL");
+    }
+
+    #[test]
+    fn log_level_from_env_or_config_is_value_object() {
+        use std::ffi::OsString;
+        let (level, warn) = LogLevel::from_env_or_config(None, LogLevel::Debug);
+        assert_eq!(level, LogLevel::Debug);
+        assert!(warn.is_none());
+        let empty = OsString::from("");
+        let (level, warn) = LogLevel::from_env_or_config(Some(empty.as_os_str()), LogLevel::Warn);
+        assert_eq!(level, LogLevel::Warn);
+        assert!(warn.is_none());
+        for (raw, want) in [
+            ("error", LogLevel::Error),
+            ("warn", LogLevel::Warn),
+            ("info", LogLevel::Info),
+            ("debug", LogLevel::Debug),
+            ("trace", LogLevel::Trace),
+        ] {
+            let env = OsString::from(raw);
+            let (level, warn) =
+                LogLevel::from_env_or_config(Some(env.as_os_str()), LogLevel::Error);
+            assert_eq!(level, want, "env={raw}");
+            assert!(warn.is_none());
+        }
+        let debug = OsString::from("debug");
+        let (level, warn) = LogLevel::from_env_or_config(Some(debug.as_os_str()), LogLevel::Error);
+        assert_eq!(level, LogLevel::Debug);
+        assert!(warn.is_none());
+        let bad = OsString::from("verbose");
+        let (level, warn) = LogLevel::from_env_or_config(Some(bad.as_os_str()), LogLevel::Debug);
+        assert_eq!(level, LogLevel::Info);
+        let warn = warn.expect("invalid env warning");
+        assert!(warn.contains(ENV_LOG_LEVEL), "{warn}");
+        assert!(warn.contains("verbose"), "{warn}");
+        let upper = OsString::from("INFO");
+        let (level, warn) = LogLevel::from_env_or_config(Some(upper.as_os_str()), LogLevel::Debug);
+        assert_eq!(level, LogLevel::Info);
+        assert!(warn.expect("case-sensitive").contains("INFO"));
+    }
+
+    #[test]
+    fn level_filter_drops_below_min_decorator() {
+        let fake = FakeLog::new();
+        let filter = LevelFilter::new(Arc::new(fake.clone()), LogLevel::Info);
+        filter.error("e");
+        filter.warn("w");
+        filter.info("i");
+        filter.debug("d");
+        filter.trace("t");
+        let recs = fake.records();
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[0].level, LogLevel::Error);
+        assert_eq!(recs[1].level, LogLevel::Warn);
+        assert_eq!(recs[2].level, LogLevel::Info);
+        assert_eq!(filter.min(), LogLevel::Info);
+        let _ = filter.inner();
+
+        let fake = FakeLog::new();
+        let error_only = LevelFilter::new(Arc::new(fake.clone()), LogLevel::Error);
+        assert_eq!(error_only.min(), LogLevel::Error);
+        error_only.warn("drop");
+        error_only.error("keep");
+        assert_eq!(fake.records().len(), 1);
+        assert_eq!(fake.records()[0].level, LogLevel::Error);
+        assert_eq!(fake.records()[0].message, "keep");
+
+        let fake = FakeLog::new();
+        let debug_min = LevelFilter::new(Arc::new(fake.clone()), LogLevel::Debug);
+        debug_min.trace("drop");
+        debug_min.debug("keep");
+        assert_eq!(fake.records().len(), 1);
+        assert_eq!(fake.records()[0].message, "keep");
+
+        let fake = FakeLog::new();
+        let all = LevelFilter::new(Arc::new(fake.clone()), LogLevel::Trace);
+        all.trace("t");
+        all.debug("d");
+        assert_eq!(fake.records().len(), 2);
     }
 
     #[test]

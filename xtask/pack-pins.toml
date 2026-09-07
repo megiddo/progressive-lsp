@@ -1,0 +1,110 @@
+# Engine pack pins (slim + full). Content-addressed by upstream git SHA.
+# Not core crate semver (workspace 0.1.0). Fetch inside Docker, not on the Mac host.
+# clangd is cache-only (`kind = "cached"`). Missing cache is a documented miss —
+# do not cmake LLVM in the default `xtask pack` job.
+
+[toolchain.rust]
+# Pack-build rustc when the upstream tree has no rust-toolchain.toml.
+# Matches biome / ty-ruff rust-toolchain.toml (1.98.0). 1.99.0 is not published.
+channel = "1.98.0"
+
+[toolchain.zig]
+version = "0.15.1"
+tarball_x86_64 = "https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz"
+sha256_x86_64 = "c61c5da6edeea14ca51ecd5e4520c6f4189ef5250383db33d01848293bfafe05"
+tarball_aarch64 = "https://ziglang.org/download/0.15.1/zig-aarch64-linux-0.15.1.tar.xz"
+sha256_aarch64 = "bb4a8d2ad735e7fba764c497ddf4243cb129fece4148da3222a7046d3f1f19fe"
+
+[toolchain.go]
+# Pack-build Go (container only). CGO_ENABLED=0. Not a shipped SDK.
+# gopls/v0.23.0 requires go >= 1.26.0.
+version = "1.26"
+
+[[pack]]
+name = "python"
+binary = "ty"
+repo = "https://github.com/astral-sh/ty.git"
+sha = "dca9f9873896bc3bfdb7db6459fd54f80fac3fa6"
+kind = "rust"
+cargo_bin = "ty"
+source_subdir = "ruff"
+tag = "0.0.78"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "rust"
+binary = "rust-analyzer"
+repo = "https://github.com/rust-lang/rust-analyzer.git"
+sha = "f8996691e991a4dc3c6f135e0fc04fc5561e4e9a"
+kind = "rust"
+cargo_bin = "rust-analyzer"
+tag = "2026-08-31"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "phpantom"
+binary = "phpantom"
+repo = "https://github.com/PHPantom-dev/phpantom_lsp.git"
+sha = "533ef884630924b774a2d74ac3d6050f7b3fbce0"
+kind = "rust"
+cargo_bin = "phpantom_lsp"
+tag = "0.10.0"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "biome"
+binary = "biome"
+repo = "https://github.com/biomejs/biome.git"
+sha = "0a31d7c4e1f6cc1b3e08af4aef2ad4b97f6b4f1c"
+kind = "rust"
+cargo_bin = "biome"
+tag = "@biomejs/biome@2.5.12"
+dockerfile = "docker/engine-pack.Dockerfile"
+
+[[pack]]
+name = "superhtml"
+binary = "superhtml"
+repo = "https://github.com/kristoff-it/superhtml.git"
+sha = "9b8a0ab0d20339fbe1c803a72090d7b575efdc18"
+kind = "zig"
+tag = "v0.6.2"
+dockerfile = "docker/engine-pack-zig.Dockerfile"
+
+[[pack]]
+name = "gopls"
+binary = "gopls"
+repo = "https://github.com/golang/tools.git"
+sha = "014f87ff5c01915bc90f4f11a6bb8aea3e0edbd7"
+kind = "go"
+source_subdir = "gopls"
+go_package = "."
+tag = "gopls/v0.23.0"
+dockerfile = "docker/engine-pack-go.Dockerfile"
+
+[[pack]]
+name = "tsgo"
+binary = "tsgo"
+repo = "https://github.com/microsoft/typescript-go.git"
+sha = "2bd066d87f5bafd315be9f40889d0a60b9e58e0b"
+kind = "go"
+go_package = "./cmd/tsgo"
+tag = "typescript/v7.0.2"
+dockerfile = "docker/engine-pack-go.Dockerfile"
+
+[[pack]]
+name = "zls"
+binary = "zls"
+repo = "https://github.com/zigtools/zls.git"
+sha = "f91b2e1e305e5d5bd3725aea90f9f9bfb3dce055"
+kind = "zig"
+tag = "0.15.1"
+dockerfile = "docker/engine-pack-zig.Dockerfile"
+
+[[pack]]
+name = "clangd"
+binary = "clangd"
+repo = "https://github.com/llvm/llvm-project.git"
+sha = "3623fe661ae35c6c80ac221f14d85be76aa870f1"
+kind = "cached"
+tag = "llvmorg-21.1.0"
+dockerfile = "docker/engine-pack-clangd.Dockerfile"

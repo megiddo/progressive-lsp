@@ -1,0 +1,17 @@
+# Native Darwin / host `target` is not a musl input. Sending it to the daemon
+# would copy tens of gigabytes and is not the extract dest (`target/musl/…`
+# is written by `docker build --output` on the host, not from this context).
+/target
+.git
+coverage
+mutants.out
+mutants.out.old
+*.rs.bk
+.DS_Store
+/tmp
+/spike/.cache
+/integration/artifacts
+/integration/out
+/integration/harness/target
+/integration/corpora/.cache
+**/.progressivelsp

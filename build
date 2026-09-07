@@ -1,0 +1,194 @@
+#!/bin/sh
+# Operator entry for this repo. No Python/Node: real work is cargo xtask.
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./build lsp {all|x86_64|aarch64}
+  ./build ide
+  ./build run ide
+  ./build run ide --folder DIR
+  ./build run ide --folder DIR --container
+
+  ./build help
+  ./build help lsp
+  ./build help ide
+  ./build help run
+
+lsp     Linux static language server (musl controller + backends +
+        container image progressive-lsp-runtime:local). Needs Docker.
+        Architecture is required. Omit it to list valid arches.
+
+ide     POC editor + native progressive-lsp. Does not start the window.
+
+run ide Start the POC editor (rebuilds native progressive-lsp first).
+        --folder must be absolute when using --container.
+        Container mode needs Docker Desktop and a prior ./build lsp <arch>.
+EOF
+}
+
+print_lsp_arches() {
+  cat <<'EOF'
+usage: ./build lsp {all|x86_64|aarch64}
+
+Valid architectures:
+  all       both Linux musl triples
+  x86_64    x86_64-unknown-linux-musl
+  aarch64   aarch64-unknown-linux-musl
+EOF
+}
+
+print_ide_help() {
+  cat <<'EOF'
+usage: ./build ide
+
+Build the POC IDE and the native progressive-lsp it spawns.
+Does not open the window. Start it with: ./build run ide
+EOF
+}
+
+print_run_help() {
+  cat <<'EOF'
+usage: ./build run ide [--folder DIR] [--file PATH] [--container]
+
+Start the POC IDE. Stays running until you quit the editor window.
+
+  ./build run ide
+  ./build run ide --folder DIR
+  ./build run ide --folder DIR --container
+
+--folder DIR must be an absolute path when using --container
+(bind-mount identity). Container mode needs Docker Desktop and
+./build lsp <arch> first. First T3 proof is Python or PHP source,
+not a Darwin Cargo tree.
+EOF
+}
+
+# `cargo run -p xtask` holds the jobserver while xtask starts another cargo
+# (inner compile waits with no output). Build the bin, then exec it.
+#
+# rust-analyzer / another cargo locks the workspace `target/` directory.
+# `./build` uses `target/operator` so it does not sit on
+# "Blocking waiting for file lock on build directory".
+#
+# A TTY makes cargo use a progress bar that replaces `Compiling` lines.
+# Force the streaming crate list.
+# Never `cargo &`. A prior version backgrounded cargo for a heartbeat; Ctrl+C
+# killed the wait loop and left cargo reparented to PID 1 for hours, holding
+# the `target/` lock. Keep cargo in the foreground process group.
+reap_orphaned_xtask_cargo() {
+  ps -axo pid=,ppid=,command= | awk '
+    $2 == 1 && $0 ~ /cargo build -p xtask/ { print $1 }
+  ' | while read -r pid; do
+    echo "./build: killing orphan cargo pid=$pid (left running after Ctrl+C)" >&2
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+}
+
+run_xtask() {
+  reap_orphaned_xtask_cargo
+  operator_target=${CARGO_TARGET_DIR:-"$ROOT/target/operator"}
+  echo "./build: cargo build -p xtask (CARGO_TARGET_DIR=$operator_target)" >&2
+  CARGO_TARGET_DIR="$operator_target" \
+    CARGO_TERM_PROGRESS_WHEN=never \
+    CARGO_TERM_COLOR=always \
+    cargo build -p xtask
+  bin=$operator_target/debug/xtask
+  if [ ! -f "$bin" ]; then
+    echo "./build: missing $bin after cargo build -p xtask" >&2
+    exit 1
+  fi
+  export CARGO_TARGET_DIR="$operator_target"
+  exec "$bin" "$@"
+}
+
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+cmd=$1
+shift
+
+case "$cmd" in
+  -h|--help|help)
+    topic=${1:-}
+    case "$topic" in
+      "") usage ;;
+      lsp) print_lsp_arches ;;
+      ide) print_ide_help ;;
+      run) print_run_help ;;
+      *)
+        echo "unknown help topic: $topic" >&2
+        echo "Try: ./build help" >&2
+        exit 1
+        ;;
+    esac
+    exit 0
+    ;;
+  lsp)
+    arch=${1:-}
+    case "$arch" in
+      "")
+        print_lsp_arches
+        exit 1
+        ;;
+      -h|--help|help)
+        print_lsp_arches
+        exit 0
+        ;;
+      all|x86_64|aarch64|amd64|arm64|x86_64-unknown-linux-musl|aarch64-unknown-linux-musl)
+        run_xtask lsp "$arch"
+        ;;
+      *)
+        echo "unknown architecture: $arch" >&2
+        print_lsp_arches >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  ide)
+    case "${1:-}" in
+      -h|--help|help)
+        print_ide_help
+        exit 0
+        ;;
+      "")
+        run_xtask ide
+        ;;
+      *)
+        echo "unknown ide argument: $1" >&2
+        print_ide_help >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  run)
+    case "${1:-}" in
+      ide)
+        shift
+        run_xtask run ide "$@"
+        ;;
+      -h|--help|help|"")
+        print_run_help
+        if [ "${1:-}" = "help" ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          exit 0
+        fi
+        exit 1
+        ;;
+      *)
+        echo "usage: ./build run ide [--folder DIR] [--container]" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    echo "Try: ./build help" >&2
+    exit 1
+    ;;
+esac

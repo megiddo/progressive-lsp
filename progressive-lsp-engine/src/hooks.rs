@@ -3,9 +3,7 @@
 use std::sync::Mutex;
 
 use progressive_lsp_core::PrefixLayout;
-use progressive_lsp_script::{
-    filter_spawn_tweaks, ScriptHost, SpawnDecision, SpawnTweak,
-};
+use progressive_lsp_script::{filter_spawn_tweaks, ScriptHost, SpawnDecision, SpawnTweak};
 
 use crate::adapter::SpawnCtx;
 

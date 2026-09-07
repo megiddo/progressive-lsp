@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use progressive_lsp_engine::{
     binary_name_for_pack, full_pack_names, hex_of, is_heavy_pack, pack_dir, slim_pack_names,
-    stub_pack_bytes, CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK,
+    stub_pack_bytes,
 };
 use progressive_lsp_install::{
     hex_encode, sha256, DistArtifact, DistManifest, Manifest, ManifestArtifact, DIST_PAYLOAD_STUB,
@@ -125,8 +125,11 @@ fn write_one(
             executable: true,
         }],
     };
-    std::fs::write(dir.join("manifest.json"), manifest.to_json().map_err(|e| e.to_string())?)
-        .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        dir.join("manifest.json"),
+        manifest.to_json().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())
 }
 
@@ -138,14 +141,12 @@ fn write_per_triple_tarballs(
 ) -> Result<(), String> {
     let flavor = flavor_of(packs);
     let triples: &[&str] = match libc {
-        "glibc-static" => &[
-            "x86_64-unknown-linux-gnu",
-            "aarch64-unknown-linux-gnu",
-        ],
+        "glibc-static" => &["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"],
         _ => MUSL_TRIPLES,
     };
     let mut files = collect_dir(dest, "")?;
-    files.retain(|(n, _)| n != "DIST_README.txt" && !n.ends_with(".tar") && !n.ends_with(".sha256"));
+    files
+        .retain(|(n, _)| n != "DIST_README.txt" && !n.ends_with(".tar") && !n.ends_with(".sha256"));
     files.push(("DIST_README.txt".into(), dist_readme().as_bytes().to_vec()));
     files.push(("allocator-matrix.toml".into(), matrix.as_bytes().to_vec()));
     files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -165,8 +166,11 @@ fn write_per_triple_tarballs(
             sha256: hex,
         });
     }
-    std::fs::write(dest.join("manifest.json"), dist.to_json().map_err(|e| e.to_string())?)
-        .map_err(|e| format!("write dist manifest: {e}"))?;
+    std::fs::write(
+        dest.join("manifest.json"),
+        dist.to_json().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write dist manifest: {e}"))?;
     let _ = DIST_PROTO;
     Ok(())
 }
@@ -190,18 +194,16 @@ fn dist_readme() -> &'static str {
 
 fn read_allocator_matrix() -> Result<String, String> {
     let path = crate::allocator::matrix_path();
-    std::fs::read_to_string(&path).map_err(|e| {
-        format!(
-            "dist only reads {}: {e}",
-            path.display()
-        )
-    })
+    std::fs::read_to_string(&path).map_err(|e| format!("dist only reads {}: {e}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use progressive_lsp_engine::{discover_pack, is_pack_stub, PYTHON_PACK, RUST_PACK};
+    use progressive_lsp_engine::{
+        discover_pack, is_pack_stub, CLANGD_PACK, GOPLS_PACK, PYTHON_PACK, RUST_PACK, TSGO_PACK,
+        ZLS_PACK,
+    };
     use progressive_lsp_install::DistManifest;
 
     #[test]

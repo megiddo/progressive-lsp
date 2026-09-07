@@ -42,14 +42,22 @@ mod tests {
     #[test]
     fn detect_build_zig() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("build.zig"), "pub fn build(b: *std.Build) void {}\n").unwrap();
+        std::fs::write(
+            dir.path().join("build.zig"),
+            "pub fn build(b: *std.Build) void {}\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         let model = ZigBuildAdapter.detect(dir.path()).unwrap();
         assert_eq!(model.kind, "build.zig");
         assert_eq!(model.packages.len(), 1);
         assert!(ZigBuildAdapter::has_marker(dir.path()));
-        assert!(!ZigBuildAdapter::has_marker(tempfile::tempdir().unwrap().path()));
-        assert!(ZigBuildAdapter.detect(tempfile::tempdir().unwrap().path()).is_none());
+        assert!(!ZigBuildAdapter::has_marker(
+            tempfile::tempdir().unwrap().path()
+        ));
+        assert!(ZigBuildAdapter
+            .detect(tempfile::tempdir().unwrap().path())
+            .is_none());
     }
 
     #[test]

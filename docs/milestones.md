@@ -172,7 +172,7 @@ Product exits. Work order and Depends-on: [implementation-plan.md](implementatio
 
 **Status: SIGNED OFF** on branch `m5`. Do not start M6 until this section stays signed off. No dist tarball productization, no conformance dashboard, no `on_install_verify` as an M6-only exit (the install crate already exists from M0).
 
-- Content-addressed `IndexCache` under `$PREFIX/cache/` keyed `(grammar_ver, language_id, file_hash)`. Cold start skips unchanged files. Never written into the git worktree.
+- Content-addressed `IndexCache` under `$PREFIX/cache/` keyed `(grammar_ver, language_id, file_hash)`. Disk marker does not skip extract on cold start (symbols are in-memory only). Never written into the git worktree.
 - LATEST, LATEST-1, LATEST-2 fixtures per v1 language; one mixed-version workspace. C# T1/T2 only. Java no T3.
 - Watch overflow → FilesSince catch-up with `truncated`; 10k-file external-edit burst via FakeWatcher/FakeClock within the published budget.
 - Grammar lag: newer-than-window syntax → ERROR nodes / unparsed note; server stays up (Java/PHP/JS/Python/Rust/C).
@@ -817,6 +817,441 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 - Native `cargo test -- --test-threads=1` is the LOG-11 gate on macOS.
 - No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
+## poc-proof-log — empty discover + POC debug spawn
+
+**Status: SIGNED OFF** on branch `poc-proof-log`. Parent is **current `main`** (log11 merge / `a0f10a2`). Do not start `poc-lsp-async` from this branch. Do not reopen LOG-0–LOG-11. There is no `log12`.
+
+**Scope:** Serve empty F12 is an **info** row; `PROGRESSIVE_LSP_LOG_LEVEL`; poc-ide default `ControlSocket` + debug child + stderr→RunLog + `ProofStatus` footer; `xtask poc`. Not LSP IO threads, IndexStatus ingest fields, DiscoverOffer menus, or highlight cache.
+
+**Exit**
+
+- [x] Empty definition / implementation / references emit **info** with `location_count=0` extras; a hit stays debug; `didChange` stays debug.
+- [x] `PROGRESSIVE_LSP_LOG_LEVEL` overrides `[log].level`; invalid → warn + `info`; stock serve without the env stays info.
+- [x] poc-ide default-spawns `serve --control-socket` with `PROGRESSIVE_LSP_LOG_LEVEL=debug`, piped stderr into RunLog, and a footer that shows both sqlite paths + last discover.
+- [x] `cargo xtask poc` is the supported proof launch.
+
+**Sign-off checklist (poc-proof-log)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (core 72; composition-root lib 68; poc-ide lib 176; xtask 30; hygiene 6)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.10%** lines
+- [x] 80% mutants on listed crates that changed — core in-diff **7/7 (100%)**; poc-ide in-diff **34/37 (91.9%)**; composition-root session/lib in-diff **13/13 (100%)**; combined **54/57 (94.7%)**
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
+## poc-lsp-async — LSP/control IO threads
+
+**Status: SIGNED OFF** on branch `poc-lsp-async`. Parent is `poc-proof-log` (`0d9f6a8`). `poc-tier-status` stacks on this branch. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** One `poc-ide-lsp` thread owns child stdin/stdout and the stderr drain. UI submits `LspIoRequest` and polls `LspIoEvent`. Discover / didChange never block `fn ui`. `$/progress` and `window/logMessage` are kept. Control IO is a second thread; `fn ui` never calls `index_status()` / `tier_status()`. In-flight discover disables F12 / context-menu items with `waiting for server`.
+
+**Exit**
+
+- [x] UI apply path never calls `LspTransport::request`; jump / last-discover apply when the inbox yields.
+- [x] `$/progress` and `window/logMessage` are retained (`ProgressEvent` / `LogMessageEvent`).
+- [x] Discover in flight: F12 and context-menu discover items disabled, label `waiting for server`; tree / tabs / typing stay live (`didChange` queued).
+- [x] Control pushes (`TierReady`, `WatchBatch`) land in `ControlPushInbox` off `fn ui`.
+
+**Sign-off checklist (poc-lsp-async)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (core 72; composition-root lib 68; poc-ide lib 188; xtask 30; hygiene 6)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.94%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **27/27 (100%)** caught (9 unviable)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
+## poc-tier-status — ingest field + T1/T2/T3 strip + honest menus
+
+**Status: SIGNED OFF** on branch `poc-tier-status`. Parent is `poc-lsp-async` (`1407212`). Do not start `poc-no-stall` from this branch. Do not invent highlight cache or tree-expand workers. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Additive `IndexStatus.ingest`; T1/T2/T3 status strip; context / Navigate menus from `LanguageCatalog` × current tier. Not highlight cache or tree-expand worker.
+
+**Exit**
+
+- [x] `IndexStatusResponse.ingest` is `not_started` / `running` / `done`, filled from session ingest reality.
+- [x] Status strip paints T1 / T2 / T3 for the focused package (`processing` / `done` / `not supported` / `skipped` / `n/a`). Folder open starts workspace ingest; T1/T2 follow that ingest with no file focused. Java T3 is `not supported`. Stub refuse is `skipped`, not `done`.
+- [x] Context and Navigate menus use `DiscoverOffer`. Disabled items do not call FakeLsp.
+
+**Sign-off checklist (poc-tier-status)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (control 19; poc-ide lib 193; composition-root lib 69; core 72; xtask 30)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.96%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **42/42 (100%)** caught (8 unviable); control in-diff **13/13 (100%)**; composition-root in-diff **3/3 (100%)**; combined **58/58 (100%)**
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
+
+## poc-no-stall — highlight cache + tree expand worker + F12 until Ready
+
+**Status: SIGNED OFF** on branch `poc-no-stall`. Parent is `poc-tier-status` (`2ac3992`). This is the last POC-proof slice. Do not reopen POC-proof WPs. The allowed next stack is `host0` (HOST-0). Do not implement PackAdapter `Command` spawn from this branch. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Highlight cache keyed by path + rope generation; tree expand `read_dir` on a worker (header may look open, children `loading…`); Navigate / F12 disabled until `LspSessionState::Ready`. Not PackAdapter spawn. Not merging RunLog with the serve WAL.
+
+**Exit**
+
+- [x] Second highlight of unchanged text does not re-tokenize (`tokenize_count` stays).
+- [x] Tree expand lists via `ExpandChainCommand` on a worker; UI applies `CompactChainListing`; expand is disabled on that row until ready.
+- [x] Navigate / F12 stay disabled with `connecting language server` until Ready. Keyboard F12 uses the same `DiscoverMenu` gate.
+
+**Sign-off checklist (poc-no-stall)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (poc-ide lib 203; composition-root lib 69; core 72; xtask 30)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.96%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **67 caught / 78 scored (85.9%)**, 34 unviable, 10 missed, 1 timeout
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
+
+## HOST-0 — native vs container open + RuntimePort
+
+**Status: SIGNED OFF** on branch `host0`. Parent is `poc-no-stall` (`63507ff`). Do not open `host1` from this branch. Do not implement PackAdapter `Command` spawn. Do not `docker run` attach. Do not build musl images. Do not mux client. Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted docker CLI only). `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Native vs container File menu; `T3HostOffer`; `LaunchJournal` / `StatusModal`; `RuntimePort` + `FakeRuntime`; `DockerRuntime` probe/image only (`start` still unwired); core `file_uri`; host stack docs. Not PackAdapter `Command`. Not runtime image. Not mux.
+
+**Exit**
+
+- [x] Non-Linux File menu: **Open Folder…** (native T1/T2) and **Open Folder in Container…** (one Linux serve). Linux has no container item; native open is the full host.
+- [x] `T3HostOffer::NeedsContainer` paints T3 `skipped` / discover `open folder in container` on native non-Linux. Never two LSP processes.
+- [x] T1/T2/T3 strip buttons open `StatusModal` + `LaunchJournal`. Close does not cancel work.
+- [x] Container launch journal is probe → platform → image → mount → start → T3 preflight. Tests inject `FakeRuntime`. `DockerRuntime::start` errors (attach is a later slice).
+- [x] Core `path_to_file_uri` / `path_from_file_uri` percent-encode the same as poc-ide; incoming `file:` URIs decode before index lookup.
+- [x] Host stack docs: [host/agent-context.md](host/agent-context.md), branching `poc-no-stall └── host0` with `host1`–`host7` listed as future.
+
+**Sign-off checklist (HOST-0)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (poc-ide lib 214; composition-root lib 73; core 74)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.99%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff **129 caught / 140 scored (92.14%)**, 61 unviable, 10 missed, 1 timeout; core in-diff **46 caught / 50 scored (92.00%)**, 4 unviable, 1 missed, 3 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `HostOs`, `OpenMode`, `T3HostOffer`, `LaunchFlags`, `RuntimePort`, `FakeRuntime`, `DockerRuntime`, `RuntimeInfo`, `RuntimeSession`, `LaunchJournal`, `LaunchStep`, `StepState`, `StatusModal`, `RuntimeIo*`, `file_uri` / `path_to_file_uri`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- Tests never talk to a Docker daemon. `DockerRuntime` uses a missing binary or a scripted CLI.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green. Do not fake a types engine.
+
+## HOST-1 — PackAdapter Linux Command spawn
+
+**Status: SIGNED OFF** on branch `host1`. Parent is `host0` (`1d33445`). Do not open `host2` from this branch. Do not build runtime images. Do not `docker run` attach. Do not mux client. Do not pack *builds* (ty/RA musl jobs). Tests never talk to a Docker daemon, registry, or AWS. No real ty/clangd download (`FakeEngineAdapter` / fixture bytes / `RecordingSpawnPort` only). `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** `PackAdapter` Linux `Command` spawn; stub bytes still refuse exec; Darwin / non-Linux still refuse (`EngineError::Spawn`, reserved / not this OS); production spawn uses `ChildIo::lsp_with_stderr_pipe`; `SpawnPlan` value object so Darwin tests cover the Linux plan without `Command`; `RecordingSpawnPort` is would-have-spawned. Serve already holds the supervisor and `try_spawn`s (LOG-6) — not HOST-1.x. Not runtime image. Not attach. Not mux. Not pack builds.
+
+**Exit**
+
+- [x] After stub check, Linux `std::process::Command` pipes stdin/stdout for LSP and stderr for `ChildStderrAdapter` (`ChildIo::lsp_with_stderr_pipe`). Never `NullStderrAdapter`. Never a log Adapter on stdout.
+- [x] Stub bytes still refuse exec (unchanged message). Hash mismatch still no spawn.
+- [x] Darwin / non-Linux still refuse exec of non-stub real bytes (`EngineError::Spawn`, reserved / not this OS). This laptop does not exec musl ELFs or host clangd.
+- [x] `SpawnPlan` (argv, cwd, env, `ChildIo`) is a value object. Darwin unit tests name the pattern and cover the Linux plan without `Command`.
+- [x] LOG-10 attach-when-Read works when a real stderr pipe exists on Linux (`ChildHandle::has_os_stderr`); tests still use `FakeChildStderr`.
+- [x] Supervisor still degrades T1/T2 if spawn fails.
+- [x] Docs: PackAdapter row (Command on Linux; refuse stub + Darwin); branching `host0 └── host1`; `host2`–`host7` still future.
+
+**Sign-off checklist (HOST-1)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — crate-scoped + composition-root `--test-threads=1` (engine lib 41; composition-root lib 73)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.99%** lines
+- [x] 80% mutants on listed crates that changed — engine in-diff **26 caught / 26 scored (100%)**, 13 unviable
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `SpawnPlan`, `SpawnPort`, `CommandSpawnPort`, `RecordingSpawnPort`; PackAdapter / `ChildIo` updated
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the gate on macOS.
+- Tests never talk to a Docker daemon. No real ty/clangd download. `RecordingSpawnPort` is not a musl green.
+- No musl ELF change. Do not run `check-static` on a Darwin Mach-O and call it green.
+
+## HOST-2 — musl core ELF extract both triples
+
+**Status: SIGNED OFF** on branch `host2`. Parent is `host1` (`b9490b6`). Do not open `host3` from this branch. Do not build engine pack binaries. Do not build the runtime image. Do not `docker run` attach. Do not mux client. Crate tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real ty/clangd download. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Real musl **core** ELFs for `x86_64-unknown-linux-musl` (`linux/amd64`) and `aarch64-unknown-linux-musl` (`linux/arm64`) via `xtask musl`; `docker build --output` extract to `target/musl/<triple>/progressive-lsp`; `check-static` after extract; `MuslBuildPlan` + `DockerPort` / `RecordingDockerPort`. Not engine packs. Not runtime image. Not attach. Not mux. Allocator-matrix placeholders stay mimalloc.
+
+**Exit**
+
+- [x] `xtask musl` extracts a named `progressive-lsp` ELF under `target/musl/<triple>/` for both triples (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
+- [x] After a successful extract, `xtask check-static` on that ELF (no `PT_INTERP`, no `DT_NEEDED`, rusqlite must not pull `libdl`). Mach-O still refused.
+- [x] `MuslBuildPlan` is a value object (triple, docker platform, dockerfile, dest, `RUST_TARGET`). Darwin unit tests name the pattern and cover the plan without docker.
+- [x] `RecordingDockerPort` is would-have-built (no daemon). Production is `CommandDockerPort`. Tests never start docker.
+- [x] `docker/rust-musl.Dockerfile` still builds only `--bin progressive-lsp`. PR CI must not compile LLVM. Do not commit musl ELFs.
+- [x] Docs: branching `host1 └── host2`; `host3`–`host7` still future. host-deps / testing dest convention.
+
+**Sign-off checklist (HOST-2)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (37 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — crate tests use fixture ELFs (including `libdl` fail-closed / Mach-O refuse). Real dest ELFs: **PASS** `aarch64-unknown-linux-musl` and **PASS** `x86_64-unknown-linux-musl` (`target/musl/<triple>/progressive-lsp`, `cargo xtask musl --both` on this Darwin host with Docker Desktop). Darwin: do not fake musl greens; these are extracted musl ELFs, not Mach-O.
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `MuslBuildPlan`, `DockerPort`, `CommandDockerPort`, `RecordingDockerPort`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-2 proof on this Darwin host (Docker Desktop 29.2.0): `cargo xtask musl --both` extracted both core ELFs and `check-static` **PASS**ed:
+  - `target/musl/aarch64-unknown-linux-musl/progressive-lsp` — ELF 64-bit LSB executable, ARM aarch64, statically linked (~22 MiB)
+  - `target/musl/x86_64-unknown-linux-musl/progressive-lsp` — ELF 64-bit LSB pie executable, x86-64, static-pie linked (~22 MiB)
+  That is **not** a cargo test. qemu/`linux/amd64` succeeded here; a missing daemon on another Darwin machine is still a recorded gap, not a Mach-O green.
+- Extract dest is gitignored under `target/`. Do not commit musl ELFs.
+- Engine pack builds remain HOST-3. Runtime image remains HOST-4.
+
+## HOST-3 — slim pack jobs both triples
+
+**Status: SIGNED OFF** on branch `host3`. Parent is `host2` (`7e34b2c`). Do not open `host4` from this branch. Do not build clangd/tsgo/gopls/zls. Do not build the runtime image. Do not `docker run` attach. Do not mux client. Crate tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real ty/clangd download in tests. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Slim pack musl jobs for `python`/`ty`, `rust`/`rust-analyzer`, `phpantom`/`phpantom`, `biome`/`biome`, `superhtml`/`superhtml` on both triples via `xtask pack`; pinned upstream git SHAs in `xtask/pack-pins.toml`; `docker build --output` extract to `target/musl/<triple>/engines/<pack>/<binary>`; `check-static` after extract; `PackBuildPlan` + existing `DockerPort` / `RecordingDockerPort`. Not heavy packs. Not runtime image. Not attach. Not mux. Allocator-matrix placeholders stay mimalloc. Darwin `xtask dist` stubs are not musl greens.
+
+**Exit**
+
+- [x] `xtask pack` extracts named slim pack ELFs under `target/musl/<triple>/engines/<pack>/<binary>` for both triples (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
+- [x] After a successful extract, `xtask check-static` on that ELF (no `PT_INTERP`, no `DT_NEEDED`). Mach-O and Darwin dist stubs still refused.
+- [x] `PackBuildPlan` is a value object (pack, binary, triple, platform, dockerfile, dest, pinned SHA). Darwin unit tests name the pattern and cover the plan without docker.
+- [x] Pins are 40-hex git SHAs in `xtask/pack-pins.toml` (not core crate semver, not `latest`).
+- [x] `RecordingDockerPort` is would-have-built (no daemon). Production is `CommandDockerPort` / `DockerPort::extract`. Tests never start docker.
+- [x] `docker/engine-pack.Dockerfile` is a real hermetic Rust pack job (not `cat /pack-id.txt`). Heavy packs fail closed. Do not commit musl ELFs.
+- [x] Docs: branching `host2 └── host3`; `host4`–`host7` still future. host-deps / testing dest convention.
+
+**Sign-off checklist (HOST-3)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (47 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — crate tests use fixture ELFs. Live dest ELFs: **10/10 PASS** (table below). `superhtml` × `x86_64-unknown-linux-musl` was a qemu/Zig `faccessat` ENOSYS miss at HOST-3 sign-off; closed later by host-native `--platform` + Zig `-Dtarget` (not qemu amd64).
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `PackPin`, `PackKind`, `PackBuildPlan`, `RustToolchainPin`, `ZigToolchainPin`; `DockerPort` extract
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-3 proof is extracted musl ELFs, not Darwin `xtask dist` stubs. Dest is gitignored under `target/`.
+- First live extract attempt (phpantom aarch64 on `rust:1.87-alpine`) failed: mago crates require rustc ≥ 1.97. Switched to `rust:1.98.0-bookworm` + musl *target* (`1.99.0` is unpublished; alpine musl-host rustup 1.98+ 404s).
+- `x86_64-unknown-linux-musl` defaults to dynamic `ld-musl` (`PT_INTERP`). Pack Dockerfile now forces `+crt-static` / `link-self-contained` / `-static` via target-specific `RUSTFLAGS` (plain `RUSTFLAGS` was dropped by upstream `.cargo/config`).
+- Live `check-static` on this Darwin host (Docker Desktop). Rust packs: native `linux/arm64` then qemu `linux/amd64`. Zig packs: host-native `linux/arm64` + `-Dtarget` (do not qemu the Zig compiler).
+
+  | pack | binary | aarch64 | x86_64 |
+  |---|---|---|---|
+  | python | ty | PASS (~33 MiB static) | PASS (~45 MiB static) |
+  | rust | rust-analyzer | PASS (~50 MiB static) | PASS (~57 MiB static) |
+  | phpantom | phpantom | PASS (~46 MiB static) | PASS (~46 MiB static) |
+  | biome | biome | PASS (~125 MiB static) | PASS (~118 MiB static) |
+  | superhtml | superhtml | PASS (~7.9 MiB static) | PASS (~8.1 MiB static) — native `linux/arm64` container + `ZIG_TARGET=x86_64-linux-musl`. qemu `linux/amd64` still hits Zig `faccessat` ENOSYS; that path is no longer used. |
+
+- Runtime image remains HOST-4. Heavy packs remain HOST-7.
+
+## HOST-4 — runtime image copy of core and slim packs
+
+**Status: SIGNED OFF** on branch `host4`. Parent is `host3` (`0d24582`). Do not open `host5` from this branch. Do not `docker run` attach. Do not mux client. Do not build clangd/tsgo/gopls/zls. Do not compile cargo/LLVM/clang/zig/go inside the runtime image. Crate tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real ty/clangd download in tests. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Runtime image `progressive-lsp-runtime:local` via `xtask runtime-image`; copy prebuilt HOST-2 core + HOST-3 slim packs into `/opt/plsp` (`bin/progressive-lsp`, `engines/<pack>/<binary>`, empty `cache`/`log`/`run`/`scripts`, empty `/tmp`); `FROM scratch` Dockerfile that `COPY`s only; `RuntimeImagePlan` + existing `DockerPort` / `RecordingDockerPort` (`tag_image`). Not attach. Not mux. Not heavy packs. Allocator-matrix placeholders stay mimalloc.
+
+**Exit**
+
+- [x] `xtask runtime-image` stages prebuilt ELFs and tags `progressive-lsp-runtime:local` for both platforms (or records an honest Darwin vs CI gap if the daemon / qemu triple fails).
+- [x] Image layout matches `PrefixLayout` under `/opt/plsp`. ENTRYPOINT is the core ELF; default args are `serve --prefix /opt/plsp` (host5 attach still unwired).
+- [x] `RuntimeImagePlan` is a value object (platform, triple, dockerfile, core dest, pack dests, image tag). Darwin unit tests name the pattern and cover the plan without docker.
+- [x] `docker/runtime.Dockerfile` is `FROM scratch` and `COPY`s only. No rustc/cargo/clang/LLVM/zig/go. Missing required core ELF fail closed. HOST-4 allowed omitting `superhtml` × x86_64 (HOST-3 miss). **Superseded by HOST-CLEANUP:** slim including superhtml is required on both triples.
+- [x] `RecordingDockerPort` is would-have-tagged (no daemon). Production is `CommandDockerPort` / `DockerPort::tag_image`. Tests never start docker.
+- [x] Docs: branching `host3 └── host4`; `host5`–`host7` still future. host-deps: runtime image is our artifact; docker CLI remains a host tool; tests still FakeRuntime.
+
+**Sign-off checklist (HOST-4)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (60 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.00%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELFs unchanged; image copies HOST-2/HOST-3 dests). Do not run `check-static` on a Darwin Mach-O
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan`, `PackImageCopy`; `DockerPort` `tag_image`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-4 proof is a tagged local image, not a cargo test. Staging dest is gitignored under `target/runtime-image/`. Do not commit musl ELFs.
+- Live `cargo xtask runtime-image` on this Darwin host (Docker Desktop 29.2.0):
+
+  | platform | triple | tag | image id | notes |
+  |---|---|---|---|---|
+  | `linux/arm64` | `aarch64-unknown-linux-musl` | `progressive-lsp-runtime:local` | `sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8` | native; ~85 MiB; ENTRYPOINT `/opt/plsp/bin/progressive-lsp`; CMD `serve --prefix /opt/plsp`; core + five slim packs |
+  | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:42a7314349631cf0fb04be66deed203bc281389c75a462d73af603fb77699ac1` | ~86 MiB; same ENTRYPOINT/CMD; `superhtml` omitted (HOST-3 qemu/Zig miss). **Superseded by HOST-CLEANUP** (amd64 image now includes superhtml). `:local` left on native arm64 |
+
+- `DockerRuntime.start` remains unwired. Heavy packs remain HOST-7.
+
+## HOST-5 — docker run stdio attach
+
+**Status: SIGNED OFF** on branch `host5`. Parent is `host4` (`67ca485`). Do not open `host6` from this branch. Do not mux client / `serve --mux`. Do not build clangd/tsgo/gopls/zls. Do not rebuild the runtime image. Container LSP is **stdio only** (`ServeMode::StockStdio`). Unix sockets through Docker Desktop are forbidden. Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted CLI / `DockerRunPlan` argv only). No real ty/clangd download. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** `DockerRunPlan` + `DockerRuntime::start` validates the plan (does not exec); poc-ide `LspIoAttach::Container` → `StdioLsp::from_command` is the single `docker run -i --rm`; bind-mount `$WS:$WS`; working directory `$WS`; image `progressive-lsp-runtime:local`; `serve --prefix /opt/plsp`. No local Darwin serve on container open. Not mux. Not full packs. HOST-5 exit is attach + initialize over stdio, not a full T3 hover green.
+
+**Exit**
+
+- [x] `DockerRunPlan` is a value object (docker binary, `-i --rm`, `-v WS:WS`, `-w WS`, image, `serve --prefix /opt/plsp`). Darwin unit tests name the pattern and cover the plan without exec. Never `-t`.
+- [x] `DockerRuntime::start` validates the plan and returns `RuntimeSession`. It does not `docker run`. Empty workspace / missing absolute docker binary fail closed.
+- [x] Container open attaches `StdioLsp` to that docker Command + `StockStdio`. Native open still uses `SpawnSpec` + `ControlSocket`. Never two serves.
+- [x] FakeRuntime still drives the journal. Scripted CLI covers probe/inspect. `DockerRunPlan` tests do not start a daemon. No `thread::sleep`.
+- [x] Docs: branching `host4 └── host5`; `host6`–`host7` still future. host-deps: attach is plan → stdio; docker CLI remains a host tool; tests still FakeRuntime.
+
+**Sign-off checklist (HOST-5)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p poc-ide --lib -- --test-threads=1` (216 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **96.50%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff vs `67ca485` **19 caught / 23 scored (82.6%)**, 1 unviable, 4 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `DockerRunPlan`, `LspIoAttach`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inspect `DockerRunPlan` argv and inject `FakeRuntime` / a scripted CLI; they never start a Docker daemon.
+- HOST-5 proof is attach + initialize over stdio, not a cargo test and not a T3 hover. First live T3 on mounted source is later (Python/ty or PHP/phpantom).
+- Live `docker run -i --rm` initialize on this Darwin host: **attempted and succeeded**. Image `progressive-lsp-runtime:local` (`sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8`, linux/arm64, ENTRYPOINT `/opt/plsp/bin/progressive-lsp`, CMD `serve --prefix /opt/plsp`). One-shot `docker run -i --rm -v $WS:$WS -w $WS` (no `-t`) answered `initialize` with `serverInfo.name=progressive-lsp` and `experimental.progressiveLsp` `{version:v1, socket:null, mux:false}`. Not a cargo test. Not a T3 hover.
+- Heavy packs remain HOST-7. Mux remains HOST-6.
+
+## HOST-6 — poc-ide mux client on container stdio
+
+**Status: SIGNED OFF** on branch `host6`. Parent is `host5` (`b46ad0f`). Do not open `host7` from this branch. Do not build clangd/tsgo/gopls/zls. Do not rebuild the runtime image. Container LSP + control share one stdio (`ServeMode::Mux`, `serve --prefix /opt/plsp --mux`). Native Darwin open keeps `ServeMode::ControlSocket` (real Unix socket on the Mac is fine). Unix sockets through Docker Desktop remain forbidden. Tests never talk to a Docker daemon, registry, or AWS (`FakeRuntime` / scripted CLI / `DockerRunPlan` argv / pair mux frames). No real ty/clangd download. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** `ServeMode::Mux` + `MuxStdio` Adapter reuse protocol `MuxFrame` (`u8 channel | u32be length | payload`, 16 MiB cap). Channel 0 = opaque JSON-RPC body matching `LspFacade::serve_mux`. Channel 1 = the same length-prefixed Envelope as `ControlClient` on a Unix socket. `DockerRunPlan` includes `--mux`. `advertised_control` returns `ControlAttach::Mux` when mux is selected; `pending_mux` only when mux is advertised but not selected. `experimental.progressiveLsp.mux` true and `socket` null on container mux. One docker process. Not full packs.
+
+**Exit**
+
+- [x] `ServeMode::Mux` argv is `serve --mux`. Container `DockerRunPlan` is `serve --prefix /opt/plsp --mux`. Darwin unit tests name the pattern. Never `-t`. Never a second serve.
+- [x] `MuxStdio` / `MuxLsp` / `MuxControl` encode/decode protocol `MuxFrame`. Unknown channel and payload > 16 MiB fail closed. Pair / Cursor tests. No `thread::sleep`. No docker daemon.
+- [x] `advertised_control` + `ControlAttach::Mux` replace `pending_mux` on the selected mux path. Native `ControlSocket` still uses `advertised_control_socket`.
+- [x] Docs: branching `host5 └── host6`; `host7` still future. host-deps: container attach is mux stdio; docker CLI remains a host tool; tests still FakeRuntime.
+
+**Sign-off checklist (HOST-6)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p poc-ide --lib -- --test-threads=1` (225 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.95%** lines
+- [x] 80% mutants on listed crates that changed — poc-ide in-diff vs `b46ad0f` **31 caught / 31 scored (100%)**, 42 unviable, 0 missed, 0 timeouts
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (ELF unchanged). Darwin: do not fake musl greens
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `ServeMode::Mux`, `MuxStdio`, `MuxLsp`, `MuxControl`, `ControlAttach`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inspect `DockerRunPlan` argv and inject `FakeRuntime` / a scripted CLI / in-memory mux frames; they never start a Docker daemon.
+- HOST-6 proof is mux initialize (`mux: true`, `socket: null`), not a cargo test and not a T3 hover. First live T3 on mounted source is later (Python/ty or PHP/phpantom).
+- Live `docker run -i --rm … serve --prefix /opt/plsp --mux` initialize: **attempted and succeeded**. Image `progressive-lsp-runtime:local` (`sha256:e017bf95856798a35767438f560ba1feb67082cbbab551adedc67d1373eb04b8`, linux/arm64, ENTRYPOINT `/opt/plsp/bin/progressive-lsp`). One-shot `docker run -i --rm -v $WS:$WS -w $WS` (no `-t`) with `serve --prefix /opt/plsp --mux` answered a channel-0 mux-framed `initialize` with `serverInfo.name=progressive-lsp` and `experimental.progressiveLsp` `{version:v1, socket:null, mux:true}`. Not a cargo test. Not a T3 hover.
+- Full packs are HOST-7.
+
+## HOST-7 — full flavor musl pack jobs
+
+**Status: SIGNED OFF** on branch `host7`. Parent is `host6` (`d6f8fa8`). This is the last host slice — do not open `host8`. Do not rewire `DockerRuntime.start` except to copy extra packs into the runtime image when present. Container LSP + control stay mux stdio. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). No real LLVM download in tests. `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Full flavor packs on both musl triples: `clangd` (cache COPY; miss documented; never cmake in the default job), `tsgo` / `gopls` (`CGO_ENABLED=0` Go static), `zls` (Zig musl, same dockerfile as superhtml). Pins are 40-hex SHAs in `xtask/pack-pins.toml`. `--pack full` / `--pack clangd,tsgo,gopls,zls` allowed; slim default still works; unknown packs fail closed. Dest `target/musl/<triple>/engines/<pack>/<binary>` then `check-static`. `PackBuildPlan` Darwin unit tests cover heavy plans without docker. `xtask runtime-image` copies full packs when present (optional). Allocator-matrix placeholders stay mimalloc (skip matrix: gopls, tsgo, zls). Not a follow-on host8.
+
+**Exit**
+
+- [x] `xtask pack --pack full` (or named CSV) extracts / records per pack×triple. Slim still the default. Unknown packs fail closed.
+- [x] After a successful extract, `xtask check-static` on that ELF (no `PT_INTERP`, no `DT_NEEDED`). clangd missing cache is a documented miss — do not ship dynamic. Mach-O and Darwin dist stubs still refused.
+- [x] `PackBuildPlan` covers heavy kinds (`go`, `cached`, `cmake` cache-fill) without docker. Darwin unit tests name the pattern.
+- [x] Pins are 40-hex git SHAs (gopls, tsgo, zls, llvm-project). Not `latest`.
+- [x] Go packs: `CGO_ENABLED=0`. Zig toolchain only inside the pack build container. clangd default job never cmake; `--cache-fill` is dedicated and not PR CI.
+- [x] Docs: branching `host6 └── host7`; no host8. host-deps: full packs via Docker/cache; PR CI must not compile LLVM.
+
+**Sign-off checklist (HOST-7)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p xtask -- --test-threads=1` (68 passed)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **95.95%** lines
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docker / docs only; discovery.rs unchanged)
+- [x] No `sleep`
+- [x] `check-static` — crate tests use fixture ELFs. Live dest table below. Do not commit musl ELFs.
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `PackKind` (`go`/`cached`/`cmake`), `GoToolchainPin`, `PackBuildPlan` heavy plans, `PackImageCopy` optional full
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- HOST-7 proof is extracted musl ELFs (or honest misses), not Darwin `xtask dist` stubs. Dest is gitignored under `target/`. Do not commit musl ELFs.
+- clangd is content-addressed by llvm-project SHA + triple. Cache hit COPY; miss is an honest gap. `--cache-fill` cmake is not the default pack job and must not run on every PR.
+- Live `check-static` on this Darwin host (Docker Desktop 29.2.0):
+
+  | pack | binary | aarch64 | x86_64 |
+  |---|---|---|---|
+  | gopls | gopls | PASS (~27 MiB static) | PASS (~29 MiB static) |
+  | zls | zls | PASS (~17 MiB static) | PASS (~17 MiB static) — same Zig path as superhtml: host-native `linux/arm64` + `ZIG_TARGET=x86_64-linux-musl`. qemu amd64 is not used. |
+  | tsgo | tsgo | PASS (~25 MiB static) | PASS (~28 MiB static) |
+  | clangd | clangd | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:aarch64-unknown-linux-musl` absent; not cmake | **MISS** — cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:x86_64-unknown-linux-musl` absent; not cmake |
+
+This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. It is not the same class as the closed superhtml × x86_64 pack/image miss.
+
+## HOST-CLEANUP — superhtml required on both image triples
+
+**Status: SIGNED OFF** on branch `host-cleanup`. Parent is `fix-superhtml-x8664` (`59781cf`), stacked on signed-off `host7` (`5815fcd`). `operator-cli` (`a86f8db`) merged into this branch (`cbabe13`) so `./build` is retained — not a separate lost stash. This is a cleanup break, **not** host8. Do not open `host8`. Do not rewire attach/mux. Do not `--cache-fill` / cmake LLVM. Tests never talk to a Docker daemon, registry, or AWS (`RecordingDockerPort` / fixture bytes only). `RunLog` stays a separate schema from the serve WAL.
+
+**Scope:** Three leftover gaps after the zig qemu `faccessat` fix: (1) `RuntimeImagePlan` requires `superhtml` on both triples (HOST-3 miss closed); (2) clangd cache miss stays a documented HOST-7 gap — not a superhtml-class miss; (3) Zig pack `--platform` is host-native on both ISAs (native linux/amd64 CI shape locked in unit tests; Darwin qemu amd64 is not used for Zig). Not attach. Not mux. Not cache-fill.
+
+**Exit**
+
+- [x] Slim packs including superhtml required on both triples; missing dest fail closed (same as ty/RA/phpantom/biome).
+- [x] Full packs (clangd/tsgo/gopls/zls) remain optional. clangd cache miss unchanged.
+- [x] Zig `RecordingDockerPort` / `for_pin_on_host_arch` covers both host ISAs (`linux/amd64` native CI argv; never qemu amd64 when host is arm64). Rust/go/cached still follow the triple.
+- [x] Live `xtask runtime-image` for `x86_64-unknown-linux-musl` includes superhtml.
+
+**Sign-off checklist (HOST-CLEANUP)**
+
+- [x] Exit criteria met
+- [x] Tests on this branch — `CARGO_TARGET_DIR=target/host-cleanup cargo test -p xtask -- --test-threads=1` (**87 passed**)
+- [x] 95% llvm-cov on crates that exist (same ignores) — **N/A to lower** (xtask excluded); workspace cov not re-run on this docs/image follow-up
+- [x] 80% mutants on listed crates that changed — **N/A** (xtask / docs only)
+- [x] No `sleep`
+- [x] `check-static` — **N/A** (no new shipped ELF; image copies existing dests). Do not run `check-static` on a Darwin Mach-O
+- [x] Docs in this tree updated (`RunLog` stays a separate schema)
+- [x] [design-patterns.md](design-patterns.md) — `RuntimeImagePlan` / `PackImageCopy` required-slim; `PackBuildPlan` host-arch injection; `XtaskCommand` / `PocArgs` CLI rows kept from `operator-cli`
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
+- Native linux/amd64 CI was **not** re-run in this Darwin session. There is no `.github/` workflow here. The Zig path no longer uses qemu amd64: on a native linux/amd64 host `host_native_docker_platform()` is `linux/amd64` without qemu. Unit tests lock that argv via injected host-arch. Rust/go/cached packs still follow the triple (qemu amd64 on Darwin for x86_64 is OK — those already PASS).
+- clangd cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1:<triple>` is still absent. HOST-CLEANUP does not close this. Do not cmake. Do not `--cache-fill`.
+- HOST-CLEANUP live `cargo xtask runtime-image --target x86_64-unknown-linux-musl` on this Darwin host (Docker Desktop). Staging dest is gitignored. Do not commit musl ELFs.
+
+  | platform | triple | tag | image id | notes |
+  |---|---|---|---|---|
+  | `linux/amd64` | `x86_64-unknown-linux-musl` | built then retagged off `:local` | `sha256:3e14d4acd2f5c9e813e330a7f99e7e2e438e62fa3871d30da4a8f82970cb15fc` | ~119 MiB; superhtml **present** (8.1 MiB x86-64 static ELF via `docker cp /opt/plsp/engines/superhtml/superhtml`). clangd omitted (HOST-7 cache miss `3623fe661ae35c6c80ac221f14d85be76aa870f1`). `:local` left on native arm64 `sha256:3941096844b9994f876414b9efe0b3f9143823895a9a5f023b22e814a54a59a6` |
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11)
 

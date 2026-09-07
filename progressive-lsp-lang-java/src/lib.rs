@@ -39,6 +39,9 @@ mod tests {
         assert_eq!(grammar_id(), "tree-sitter-java");
         let _ = tree_sitter_language();
         assert!(!TOKEN_TYPES.is_empty());
-        assert_eq!(semantic_tokens_legend().token_types.len(), TOKEN_TYPES.len());
+        assert_eq!(
+            semantic_tokens_legend().token_types.len(),
+            TOKEN_TYPES.len()
+        );
     }
 }

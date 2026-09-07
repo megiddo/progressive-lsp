@@ -31,9 +31,7 @@ impl PrefixLayout {
         }
         match std::env::var(ENV_PREFIX) {
             Ok(value) if !value.is_empty() => Ok(Self::from_path(value)),
-            Ok(_) => Err(ConfigError::Prefix(
-                "PROGRESSIVE_LSP_HOME is empty".into(),
-            )),
+            Ok(_) => Err(ConfigError::Prefix("PROGRESSIVE_LSP_HOME is empty".into())),
             Err(std::env::VarError::NotUnicode(_)) => Err(ConfigError::Prefix(
                 "PROGRESSIVE_LSP_HOME is not valid unicode".into(),
             )),

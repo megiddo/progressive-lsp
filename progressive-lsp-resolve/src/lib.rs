@@ -14,7 +14,9 @@ pub mod tsg_runtime;
 
 pub use chain::ResolverChain;
 pub use fake::{FakeResolver, NotReadyResolver};
-pub use graph::{CallSite, GraphFacts, GraphIndex, ImportDecl, TypeEdge};
+pub use graph::{
+    type_ref_matches, type_ref_simple, CallSite, GraphFacts, GraphIndex, ImportDecl, TypeEdge,
+};
 pub use heuristic::HeuristicResolver;
 pub use query::{
     DocumentSymbol, EmptyIndex, Hover, LspLocation, Position, QueryKind, Range, ResolveOutcome,
@@ -38,7 +40,10 @@ mod tests {
 
     #[test]
     fn public_reexports_resolve() {
-        let _ = Position { line: 0, character: 0 };
+        let _ = Position {
+            line: 0,
+            character: 0,
+        };
         let _ = QueryKind::Definition;
         let _ = ResolverChain::new(Vec::new());
         let _ = FakeResolver::graph("t2");
@@ -49,6 +54,8 @@ mod tests {
         let _ = T2Strategy::from_backend(progressive_lsp_core::T2Backend::Heuristic);
         let _ = TsgPin::java_upstream();
         let _ = FileId::new("f");
+        assert_eq!(type_ref_simple("List<String>"), "List");
+        assert!(type_ref_matches("List<String>", "List", "java.util.List"));
         assert_eq!(Tier::Syntax.as_str(), "syntax");
     }
 }

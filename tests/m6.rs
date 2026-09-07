@@ -8,9 +8,7 @@ use progressive_lsp_control::{
     FilesSinceResponse, WatchBatch, WatchEvent,
 };
 use progressive_lsp_install::{sha256, FakeRemoteTransport, Installer, DIST_PROTO, MUSL_TRIPLES};
-use progressive_lsp_protocol::{
-    framing, LspFacade, CHANNEL_CONTROL, CHANNEL_LSP,
-};
+use progressive_lsp_protocol::{framing, LspFacade, CHANNEL_CONTROL, CHANNEL_LSP};
 use serde_json::json;
 
 #[test]
@@ -81,8 +79,16 @@ fn progressive_files_since_and_watch_batch_are_protobuf_only() {
         })
         .unwrap();
     let batch = srv.encode_watch_batch().unwrap();
-    assert_ne!(fs.first().copied(), Some(b'{'), "FilesSince must not be JSON-RPC");
-    assert_ne!(batch.first().copied(), Some(b'{'), "WatchBatch must not be JSON-RPC");
+    assert_ne!(
+        fs.first().copied(),
+        Some(b'{'),
+        "FilesSince must not be JSON-RPC"
+    );
+    assert_ne!(
+        batch.first().copied(),
+        Some(b'{'),
+        "WatchBatch must not be JSON-RPC"
+    );
     for bytes in [&fs, &batch] {
         let text = String::from_utf8_lossy(bytes);
         assert!(!text.contains("$/"));
@@ -121,7 +127,10 @@ fn fake_remote_transport_hash_mismatch_and_atomic_replace() {
         .plan(&dest, b"new".to_vec(), sha256(b"new"), true)
         .unwrap();
     let err = installer.apply(&plan).unwrap_err();
-    assert!(matches!(err, progressive_lsp_core::InstallError::Hash { .. }));
+    assert!(matches!(
+        err,
+        progressive_lsp_core::InstallError::Hash { .. }
+    ));
     assert!(!dest.exists());
     let ops = installer.transport().ops();
     assert!(ops.iter().any(|o| o.starts_with("put ")));

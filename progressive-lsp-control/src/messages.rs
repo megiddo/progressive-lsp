@@ -150,6 +150,59 @@ pub struct IndexStatusResponse {
     pub packages: Vec<IndexPackage>,
     #[prost(uint64, tag = "3")]
     pub cache_entries: u64,
+    /// Additive. `not_started` | `running` | `done`.
+    #[prost(string, tag = "4")]
+    pub ingest: String,
+}
+
+impl IndexStatusResponse {
+    pub fn ingest_state(&self) -> IngestState {
+        IngestState::parse(&self.ingest)
+    }
+}
+
+/// Value object. IndexStatus ingest phase. Unknown / empty parse → `not_started`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IngestState {
+    NotStarted,
+    Running,
+    Done,
+}
+
+impl IngestState {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "running" => Self::Running,
+            "done" => Self::Done,
+            _ => Self::NotStarted,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStarted => "not_started",
+            Self::Running => "running",
+            Self::Done => "done",
+        }
+    }
+
+    pub fn is_done(self) -> bool {
+        matches!(self, Self::Done)
+    }
+
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Running)
+    }
+
+    pub fn is_not_started(self) -> bool {
+        matches!(self, Self::NotStarted)
+    }
+}
+
+impl Default for IngestState {
+    fn default() -> Self {
+        Self::NotStarted
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
@@ -294,5 +347,37 @@ mod tests {
             since: Some(files_since_request::Since::SinceUnixMs(1)),
         };
         assert_ne!(a.encode_to_vec(), b.encode_to_vec());
+    }
+
+    #[test]
+    fn ingest_state_value_object_parses_wire_and_unknown() {
+        assert_eq!(IngestState::parse("not_started"), IngestState::NotStarted);
+        assert_eq!(IngestState::parse("running"), IngestState::Running);
+        assert_eq!(IngestState::parse("done"), IngestState::Done);
+        assert_eq!(IngestState::parse(""), IngestState::NotStarted);
+        assert_eq!(IngestState::parse("unknown"), IngestState::NotStarted);
+        assert_eq!(IngestState::parse("DONE"), IngestState::NotStarted);
+        assert_eq!(IngestState::default(), IngestState::NotStarted);
+        assert_eq!(IngestState::NotStarted.as_str(), "not_started");
+        assert_eq!(IngestState::Running.as_str(), "running");
+        assert_eq!(IngestState::Done.as_str(), "done");
+        assert!(IngestState::Done.is_done());
+        assert!(!IngestState::Running.is_done());
+        assert!(IngestState::Running.is_running());
+        assert!(!IngestState::NotStarted.is_running());
+        assert!(IngestState::NotStarted.is_not_started());
+        assert!(!IngestState::Done.is_not_started());
+        assert_ne!(IngestState::Running, IngestState::Done);
+        let resp = IndexStatusResponse {
+            status: Some(Status::ok()),
+            packages: vec![],
+            cache_entries: 0,
+            ingest: IngestState::Running.as_str().into(),
+        };
+        assert_eq!(resp.ingest_state(), IngestState::Running);
+        assert_eq!(
+            IndexStatusResponse::default().ingest_state(),
+            IngestState::NotStarted
+        );
     }
 }

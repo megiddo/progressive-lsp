@@ -14,10 +14,11 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `PluginRegistry` | Factory / Registry | Lookup by `LanguageId` / pack name is deterministic; unknown → `UnsupportedLanguage`, no panic; `with_log` emits `info` `operation=resolve` on `get` fail (LOG-8) |
 | `LanguageFactory` | Abstract Factory | Produces grammar id + resolver chain for one language |
 | `ScriptEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai; watch tests do not hard-code Rhai |
-| `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path |
+| `LanguageId`, `PackageId`, `FileId`, `WorkspaceId` | Identity / interned newtype | Equality is id equality; `WorkspaceId` is a hash of the canonical absolute path; `FileId::from_uri` percent-decodes so ingest and resolve share the OS path |
+| `path_to_file_uri` / `path_from_file_uri` | Adapter | Same percent-encoding as poc-ide `file_uri`; spaces and `@` round-trip; incoming `file:` URIs decode before index lookup |
 | `Tier`, `LanguageVersion` | Value object | `effective` = `min(window, grammar, engine)`; never panic on newer syntax |
 | `PrefixLayout`, prefix / `PROGRESSIVE_LSP_HOME` | Scoped Singleton (process) | One layout per process; tests inject prefix |
-| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info` |
+| `Config`, `ConfigOverlay`, `ConfigLoad` | Chain / Builder | Later overlay wins for keys it sets; empty TOML is valid; unknown keys warn; `[t2]` merges per language; `[log]` merges `level` / `path` independently; invalid `level` → warn + default `info`; `PROGRESSIVE_LSP_LOG_LEVEL` is resolved on `LogLevel`, not in the overlay |
 | `apply_worktree_excludes` / `GitExcludeReport` | Command | Writes `.git/info/exclude` + overlay belt `.gitignore`; never edits the project’s committed `.gitignore` |
 | `ProgressiveLspCap` | Value object / DTO | `version` is `v1`; `socket` may be null; stock clients ignore it |
 | `InstallPlan` | Command | `apply` hashes tmp before rename; mismatch deletes tmp |
@@ -60,7 +61,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `WorkspaceSession` | Facade | Composition root wires watch + index + resolve; not a god `LspServer`; `LogScope` around didOpen/didChange/definition (Context Object); `didClose` debug (LOG-8); `indexer_for` None → once-per-id `info` `operation=resolve`; holds `EngineSupervisor` when serve attaches it (LOG-6); `attach_supervisor` prepends `EngineResolver` (skip-once, never fail the user) |
 | `LspIntelligence` | Port | JSON-RPC facade calls domain resolve; no watch internals |
 | `DirtySet` + `PriorityIndex` | Command queue + Priority | Open buffers before vendor; generation monotonic |
-| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` → skip parse; disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`) |
+| `IndexCache` | Repository | Same `(grammar_ver, lang, hash)` remembered on disk under `$PREFIX/cache/` only; I/O miss emits `LogPort` warn via `LogScope` (`operation=index`); disk marker does **not** skip extract — only an in-memory symbol hit for that path skips Tree-sitter |
 | `CacheKey` | Value object / identity | Path is `sanitize(grammar)/sanitize(lang)/hex(hash)`; `.`/`..` cannot escape the prefix |
 | `IndexedFile.has_error` / `unparsed_note` | Value object | ERROR/MISSING nodes ⇒ note; server stays up, no panic |
 | `sample_rss_bytes` / `rss_sample_label` | Value object | Darwin/Linux host sample; not an allocator-matrix CI-arch winner |
@@ -80,7 +81,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | Feature `lang-*` | Product variants | Disabled language → Factory missing, not a stub that panics |
 | `PackageIngest` / `IngestReport` | Command | One package per step; `didChange` never waits on remaining packages |
 | `WorkDoneProgress` / `ProgressKind` | Event / DTO | Standard LSP `$/progress` begin/report/end; not a `$/` FilesSince shim |
-| `GraphFacts` / `ImportDecl` / `TypeEdge` / `CallSite` | Value objects | LanguageIndexer Visitor fills them; resolvers do not parse JSON-RPC |
+| `GraphFacts` / `ImportDecl` / `TypeEdge` / `CallSite` | Value objects | LanguageIndexer Visitor fills them; resolvers do not parse JSON-RPC; `TypeEdge` parent is a simple type name (`type_ref_simple` strips type arguments) |
 | `GraphIndex` | Port | Same store as `SymbolIndex`; package tier is Graph only after ingest |
 | `StackGraphResolver` | Strategy | `unused()` is NotReady; `load_java` / `with_tsg_source` loads pinned Java TSG when selected |
 | `ComposerAdapter` / `GoModAdapter` / `ZigBuildAdapter` | Adapter | Manifest files only; no host php/go/zig |
@@ -96,7 +97,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `BackoffPolicy` | Strategy | Delay doubles then caps; `can_respawn` uses `ClockPort.unix_ms` |
 | `SpawnTweak` / `SpawnDecision` | Command / DTO | Only allowlisted argv/cwd/env apply; Abort spawn skips the engine |
 | `EngineHooks` / `ScriptHookBridge` / `NoopHooks` | Port / Adapter | Supervisor does not hard-code Rhai; tests inject Abort/Noop |
-| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec (CI/Docker builds real musl ELFs); `EngineError::Spawn` refuse is logged by the supervisor (LOG-6); do not implement `Command` on the logging stack |
+| `PackAdapter` | Adapter | Discover + hash; stub bytes never exec; Darwin / non-Linux `EngineError::Spawn` (“not this OS”); Linux `Command` via `CommandSpawnPort` + `ChildIo::lsp_with_stderr_pipe`; tests inject `RecordingSpawnPort` (would-have-spawned, no exec) |
 | `EngineMessage` | Event / DTO | Forwarded didChange/watch recorded on `ChildHandle` inbox |
 | `PythonLanguageFactory` / `RustLanguageFactory` | Abstract Factory | `language_id` is stable; T3 only when supervisor ready (Rust also requires sysroot) |
 | `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
@@ -118,6 +119,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |
 | `It2ReportRow` | DTO | `language`, `corpus_sha`, `pack`, `tier_observed`, `definition_ok`, `tokens_ok`, `ghost_edit_ok`, `notes`; T3 stub → `skip_pack_missing` |
 | `Envelope` | DTO / public dispatch | `method` + `request_id` + `body`; replies echo id; pushes use `request_id == 0`; never `$/` |
+| `IngestState` | Value object | `not_started` \| `running` \| `done`; unknown / empty parse → `not_started`; never panic |
 | `ControlPlane` | Port | Proto RPCs call the composition-root host; control crate does not own config/watch/install internals |
 | `ControlServer::dispatch_envelope` | Command | Case-sensitive method names match the API RPC table; unknown method → non-zero `Status` |
 | `bind_control_socket` / `spawn_control_accept` | Adapter | Unix socket beside stdio LSP; length-prefixed Envelope; stock serve without `--control-socket` still works; bind/accept/`PayloadTooLarge` emit `operation=control` (LOG-7) without payload bytes |
@@ -131,9 +133,10 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
 | `LogPort` | Dependency injection / Port | `fn emit(&self, record: LogRecord)` returns `()`; no `Result`; same injection rule as `ClockPort`; libs take `Arc<dyn LogPort>`; process-wide `OnceLock<LogPort>` is forbidden |
-| `LogFacade` | Facade | Wraps `LogSink` + `ReentrancyGuard` + min-level filter; records below configured min level are dropped **here**; never logs onto stdout |
+| `LogFacade` | Facade | Documented composition of `LogSink` + `ReentrancyGuard`; min-level filter is `LevelFilter` (this type is not a Rust Facade yet); never logs onto stdout |
 | `LogRecord` | DTO | Construction never fails; omit unknown fields (sqlite NULL); `message` truncates at 64 KiB, lossy UTF-8; `sanitize_extras` drops `text` / `content` / `body` / `clipboard` / `password` / `secret` / `token`; indexes `(ts_unix_ms)`, `(level)`, `(component)`, `(content_path)`, `(source_repo)` |
-| `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail) |
+| `LogLevel` | Value object | `error` `warn` `info` `debug` `trace`; unknown parse → `info` (never fail); `from_env_or_config` empty/unset → config; known env → that level; unknown env → `info` + warning (never fail boot) |
+| `LevelFilter` | Decorator / Filter | Wraps `LogPort`; drops records where `!record.level.at_least(min)`; composition root sets `min` from `LogLevel::from_env_or_config` (unset/empty env + omitted `[log].level` → `info`; invalid env still boots at `info`) |
 | `LogOrigin` | Value object | `FirstParty` (`progressive-lsp`) vs `ThirdParty`; `source_repo` is one of those two strings |
 | `LogComponent` | Value object | Stable strings only: `core`, `protocol`, `control`, `engine`, `index`, `watch`, `install`, `script`, `lang-<id>`, pack name, `xtask` (only if a lib path logs) |
 | `LogScope` / `LogScopeGuard` | Context Object | Task-local / thread-local: `content_path`, `content_line`, `operation`, `component`; `emit` copies scope fields when the caller left them unset; Drop of `LogScopeGuard` restores the previous scope (stack) |
@@ -158,7 +161,21 @@ Types from [logging.md](logging.md). LOG-1 landed Port / DTO / scope / doubles i
 | `CliUsageAdapter` | Adapter | `--help` / usage; first-party; **also** writes stderr (IT-1.7); `LogPort::warn` with `operation=cli` |
 | `NullStderrAdapter` | Adapter | `stderr(Stdio::null())`; **Forbidden** on production pack spawn |
 | `InheritStderrAdapter` | Adapter | `stderr(Stdio::inherit())`; operator/CI harness bins only — never `serve` |
-| `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter`; LOG-10 attaches `ChildStderrAdapter` when a `Read` exists (tests: `FakeChildStderr`); `ChildHandle` may still lack live OS pipes until `PackAdapter` `Command` lands |
+| `ChildIo` | Value object | stdout is always LSP JSON-RPC (never a log Adapter); stderr is an optional capture pipe; prod pack spawn is `lsp_with_stderr_pipe` — never `NullStderrAdapter`; LOG-10 attaches `ChildStderrAdapter` when a `Read` exists (tests: `FakeChildStderr`; Linux `Command` leaves an OS stderr pipe on `ChildHandle`) |
+| `SpawnPlan` | Value object | argv + cwd + env + `ChildIo` for the Linux `Command`; Darwin unit tests assert the plan without `Command`; production plan is always `lsp_with_stderr_pipe` |
+| `SpawnPort` / `CommandSpawnPort` / `RecordingSpawnPort` | Port + Adapter / test double | Production Port is Linux `Command` (stdin/stdout/stderr piped); Darwin / non-Linux refuse; tests inject `RecordingSpawnPort` so “would have spawned” does not exec |
+| `MuslBuildPlan` | Value object | triple + docker platform (`linux/amd64` / `linux/arm64`) + dockerfile + dest `target/musl/<triple>/progressive-lsp` + `RUST_TARGET`; Darwin unit tests name the pattern and cover both triples without docker; unknown triple / missing dockerfile fail closed |
+| `PackPin` | Value object | Pack name + binary + upstream git URL + **40-hex SHA** (not `latest`); `xtask/pack-pins.toml`; not core crate semver |
+| `PackKind` | Value object | `rust`, `zig`, `go`, `cached`, or `cmake`; unknown kind fail closed; host php/Node/JVM/CPython forbidden as our runtime; `cached` is clangd default (cache COPY, never cmake); `cmake` is clangd `--cache-fill` only |
+| `RustToolchainPin` | Value object | Pack-build rustc channel (`1.98.0`) when upstream has no `rust-toolchain.toml`; not core crate MSRV |
+| `ZigToolchainPin` | Value object | Zig version + per-arch tarball SHA256 for the **pack build container** only — not a shipped `.so` |
+| `GoToolchainPin` | Value object | Go version for the **pack build container** only; `CGO_ENABLED=0`; not a shipped SDK |
+| `PackBuildPlan` | Value object | pack name, binary name, triple, platform, dockerfile, dest `target/musl/<triple>/engines/<pack>/<binary>`, pinned SHA, cache key `sha:triple`; rust/go/cached/cmake `--platform` follows the triple (`linux/amd64` / `linux/arm64`; qemu amd64 on Darwin is OK for those); **zig** (superhtml, zls) uses **host-native** `--platform` + `ZIG_TARGET` (Zig cross-compile; qemu `linux/amd64` is ENOSYS `faccessat` and is not used); `for_pin_on_host_arch` injects the host ISA so unit tests lock both `linux/amd64` (native CI, no qemu) and `linux/arm64` argv without a daemon; Darwin unit tests name the pattern and cover slim **and** heavy plans (gopls/tsgo/zls/clangd) **and both zig triples** without docker; unknown packs fail closed; clangd cache miss is a documented HOST-7 gap, not cmake, and is **not** the closed superhtml miss |
+| `PackBuildPlan::cache_fill_for_pin` | Command | clangd only; kind becomes `Cmake`; dest is the cache ELF `target/pack-cache/clangd/<sha>/<triple>/clangd`; default `xtask pack` never constructs this; non-clangd refuses |
+| `PackOutcome` | Value object / Domain Result | `Pass` after extract or cache COPY; `Miss` is a documented clangd cache gap (not cmake, not a Mach-O green, not `Err`) |
+| `RuntimeImagePlan` | Value object | platform + triple + dockerfile + core dest + pack dests + image tag `progressive-lsp-runtime:local`; prefix inside the image is `/opt/plsp`; Darwin unit tests name the pattern and cover both triples without docker; unknown triple / missing dockerfile / missing required core ELF fail closed; slim packs including `superhtml` are required on **both** triples (HOST-3 qemu miss closed; HOST-4 image that omitted amd64 superhtml is superseded); full packs optional (HOST-7 miss / clangd cache miss — not the same class as the closed superhtml miss) |
+| `PackImageCopy` | Value object | one pack ELF to copy (`pack`, `binary`, `src`, required); dest under `/opt/plsp/engines/<pack>/<binary>`; slim (ty, rust-analyzer, phpantom, biome, superhtml) required on both triples; full (clangd/tsgo/gopls/zls) always optional |
+| `DockerPort` / `CommandDockerPort` / `RecordingDockerPort` | Port + Adapter / test double | Production Port is `docker build --output type=local` (BuildKit extract) **and** `docker build -t` (runtime image tag). Same Port for core musl, slim + full packs (`extract`), and `xtask runtime-image` (`tag_image`); tests inject `RecordingDockerPort` so “would have built / tagged” writes a fixture ELF or records args — not a musl green, no daemon |
 | `FakeChildStderr` | Test double | Bounded line source (`STDERR_DRAIN_CAP`) for `ChildStderrAdapter`; overflow drops oldest so stderr cannot stall LSP |
 
 ## Patterns we do not use (v1)
@@ -183,28 +200,42 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `IdeError` | Domain Result | User paths never `unwrap`; each variant has a Display + classifier test. `NoFileOpen` is the discover / context-menu empty-tab error |
 | `DirEntry` | DTO | Immediate child name + path + `is_dir`; `FsPort.read_dir` only |
 | `DialogPort` / `RfdDialog` | Port / Adapter | Open folder/file goes through the Port; tests never call `rfd` |
-| `PendingDialog` / `DialogAction` / `DialogOutcome` | Command / value | File-menu click records Open Folder / Open File; apply runs the Port after the menu closes; cancel is `Cancelled`, not an error |
+| `PendingDialog` / `DialogAction` / `DialogOutcome` | Command / value | File-menu click records Open Folder / Open Folder in Container / Open File; apply runs the Port after the menu closes; cancel is `Cancelled`, not an error |
 | `FakeDialog` | Test double | Same `DialogPort`; returns queued paths |
 | `WorkspaceRoot` | Value object / identity | Canonical absolute path; equality is path equality |
 | `FsPort` / `StdFs` | Port / Adapter | Tree/read/write go through the Port; tests use `MemFs` |
 | `MemFs` | Test double | Same `FsPort`; no host disk |
 | `CountingFs` | Decorator / test double | Wraps `MemFs`; records `read_dir` paths; inner Port is unchanged; used to prove shallow load / idempotent expand |
-| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder). `load_compact_chain` loads a single-child-dir chain for a compact row without changing `TreeExpansion`. Listing order is non-dot dirs, non-dot files, dot dirs, dot files (lexicographic within each group). |
+| `FileTree` / `TreeNode` | Composite | Directories contain children; files are leaves; skip `.git`/`target`/`node_modules` display filter. `load` is shallow (immediate children only); child dirs start unloaded (`children: None`); `expand` / `load_children` fills one level (`Some(vec![])` is an empty loaded folder). `load_compact_chain` loads a single-child-dir chain for a compact row without changing `TreeExpansion`. `apply_listing` grafts a [`CompactChainListing`] without calling `FsPort`. Listing order is non-dot dirs, non-dot files, dot dirs, dot files (lexicographic within each group). |
+| `ExpandChainCommand` | Command | Lists a compact single-child directory chain via `FsPort`; does not mutate `FileTree`. Tests use `MemFs` / `CountingFs` — no `thread::sleep` |
+| `CompactChainListing` | DTO | Path + listed children per level; `apply_listing` is the UI apply. Empty listing is a no-op on the workspace root |
+| `TreeIoRequest` | Command | Expand path sent on the tree IO channel |
+| `TreeIoEvent` | Event | Inbox yield: expanded listing or failed path + error |
+| `TreeIoMailbox` / `TreeIoHandle` | Command queue + Event inbox | UI `submit` / `poll` never call `FsPort::read_dir`; the tree worker (or test `pump_tree_io`) owns the Port |
+| `TreeExpandFlight` | Value object | Pending expand paths; second `begin` of the same path is a no-op; `can_expand` is false while loading; `loading_label` is `loading…`; not a Manager |
 | `CompactChain` | Value object / view of Composite | `/`-joined names of already-loaded single-child directories; `path` is the innermost directory. Unloaded / empty / one file child / 2+ children stop the chain. Length 1 is a non-compact directory. Skip-filtered names cannot be the "one child." |
 | `TreeExpansion` | Value object / collection | A path is expanded iff explicitly expanded; default is collapsed at every level. `for_root` / a new `FileTree` starts empty. `expand` / `collapse` are Commands. Collapse of a missing path is a no-op. Expanding a file is a no-op. Expanding a parent does not expand children. Expanding a compact row expands the innermost path only — nested names in the chain are not auto-expanded. |
 | `LayoutState` | Value object | `left_width` > 0; clamp on set; no window handle in the lib |
 | `TabStrip` / `TabId` | Identity + collection | Focus is at most one tab; close missing id is a no-op |
-| `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth |
+| `OpenBuffer` / `BufferMap` | Entity + Identity | One buffer per canonical path; rope is source of truth. `generation` bumps on insert / delete / reload, not on selection or save; the highlighter cache keys on it |
 | `Selection` | Value object | Range is ordered `start <= end` in char offsets |
 | `CursorOffsets` | Value object | Editor char offsets → `Selection`; apply writes the caret onto `OpenBuffer` without dirtying; offsets → `position_at` is not always line 0 character 0 |
 | `DirtyFlag` | Value object | Edit sets dirty; successful save clears it |
 | `EditCommand` | Command | Insert/delete/cut/copy/paste mutate rope only via this Command |
 | `DiscoverKind` | Value object | Definition / Implementation / References; `lsp_method` is the stock JSON-RPC name |
-| `DiscoverCommand` | Command | Focused tab + cursor → `LspClient` method + `jump`; no file open / missing client are domain errors, not panics; empty location list is valid |
-| `PendingDiscover` | Command / value | Click records a `DiscoverKind`; apply runs `DiscoverCommand` once after the menu closes; close does not panic |
+| `DiscoverCommand` | Command | Focused tab + cursor → IO `LspIoRequest` (`to_io_request`) or blocking `apply` for FakeLsp tests; `apply_locations` jumps when the inbox yields. No file open / missing client are domain errors, not panics; empty location list is valid. UI-facing `to_io_request` / `apply_locations` never call `LspTransport::request` |
+| `PendingDiscover` | Command / value | Click records a `DiscoverKind`; `to_io_request` queues an `LspIoRequest` after the menu closes; close does not panic |
+| `LspIoRequest` | Command | didOpen / didChange / didSave / didClose / discover / shutdown / initialize sent on the LSP IO channel |
+| `LspIoEvent` | Event | Inbox yield: initialized, notify acks, discover locations, `$/progress`, `window/logMessage`, child stderr, shutdown, failed |
+| `LspIoMailbox` / `LspIoHandle` | Command queue + Event inbox | UI `submit` / `poll` never call `LspTransport::request`; the IO thread (or test `pump_lsp_io`) owns the transport |
+| `ProgressEvent` / `LspProgressKind` | Event / DTO | `$/progress` begin/report/end kept by the reader; token may be string or number; unknown kind is dropped |
+| `LogMessageEvent` | Event / DTO | `window/logMessage` kept by the reader; missing `type` is 0 |
+| `DiscoverFlight` | Value object | Idle vs in-flight kind; second `begin` is a no-op; `waiting_label` is `waiting for server` iff in flight; not a Manager |
 | `ClipboardPort` / `FakeClipboard` | Port / Adapter + test double | Cut/copy/paste never call OS clipboard in tests |
-| `Highlighter` | Adapter | syntect tokens; unknown syntax → empty/plain spans, no panic |
-| `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list |
+| `Highlighter` | Adapter + Cache | syntect `InspiredGitHub` (dark token colors on the light egui editor); unknown syntax → empty/plain spans, no panic. `highlight(path, text, generation)` hits [`HighlightCache`]; a second call with the same path + generation does not re-tokenize (`tokenize_count` stays) |
+| `HighlightKey` | Value object / identity | Path + rope generation; equality is both fields |
+| `HighlightCache` | Cache | Stores `Vec<HighlightSpan>` for one key; hit returns the spans; miss tokenizes and stores; `clear` drops the entry |
+| `HighlightSpan` | Value object / DTO | Char range `start <= end`; RGB from syntect; unknown syntax yields empty list; unhighlighted text uses `PLAIN_TEXT_RGB` |
 | `WatchPort` / `NotifyWatch` | Port / Adapter | Prod uses `notify`; coalescer/IDE does not call OS APIs directly |
 | `WatchDepth` | Value object | `immediate` vs `recursive`; folder open uses immediate so a large tree does not block on a recursive OS watch |
 | `LspSessionState` | Value object | `idle` / `connecting` / `ready` / `failed`; connecting is not ready; tree paint must not wait for `ready` |
@@ -214,28 +245,71 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `SystemClock` (poc-ide) | ClockPort production | Wall `unix_ms`; tests use `FakeClock` |
 | `DiskWatch` | Observer | Watch events for an open path enqueue at most one pending `ConflictModal` per path |
 | `ConflictModal` / `ConflictChoice` | Command | `LoadDisk` replaces rope from `FsPort` and clears dirty; `KeepMemory` keeps rope and records `ignored_mtime` |
-| `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen` |
-| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket`; `serve_args` never includes `--mux` (`pending_mux`) |
-| `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui` |
+| `HostOs` | Value object | `linux` vs `other`; container File-menu item only on `other` |
+| `OpenMode` | Strategy | `native` vs `container`; `for_host` forces native on Linux; T3 offered for native-on-Linux or container; never two LSP processes |
+| `T3HostOffer` | Value object | `Offered` vs `NeedsContainer`; strip skip + discover `open folder in container` |
+| `LaunchFlags` / `parse_launch_args` | DTO + parser | `--folder` / `--file` / `--container` / `--control-socket`; tests parse strings |
+| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS. `start` validates [`DockerRunPlan`] and does not exec; `MuxStdio::from_command` is the single container `docker run` |
+| `DockerRunPlan` | Value object | docker binary + `run -i --rm` + `-v WS:WS` + `-w WS` + image `progressive-lsp-runtime:local` + `serve --prefix /opt/plsp --mux`; never `-t`; empty / relative workspace and missing absolute docker binary fail closed; Darwin unit tests name the pattern and cover the plan without exec |
+| `RuntimeInfo` | Value object / DTO | `available` + platform string; `is_linux_pack_platform` is `linux/arm64` / `linux/amd64` (and `aarch64`/`x86_64` aliases); empty platform is not available |
+| `RuntimeSession` | Value object | Workspace path of a validated container plan; Clone; does not own Child; tests never hold a live Docker id |
+| `LaunchJournal` / `LaunchStep` / `StepState` | Value objects | Ordered `pending`/`running`/`ok`/`fail`/`skipped`; container plan: probe → platform → image → mount → start → T3 preflight |
+| `StatusModal` / `StatusModalKind` | Value object | Closed or open T1/T2/T3/container; Close does not cancel work |
+| `RuntimeIoRequest` / `RuntimeIoEvent` / `RuntimeIoMailbox` / `RuntimeIoHandle` | Command + Event mailbox | UI submits launch; worker yields `Progress` then `Finished` journal; tests `pump_runtime_io` / `FakeRuntime` |
+| `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen`. `discover_offers` is method × min tier × ceiling from the language matrix; Java has no T3 offers; C# ceiling is T1/T2 |
+| `WireTier` | Value object | `syntax` / `graph` / `types`; unknown parse → `None`; `meets` is `>=` |
+| `DiscoverOffer` | Value object | One LSP method + `min_tier` + language `ceiling`; Java/C# ceiling is `graph`; typed-only methods have `min_tier == types` |
+| `ServeMode` | Strategy | `StockStdio` vs `ControlSocket` vs `Mux`; **default is `ControlSocket`**; `StockStdio` remains an explicit variant; `ControlSocket` spawn takes a separate `ControlSocketPath` (the enum does not own the path); `Mux` argv is `serve --mux`; container attach is `Mux` |
+| `LspIoAttach` | Strategy | `Native(ServeSpawn)` vs `Container(DockerRunPlan)`; native keeps `ControlSocket`; container is `Mux` + docker Command (`serve --prefix /opt/plsp --mux`); one process |
+| `MuxStdio` / `MuxLsp` / `MuxControl` | Adapter | One stdio pipe, protocol `MuxFrame` (`u8` + `u32be` + payload). Channel 0 = opaque JSON-RPC body (same as `serve_mux`, no Content-Length wrapper). Channel 1 = length-prefixed Envelope. Unknown channel and payload > 16 MiB fail closed. Pair / Cursor tests; no daemon |
+| `ControlAttach` | Strategy | `Socket(path)` vs `Mux`. `advertised_control(cap, mode)` returns `Mux` when `ServeMode::Mux` is selected. `pending_mux` only when mux is advertised but not selected. `advertised_control_socket` stays socket-only |
+| `ControlSocketPath` | Value object | CLI path wins; else `$PREFIX/run/poc-ide.sock`; else `$HOME/.progressivelsp/run/poc-ide.sock`; else `{temp}/poc-ide.sock`; tests inject prefix / home / temp — never require `$HOME` |
+| `ServeWalPath` | Value object | Unique `{log_dir}/serve-{unix_ms}-{pid}.sqlite` the IDE sets on `PROGRESSIVE_LSP_LOG`; tests inject dirs + FakeClock |
+| `ServeSpawn` | Value object | Child argv + `PROGRESSIVE_LSP_LOG_LEVEL=debug` + optional `PROGRESSIVE_LSP_LOG`; `fn build_serve_command` is a function (not a type) that applies this onto `std::process::Command` — tests inspect env/argv and do not spawn a live serve; stderr is piped, never inherited |
+| `ChildStderrDrain` | Observer + Adapter | Line-delimited child stderr → `RunLog` (`category=lsp`, `event=child_stderr`); `STDERR_DRAIN_CAP=1024` overflow drops oldest; tests drain a `Cursor` / `push_line` without a thread; never attached to child stdout |
+| `RunStart` | DTO | `run_start` payload always has `binary`, `argv`, `log_level`, `run_log_path`, `serve_wal_path` (`not open yet` when unset) |
+| `ProofStatus` | DTO / Value object | Footer: binary basename, log level, RunLog path, serve WAL path, last discover (`definition L23:88 → 0 locations`); last discover is filled from `RunLog` discover rows after the inbox yields |
+| `LspTransport` / `StdioLsp` | Port / Adapter | Content-Length JSON-RPC; lib does not parse via `egui`. Reader keeps no-id `$/progress` and `window/logMessage` on `take_notifications` — it does not drop them |
 | `LspCall` | DTO | Recorded request or notification on `FakeLsp`; method is the JSON-RPC name |
 | `FakeLsp` | Test double | Same `LspTransport`; scripted responses; missing binary is a Result |
 | `LspClient` | Facade | JSON-RPC in; domain locations out; no watch internals |
-| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; `LspClient` never opens it; `ControlClient` does in `ControlSocket` |
-| `ControlTransport` / `UnixControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails |
+| `ProgressiveLspCap` (poc-ide) | Value object / DTO | version is `v1`; socket may be null; `mux` is true on container `--mux`; `LspClient` never opens a socket; `ControlClient` uses Unix socket in `ControlSocket` and `MuxControl` in `Mux` |
+| `ControlTransport` / `UnixControl` / `MuxControl` | Port / Adapter | Envelope + `u32be` frames; payload > 16 MiB fails. `MuxControl` wraps the same inner frame in protocol channel 1 |
 | `FakeControl` | Test double | Same `ControlTransport`; pushes use `request_id == 0` |
 | `ControlClient` | Adapter | Unary RPCs + push dispatch; never `$/` FilesSince |
 | `ControlPush` | Event / DTO | `WatchBatch` or `TierReady`; `request_id` is always 0 |
+| `ControlPushInbox` | Observer | UI `ingest` / `poll` of `ControlPush`; never calls `index_status` / `tier_status` |
+| `ControlIoEvent` / `ControlIoHandle` | Event + inbox | Control IO thread yields Connected / IndexStatus / TierStatus / Push / Failed; `fn ui` only `poll`s; unary snapshots are requested on the IO thread |
+| `PackageTierMap` | Value object / collection | Applies IndexStatus ingest + TierStatus / TierReady; focused path picks a package id in the path, else workspace max tier. `ingest_for_strip` treats Connecting + no IndexStatus as Running and Ready + no IndexStatus as Done (initialize ingest is sync) |
+| `TierCell` / `TierCellKind` / `TierCellState` | Value objects | Cell is T1/T2/T3 × `processing` / `done` / `not supported` / `skipped` / `n/a`; `n/a` is waiting (or matrix-no-T2); Java T3 is `not supported`; Rust/CSS T2 is `n/a`; native non-Linux T3 is `skipped`; stub refuse is `skipped`, never `done` |
+| `TierStrip` | Value object | Three cells from LanguageCatalog × ingest × current wire tier × `T3HostOffer`; no focused file still paints T1/T2 from workspace ingest; ingest running is T2 `processing` without waiting for Syntax; `ui.rs` renders cells as buttons that open `StatusModal` |
+| `DiscoverMenu` / `DiscoverMenuItem` / `MenuDisableReason` | Value objects | Same ground truth for Navigate and context menus; disabled labels are `connecting language server` / `building T1 index` / `waiting for server` / `needs T2` / `needs T3` / `not supported` / `T3 skipped (stub pack)` / `open folder in container`; `to_io_request` is `None` while disabled so FakeLsp is not called |
 | `ProtocolConsole` / `TranscriptEntry` | Facade + DTO | Append-only transcript; send does not panic on server error |
 | `TranscriptKind` | Value object | Lsp vs Control vs error; `is_push` only for `ControlPush` with `request_id == 0` |
-| `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux`; stock LSP remains |
+| `IdeError::Control` | Domain Result | missing socket / payload too large / `pending_mux` only when mux is advertised but not selected; stock LSP remains |
 | `LspLocation` (poc-ide) | Value object / DTO | uri + range from the client; jump opens or focuses a tab; empty list is valid |
-| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX` |
+| `file_uri` | Adapter | Absolute path → `file:` URI with percent-encoding; spaces and other reserved bytes are `%XX`; same codec as core `path_to_file_uri` |
 | `SpawnSpec` | Value object | Binary from env, then `target/…/progressive-lsp`, then `PATH`; missing → error not panic |
 | `RunLog` | Repository | One sqlite file (or `:memory:`) per run; append + query; write failure is `IdeError::Log`, never a panic. Discover rows include `path`, `uri`, `line`, `character`, `location_count` |
 | `RunLogPath` | Value object | `{dir}/poc-ide-{unix_ms}-{pid}.sqlite`; tests inject dir / path |
 | `LogRow` | DTO | `timestamp_ms` + `category` + `event` + optional JSON; payload is structured, never file bodies |
-| `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict`; unknown parse → `None` |
+| `LogCategory` | Value object | `run` / `ui` / `tree` / `tab` / `buffer` / `lsp` / `control` / `conflict` / `runtime`; unknown parse → `None` |
 | `IdeError::Log` | Domain Result | Classifier `is_log`; composition root ignores write failures |
+| `IdeError::Runtime` | Domain Result | Classifier `is_runtime`; Docker probe / image / start / T3 preflight |
+
+## xtask (operator CLI)
+
+llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
+
+| Component / type | Pattern | Invariant (testable) |
+|---|---|---|
+| `PocArgs` | Value object | Split at the first `--`; left side is xtask flags (`-h` / `--help` only); right side is forwarded to `poc-ide`; leftover without `--` is an error. `poc::run` spawn is a thin shell (N/A for unit tests). Prefer `./build run ide`. |
+| `XtaskCommand` | Value object | `help` / `lsp` / `ide` / `run ide` / `build` (low-level) / `Legacy`; empty argv is root help; unknown command points at `./build help`. Spawn shells N/A. |
+| `HelpTopic` | Value object | `Root` / `Lsp` / `Ide` / `Run` / `Build`; `help lsp` lists arches; unknown topic fails closed. |
+| `LspArch` | Value object | `all` / `x86_64` / `aarch64` (aliases `amd64`, `arm64`, full musl triples); unknown or missing arch prints the valid list and fails closed. |
+| `BuildTarget` | Value object | Low-level `backends` / `controller` / `package` / `poc`; unknown target fails closed; `controller`/`poc` refuse `--full`/`--target`/`--both`. |
+| `BuildFlags` | Value object | `--full` / `--target` / `--both`; default docker args name this host’s musl triple (not both); `--full` is pack-only. |
+| `RunLaunch` | Value object | `./build run ide` then `--folder` / `--file` / `--container` / `--control-socket`; `--` still forwards; relative `--folder` + `--container` fails closed (bind-mount identity). |
 
 ## Adding a type
 

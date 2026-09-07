@@ -3,7 +3,9 @@
 pub mod engine;
 pub mod host;
 
-pub use engine::{FakeEngine, FakeEngineFactory, RhaiEngineFactory, ScriptEngine, ScriptEngineFactory};
+pub use engine::{
+    FakeEngine, FakeEngineFactory, RhaiEngineFactory, ScriptEngine, ScriptEngineFactory,
+};
 pub use host::{
     filter_spawn_tweaks, HookName, ScriptContext, ScriptDecision, ScriptHost, SpawnDecision,
     SpawnTweak, DEFAULT_OPS_LIMIT, DEFAULT_STRING_CAP, SPAWN_ARGV_ALLOWLIST, SPAWN_ENV_ALLOWLIST,

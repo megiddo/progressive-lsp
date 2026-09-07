@@ -99,7 +99,10 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
         node.kind(),
         "class_name" | "id_name" | "tag_name" | "property_name" | "id_selector" | "class_selector"
     ) {
-        let raw = node.utf8_text(src).unwrap_or("").trim_start_matches(['#', '.']);
+        let raw = node
+            .utf8_text(src)
+            .unwrap_or("")
+            .trim_start_matches(['#', '.']);
         if !raw.is_empty() {
             out.push(make(
                 file,
@@ -117,8 +120,18 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
     }
 }
 
-fn make(file: &FileId, uri: &str, name: &str, line: u32, col: u32, kind: SymbolKind) -> IndexedSymbol {
-    let range = Range::new(Position::new(line, col), Position::new(line, col + name.len() as u32));
+fn make(
+    file: &FileId,
+    uri: &str,
+    name: &str,
+    line: u32,
+    col: u32,
+    kind: SymbolKind,
+) -> IndexedSymbol {
+    let range = Range::new(
+        Position::new(line, col),
+        Position::new(line, col + name.len() as u32),
+    );
     IndexedSymbol {
         file: file.clone(),
         uri: uri.to_string(),
@@ -144,7 +157,11 @@ fn encode(toks: &[(u32, u32, u32, u32)]) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in toks {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -203,7 +220,12 @@ mod tests {
         assert_eq!(CssLanguageFactory::new().grammar_id(), "tree-sitter-css");
         assert!(CssLanguageFactory::default().resolver_chain().is_empty());
         let mut svc = IndexService::new();
-        svc.index_text(std::path::Path::new("a.css"), "#x { color: red; }", &CssIndexer, false);
+        svc.index_text(
+            std::path::Path::new("a.css"),
+            "#x { color: red; }",
+            &CssIndexer,
+            false,
+        );
         let factory = CssLanguageFactory::with_index(Arc::new(SharedIndex::new(svc)));
         assert_eq!(factory.resolver_chain().len(), 1);
         assert!(!factory.resolver_chain().is_empty());
@@ -215,17 +237,27 @@ mod tests {
         let tree = parse(src);
         let file = FileId::new("a.css");
         let syms = CssIndexer.extract(&file, "file:///a.css", src, &tree);
-        assert!(syms.iter().any(|s| s.name == "main-box" || s.name == "#main-box"));
-        assert!(syms.iter().any(|s| s.name == "foo_bar" || s.name == ".foo_bar"));
-        assert!(syms.iter().any(|s| {
-            s.range.end.character == s.range.start.character + s.name.len() as u32
-        }));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "main-box" || s.name == "#main-box"));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "foo_bar" || s.name == ".foo_bar"));
+        assert!(syms
+            .iter()
+            .any(|s| { s.range.end.character == s.range.start.character + s.name.len() as u32 }));
         assert_eq!(
             encode(&[(0, 1, 4, 2), (0, 8, 5, 8)]),
             vec![0, 1, 4, 2, 0, 0, 7, 5, 8, 0]
         );
-        assert_eq!(encode(&[(0, 1, 2, 2), (1, 0, 3, 8)]), vec![0, 1, 2, 2, 0, 1, 0, 3, 8, 0]);
-        assert!(syms.iter().any(|s| s.name == "color"), "walk must emit property_name");
+        assert_eq!(
+            encode(&[(0, 1, 2, 2), (1, 0, 3, 8)]),
+            vec![0, 1, 2, 2, 0, 1, 0, 3, 8, 0]
+        );
+        assert!(
+            syms.iter().any(|s| s.name == "color"),
+            "walk must emit property_name"
+        );
         assert!(syms.iter().all(|s| !s.name.is_empty()));
         let toks = tokens_from_tree(src, &tree);
         assert!(!toks.is_empty());
@@ -265,7 +297,10 @@ mod tests {
             path: PathBuf::from("/p/biome"),
             sha256: [0; 32],
         });
-        fake.set_answers(FakeEngineAdapter::typed_fixture("main-box", "file:///a.css"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "main-box",
+            "file:///a.css",
+        ));
         let mut sup = EngineSupervisor::new(clock, prefix);
         sup.register(Box::new(fake));
         sup.try_spawn(
@@ -275,8 +310,9 @@ mod tests {
             PathBuf::from("/ws").as_path(),
         )
         .unwrap();
-        let factory = CssLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
-            .with_supervisor(Arc::new(sup));
+        let factory =
+            CssLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
+                .with_supervisor(Arc::new(sup));
         assert_eq!(factory.resolver_chain().len(), 2);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("a.css"),

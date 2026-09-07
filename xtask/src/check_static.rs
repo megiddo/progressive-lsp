@@ -216,7 +216,8 @@ fn i64_at(data: &[u8], off: usize, be: bool) -> Result<i64, StaticLinkError> {
 }
 
 /// Minimal ELF64 LE: one PT_LOAD, no PT_INTERP, no PT_DYNAMIC.
-#[allow(dead_code)]
+/// [`crate::musl::RecordingDockerPort`] writes this so dest exists without docker.
+#[cfg(test)]
 pub fn fixture_static_elf64() -> Vec<u8> {
     let mut e = vec![0u8; 128];
     e[0..4].copy_from_slice(ELF_MAGIC);
@@ -235,7 +236,7 @@ pub fn fixture_static_elf64() -> Vec<u8> {
 }
 
 /// ELF64 LE with PT_INTERP and PT_DYNAMIC/DT_NEEDED.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn fixture_dynamic_elf64() -> Vec<u8> {
     let mut e = vec![0u8; 256];
     e[0..4].copy_from_slice(ELF_MAGIC);
@@ -262,7 +263,7 @@ pub fn fixture_dynamic_elf64() -> Vec<u8> {
 }
 
 /// ELF64 LE with PT_DYNAMIC / DT_NEEDED = `libdl.so.2` (no PT_INTERP).
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn fixture_libdl_elf64() -> Vec<u8> {
     let mut e = vec![0u8; 320];
     e[0..4].copy_from_slice(ELF_MAGIC);
@@ -286,7 +287,7 @@ pub fn fixture_libdl_elf64() -> Vec<u8> {
     e
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn fixture_macho() -> Vec<u8> {
     let mut e = vec![0u8; 32];
     e[0..4].copy_from_slice(&MACHO_64_SW);

@@ -1,16 +1,25 @@
-//! Production pack adapter: discover under `$PREFIX/engines/`. Stub bytes never exec.
+//! Production pack adapter: discover under `$PREFIX/engines/`.
+//! Stub bytes never exec. Darwin / non-Linux refuse. Linux uses `Command`.
+
+use std::sync::Arc;
 
 use progressive_lsp_core::{EngineError, LanguageId, PrefixLayout};
 
-use crate::adapter::{ChildHandle, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx};
+use crate::adapter::{
+    ChildHandle, CommandSpawnPort, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx, SpawnPlan,
+    SpawnPort,
+};
 use crate::discovery::{
     discover_pack_opt, is_pack_stub, BIOME_PACK, CLANGD_PACK, GOPLS_PACK, PHPANTOM_PACK,
     PYTHON_PACK, RUST_PACK, SUPERHTML_PACK, TSGO_PACK, ZLS_PACK,
 };
 
+const STUB_REFUSE: &str = "stub pack; real engine musl ELF is Linux CI / Docker";
+
 pub struct PackAdapter {
     pack_name: String,
     language: LanguageId,
+    spawn_port: Option<Arc<dyn SpawnPort>>,
 }
 
 impl PackAdapter {
@@ -18,7 +27,24 @@ impl PackAdapter {
         Self {
             pack_name: pack_name.into(),
             language: language.into(),
+            spawn_port: None,
         }
+    }
+
+    /// Tests inject a [`SpawnPort`] so Darwin can assert “would have spawned”.
+    pub fn with_spawn_port(mut self, port: Arc<dyn SpawnPort>) -> Self {
+        self.spawn_port = Some(port);
+        self
+    }
+
+    /// Testable Linux spawn plan. Stub bytes still refuse before a plan exists.
+    pub fn spawn_plan(&self, ctx: &SpawnCtx) -> Result<SpawnPlan, EngineError> {
+        let bytes = std::fs::read(&ctx.binary.path)
+            .map_err(|e| EngineError::Spawn(format!("read {}: {e}", ctx.binary.path.display())))?;
+        if is_pack_stub(&bytes) {
+            return Err(EngineError::Spawn(STUB_REFUSE.into()));
+        }
+        Ok(SpawnPlan::from_spawn_ctx(ctx))
     }
 
     pub fn python() -> Self {
@@ -72,16 +98,11 @@ impl EngineAdapter for PackAdapter {
     }
 
     fn spawn(&self, ctx: SpawnCtx) -> Result<ChildHandle, EngineError> {
-        let bytes = std::fs::read(&ctx.binary.path)
-            .map_err(|e| EngineError::Spawn(format!("read {}: {e}", ctx.binary.path.display())))?;
-        if is_pack_stub(&bytes) {
-            return Err(EngineError::Spawn(
-                "stub pack; real engine musl ELF is Linux CI / Docker".into(),
-            ));
+        let plan = self.spawn_plan(&ctx)?;
+        if let Some(port) = &self.spawn_port {
+            return port.spawn_child(&plan, &self.pack_name);
         }
-        Err(EngineError::Spawn(
-            "host process spawn of engine packs is reserved for Linux CI / Docker".into(),
-        ))
+        CommandSpawnPort.spawn_child(&plan, &self.pack_name)
     }
 
     fn ready_signal(&self) -> ReadyKind {
@@ -100,10 +121,12 @@ impl EngineAdapter for PackAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{hex_of, stub_pack_bytes, TY_BINARY};
+    use crate::adapter::{RecordingSpawnPort, SpawnCtx};
+    use crate::discovery::{hex_of, is_pack_stub, stub_pack_bytes, TY_BINARY};
     use progressive_lsp_install::{Manifest, ManifestArtifact};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     #[test]
     fn pack_adapter_discovers_stub_and_refuses_exec() {
@@ -136,7 +159,7 @@ mod tests {
                 argv: Vec::new(),
                 cwd: PathBuf::from("/w"),
                 env: BTreeMap::new(),
-                binary: bin,
+                binary: bin.clone(),
             })
             .unwrap_err();
         assert!(err.to_string().contains("stub pack"));
@@ -165,5 +188,105 @@ mod tests {
         let io = crate::adapter::ChildIo::lsp_with_stderr_pipe();
         assert!(io.has_stderr_pipe());
         assert!(io.stdout_is_never_log_adapter());
+        assert!(a
+            .spawn_plan(&SpawnCtx {
+                workspace: PathBuf::from("/w"),
+                language: LanguageId::new("python"),
+                package: progressive_lsp_core::PackageId::new("p"),
+                argv: Vec::new(),
+                cwd: PathBuf::from("/w"),
+                env: BTreeMap::new(),
+                binary: bin.clone(),
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("stub pack"));
+        let missing = a
+            .spawn(SpawnCtx {
+                workspace: PathBuf::from("/w"),
+                language: LanguageId::new("python"),
+                package: progressive_lsp_core::PackageId::new("p"),
+                argv: Vec::new(),
+                cwd: PathBuf::from("/w"),
+                env: BTreeMap::new(),
+                binary: crate::adapter::EngineBinary {
+                    pack_name: "python".into(),
+                    path: PathBuf::from("/missing-pack-bytes"),
+                    sha256: [0; 32],
+                },
+            })
+            .unwrap_err();
+        assert!(missing.to_string().contains("read"), "{missing}");
+    }
+
+    fn write_fixture_pack(prefix: &PrefixLayout, bytes: &[u8]) -> crate::adapter::EngineBinary {
+        let d = prefix.engines_dir().join("python");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(TY_BINARY), bytes).unwrap();
+        let m = Manifest {
+            version: "1".into(),
+            artifacts: vec![ManifestArtifact {
+                name: TY_BINARY.into(),
+                rel_path: TY_BINARY.into(),
+                sha256: hex_of(bytes),
+                executable: true,
+            }],
+        };
+        std::fs::write(d.join("manifest.json"), m.to_json().unwrap()).unwrap();
+        PackAdapter::python().discover(prefix).unwrap()
+    }
+
+    fn fixture_ctx(bin: crate::adapter::EngineBinary) -> SpawnCtx {
+        SpawnCtx {
+            workspace: PathBuf::from("/w"),
+            language: LanguageId::new("python"),
+            package: progressive_lsp_core::PackageId::new("p"),
+            argv: vec![bin.path.display().to_string(), "--stdio".into()],
+            cwd: PathBuf::from("/w"),
+            env: BTreeMap::from([("TY_LOG".into(), "info".into())]),
+            binary: bin,
+        }
+    }
+
+    #[test]
+    fn spawn_plan_value_object_covers_linux_command_without_exec() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(dir.path());
+        prefix.ensure_dirs().unwrap();
+        let bytes = b"fixture-pack-bytes-not-a-stub";
+        assert!(!is_pack_stub(bytes));
+        let bin = write_fixture_pack(&prefix, bytes);
+        let a = PackAdapter::python();
+        let ctx = fixture_ctx(bin);
+        let plan = a.spawn_plan(&ctx).expect("non-stub fixture yields a plan");
+        assert_eq!(plan.program(), ctx.binary.path.as_path());
+        assert_eq!(plan.argv(), ctx.argv.as_slice());
+        assert_eq!(plan.command_args(), &["--stdio"]);
+        assert_eq!(plan.cwd(), ctx.cwd.as_path());
+        assert_eq!(plan.env(), &ctx.env);
+        assert!(plan.io().has_stderr_pipe());
+        assert!(plan.io().stdout_is_never_log_adapter());
+        let err = a.spawn(ctx.clone()).unwrap_err();
+        if cfg!(target_os = "linux") {
+            assert!(
+                err.to_string().contains("command") || err.to_string().contains("Spawn"),
+                "Linux fixture bytes must fail closed, not look like a live musl child: {err}"
+            );
+        } else {
+            assert!(
+                err.to_string().contains("not this OS"),
+                "Darwin must refuse exec of non-stub bytes: {err}"
+            );
+        }
+        let port = Arc::new(RecordingSpawnPort::new());
+        let injected =
+            PackAdapter::python().with_spawn_port(Arc::clone(&port) as Arc<dyn SpawnPort>);
+        let handle = injected
+            .spawn(ctx)
+            .expect("RecordingSpawnPort is would-have-spawned, not Command");
+        assert_eq!(port.last_plan().as_ref(), Some(&plan));
+        assert!(handle.io().has_stderr_pipe());
+        assert!(handle.io().stdout_is_never_log_adapter());
+        assert!(!handle.has_os_stderr());
     }
 }

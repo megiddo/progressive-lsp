@@ -54,9 +54,9 @@ impl DefaultIgnoreFilter {
         if is_manifest(&normalized) {
             return false;
         }
-        DEFAULT_IGNORE_GLOBS.iter().any(|g| {
-            normalized.contains(g) || normalized.starts_with(g.trim_start_matches('/'))
-        })
+        DEFAULT_IGNORE_GLOBS
+            .iter()
+            .any(|g| normalized.contains(g) || normalized.starts_with(g.trim_start_matches('/')))
     }
 }
 
@@ -118,7 +118,10 @@ mod tests {
         let raw = batch(&["a.java", "node_modules/x.js"]);
         let out = IdentityWatchFilter.filter(raw.clone());
         assert_eq!(out, raw);
-        assert_eq!(apply_filter(&IdentityWatchFilter, raw.clone()).events.len(), 2);
+        assert_eq!(
+            apply_filter(&IdentityWatchFilter, raw.clone()).events.len(),
+            2
+        );
     }
 
     #[test]
@@ -161,7 +164,9 @@ mod tests {
         assert!(!paths.iter().any(|p| p.contains("zig-cache")));
         assert!(!DefaultIgnoreFilter::should_drop("src/A.java"));
         assert!(DefaultIgnoreFilter::should_drop("x/node_modules/y.js"));
-        assert!(!DefaultIgnoreFilter::should_drop("x/node_modules/y/pom.xml"));
+        assert!(!DefaultIgnoreFilter::should_drop(
+            "x/node_modules/y/pom.xml"
+        ));
         assert!(!is_manifest("src/A.java"));
         assert!(is_manifest("Foo.csproj"));
     }

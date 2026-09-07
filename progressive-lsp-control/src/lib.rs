@@ -4,9 +4,7 @@ pub mod codec;
 pub mod messages;
 pub mod service;
 
-pub use codec::{
-    decode_frame, encode_frame, CodecError, DecodeOutcome, MAX_PAYLOAD_BYTES,
-};
+pub use codec::{decode_frame, encode_frame, CodecError, DecodeOutcome, MAX_PAYLOAD_BYTES};
 pub use messages::*;
 pub use prost;
 pub use service::{ControlPlane, ControlServer, FilesSincePort};
@@ -85,6 +83,7 @@ mod tests {
                 generation: 1,
             }],
             cache_entries: 2,
+            ingest: IngestState::Done.as_str().into(),
         });
         assert_round_trip(&TierStatusRequest {});
         assert_round_trip(&TierStatusResponse {
@@ -100,7 +99,11 @@ mod tests {
         });
         assert_round_trip(&ReloadScriptsRequest {});
         assert_round_trip(&ReloadScriptsResponse { status: None });
-        assert_round_trip(&Envelope::request(METHOD_GET_CONFIG, 1, GetConfigRequest {}));
+        assert_round_trip(&Envelope::request(
+            METHOD_GET_CONFIG,
+            1,
+            GetConfigRequest {},
+        ));
         assert_eq!(METHOD_TIER_READY, "TierReady");
         assert_eq!(METHOD_WATCH_BATCH, "WatchBatch");
     }

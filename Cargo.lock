@@ -3103,6 +3103,7 @@ dependencies = [
  "lsp-types",
  "notify",
  "progressive-lsp-control",
+ "progressive-lsp-protocol",
  "rfd",
  "ropey",
  "rusqlite",

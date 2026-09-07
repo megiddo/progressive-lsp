@@ -84,11 +84,7 @@ fn dir_has_suffix(root: &Path, suffix: &str) -> Result<bool, InstallError> {
         .map_err(|e| InstallError::Io(format!("read_dir {}: {e}", root.display())))?;
     for entry in entries {
         let entry = entry.map_err(|e| InstallError::Io(e.to_string()))?;
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .ends_with(suffix)
-        {
+        if entry.file_name().to_string_lossy().ends_with(suffix) {
             return Ok(true);
         }
     }

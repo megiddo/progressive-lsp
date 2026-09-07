@@ -51,11 +51,7 @@ impl EngineNotReady {
 
 impl fmt::Display for EngineNotReady {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "engine not ready for {}/{}",
-            self.language, self.package
-        )
+        write!(f, "engine not ready for {}/{}", self.language, self.package)
     }
 }
 
@@ -157,7 +153,9 @@ mod tests {
         assert_ne!(hash, InstallError::Io("x".into()));
         assert_ne!(hash, InstallError::Manifest("x".into()));
         assert_ne!(hash, InstallError::Refused("x".into()));
-        assert!(InstallError::Transport("x".into()).to_string().contains("transport"));
+        assert!(InstallError::Transport("x".into())
+            .to_string()
+            .contains("transport"));
         assert!(InstallError::Refused("hook".into())
             .to_string()
             .contains("refused"));
@@ -182,7 +180,9 @@ mod tests {
             InitializeFailed("abort".into()).to_string(),
             "initialize failed: abort"
         );
-        assert!(EngineError::Spawn("boom".into()).to_string().contains("boom"));
+        assert!(EngineError::Spawn("boom".into())
+            .to_string()
+            .contains("boom"));
         assert!(EngineError::NotDiscovered("ty".into())
             .to_string()
             .contains("ty"));
@@ -192,11 +192,15 @@ mod tests {
         }
         .to_string()
         .contains("aa"));
-        assert!(EngineError::Crashed("child".into()).to_string().contains("child"));
+        assert!(EngineError::Crashed("child".into())
+            .to_string()
+            .contains("child"));
         assert!(EngineError::Backoff { next_unix_ms: 9 }
             .to_string()
             .contains("9"));
-        assert!(EngineError::Aborted("skip".into()).to_string().contains("skip"));
+        assert!(EngineError::Aborted("skip".into())
+            .to_string()
+            .contains("skip"));
         assert_ne!(
             EngineError::Spawn("x".into()),
             EngineError::NotDiscovered("x".into())
@@ -205,7 +209,10 @@ mod tests {
             EngineError::Crashed("x".into()),
             EngineError::Aborted("x".into())
         );
-        assert_eq!(ConfigError::HomeUnset.to_string(), "home directory is unset");
+        assert_eq!(
+            ConfigError::HomeUnset.to_string(),
+            "home directory is unset"
+        );
         assert!(ConfigError::Toml("bad".into()).to_string().contains("bad"));
         assert!(ConfigError::Io("e".into()).to_string().contains("e"));
         assert!(ConfigError::Prefix("p".into()).to_string().contains("p"));

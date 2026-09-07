@@ -90,11 +90,7 @@ impl LanguageFactory for PythonLanguageFactory {
                         PackageId::new("pkg"),
                     )) as Box<dyn progressive_lsp_resolve::Resolver>
                 });
-                ResolverChain::with_tiers(
-                    t3,
-                    None,
-                    Box::new(TreeSitterResolver::new(g.clone())),
-                )
+                ResolverChain::with_tiers(t3, None, Box::new(TreeSitterResolver::new(g.clone())))
             }
             None => ResolverChain::empty(),
         }
@@ -130,8 +126,14 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -154,7 +156,11 @@ pub fn tokens_from_tree(source: &str, tree: &Tree) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in &raw {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -224,16 +230,29 @@ mod tests {
         assert_eq!(grammar_id(), "tree-sitter-python");
         assert_eq!(PythonIndexer.language_id().as_str(), "python");
         assert_eq!(PythonIndexer.grammar_id(), "tree-sitter-python");
-        assert_eq!(PythonLanguageFactory::new().language_id().as_str(), "python");
-        assert_eq!(PythonLanguageFactory::new().grammar_id(), "tree-sitter-python");
+        assert_eq!(
+            PythonLanguageFactory::new().language_id().as_str(),
+            "python"
+        );
+        assert_eq!(
+            PythonLanguageFactory::new().grammar_id(),
+            "tree-sitter-python"
+        );
         assert!(PythonLanguageFactory::default().resolver_chain().is_empty());
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("pyproject.toml"), "[project]\nname = \"greet\"\n").unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"greet\"\n",
+        )
+        .unwrap();
         let greet = dir.path().join("greet.py");
         let main = dir.path().join("main.py");
         std::fs::write(&greet, "def greet(name):\n    return name\n").unwrap();
         std::fs::write(&main, "def run():\n    return greet(\"x\")\n").unwrap();
-        assert_eq!(PyprojectAdapter.detect(dir.path()).unwrap().kind, "pyproject");
+        assert_eq!(
+            PyprojectAdapter.detect(dir.path()).unwrap().kind,
+            "pyproject"
+        );
         let mut svc = IndexService::new();
         let job = PackageIngest::new("greet", "python")
             .with_file(&greet)
@@ -256,7 +275,9 @@ mod tests {
             &greet_src,
             &greet_tree,
         );
-        assert!(greet_syms.iter().any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
         let shared = SharedIndex::new(svc);
         let factory = PythonLanguageFactory::with_graph(Arc::new(shared));
         assert_eq!(factory.resolver_chain().len(), 1);
@@ -285,7 +306,10 @@ mod tests {
         let prefix = PrefixLayout::from_path(tmp.path());
         prefix.ensure_dirs().unwrap();
         let fake = FakeEngineAdapter::ty();
-        fake.set_answers(FakeEngineAdapter::typed_fixture("greet", "file:///greet.py"));
+        fake.set_answers(FakeEngineAdapter::typed_fixture(
+            "greet",
+            "file:///greet.py",
+        ));
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         let fake = fake.with_binary(EngineBinary {
             pack_name: "python".into(),
@@ -302,9 +326,14 @@ mod tests {
         )
         .unwrap();
         let index = SharedIndex::new(IndexService::new());
-        let factory = PythonLanguageFactory::with_graph(Arc::new(index)).with_supervisor(Arc::new(sup));
+        let factory =
+            PythonLanguageFactory::with_graph(Arc::new(index)).with_supervisor(Arc::new(sup));
         assert_eq!(factory.resolver_chain().len(), 2);
-        let q = ResolveQuery::new(FileId::new("main.py"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("main.py"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         match factory.resolver_chain().resolve(&q) {
             ResolveOutcome::Ready(r) => {
                 assert_eq!(r.tier, Tier::Types);
@@ -365,7 +394,10 @@ mod tests {
         let greet = dir.path().join("greet.py");
         std::fs::write(&greet, "def greet(name):\n    return name\n").unwrap();
         let mut svc = IndexService::new();
-        svc.ingest_package(&PackageIngest::new("pkg", "python").with_file(&greet), &PythonIndexer);
+        svc.ingest_package(
+            &PackageIngest::new("pkg", "python").with_file(&greet),
+            &PythonIndexer,
+        );
         let shared = SharedIndex::new(svc);
         let factory =
             PythonLanguageFactory::with_graph(Arc::new(shared)).with_supervisor(Arc::new(sup));

@@ -92,7 +92,9 @@ impl LanguageFactory for CSharpLanguageFactory {
 
 fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedSymbol>) {
     match node.kind() {
-        "class_declaration" | "interface_declaration" | "method_declaration"
+        "class_declaration"
+        | "interface_declaration"
+        | "method_declaration"
         | "constructor_declaration" => {
             if let Some(name_n) = node.child_by_field_name("name") {
                 let name = name_n.utf8_text(src).unwrap_or("").to_string();
@@ -128,7 +130,9 @@ fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
             .trim_end_matches(';')
             .trim();
         if !path.is_empty() {
-            facts.imports.push(ImportDecl::new(file.clone(), path.replace("::", ".")));
+            facts
+                .imports
+                .push(ImportDecl::new(file.clone(), path.replace("::", ".")));
         }
     }
     let mut c = node.walk();
@@ -139,8 +143,14 @@ fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
 
 fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
     let range = Range::new(
-        Position::new(node.start_position().row as u32, node.start_position().column as u32),
-        Position::new(node.end_position().row as u32, node.end_position().column as u32),
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
     );
     IndexedSymbol {
         file: file.clone(),
@@ -167,7 +177,11 @@ fn encode(toks: &[(u32, u32, u32, u32)]) -> Vec<u32> {
     let mut ps = 0u32;
     for &(line, start, len, ty) in toks {
         let dl = line.saturating_sub(pl);
-        let ds = if dl == 0 { start.saturating_sub(ps) } else { start };
+        let ds = if dl == 0 {
+            start.saturating_sub(ps)
+        } else {
+            start
+        };
         data.extend_from_slice(&[dl, ds, len, ty, 0]);
         pl = line;
         ps = start;
@@ -234,8 +248,14 @@ mod tests {
         assert!(t3_ceiling_reason().contains("T1/T2 ceiling"));
         assert_eq!(CSharpIndexer.language_id().as_str(), "csharp");
         assert_eq!(CSharpIndexer.grammar_id(), "tree-sitter-c-sharp");
-        assert_eq!(CSharpLanguageFactory::new().language_id().as_str(), "csharp");
-        assert_eq!(CSharpLanguageFactory::new().grammar_id(), "tree-sitter-c-sharp");
+        assert_eq!(
+            CSharpLanguageFactory::new().language_id().as_str(),
+            "csharp"
+        );
+        assert_eq!(
+            CSharpLanguageFactory::new().grammar_id(),
+            "tree-sitter-c-sharp"
+        );
         assert!(CSharpLanguageFactory::default().resolver_chain().is_empty());
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("App.csproj"), "<Project></Project>\n").unwrap();
@@ -254,7 +274,9 @@ mod tests {
         assert_eq!(CsprojAdapter.detect(dir.path()).unwrap().kind, "csproj");
         let mut svc = IndexService::new();
         svc.ingest_package(
-            &PackageIngest::new("App", "csharp").with_file(&greet).with_file(&main),
+            &PackageIngest::new("App", "csharp")
+                .with_file(&greet)
+                .with_file(&main),
             &CSharpIndexer,
         );
         let src = std::fs::read_to_string(&main).unwrap();
@@ -277,11 +299,21 @@ mod tests {
             &greet_src,
             &greet_tree,
         );
-        assert!(greet_syms.iter().any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class));
-        assert!(greet_syms.iter().any(|s| s.name == "IHi" && s.kind == SymbolKind::Class));
-        assert!(greet_syms.iter().any(|s| s.name == "Hi" && s.kind == SymbolKind::Method));
-        assert!(greet_syms.iter().any(|s| s.name == "Greeter" && s.kind == SymbolKind::Method));
-        assert!(greet_syms.iter().all(|s| !s.name.is_empty() && s.range.start.line == s.range.end.line));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "IHi" && s.kind == SymbolKind::Class));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Hi" && s.kind == SymbolKind::Method));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Method));
+        assert!(greet_syms
+            .iter()
+            .all(|s| !s.name.is_empty() && s.range.start.line == s.range.end.line));
         let types: Vec<u32> = toks.chunks(5).map(|c| c[3]).collect();
         assert!(types.contains(&1) || types.contains(&5) || types.contains(&6));
         assert_eq!(
@@ -292,14 +324,20 @@ mod tests {
             encode(&[(0, 1, 2, 1), (1, 0, 3, 6)]),
             vec![0, 1, 2, 1, 0, 1, 0, 3, 6, 0]
         );
-        let facts = CSharpIndexer.extract_graph(&FileId::new(main.to_string_lossy().as_ref()), &src, &tree);
-        assert!(!facts.imports.is_empty(), "using_directive must fill GraphFacts");
+        let facts =
+            CSharpIndexer.extract_graph(&FileId::new(main.to_string_lossy().as_ref()), &src, &tree);
+        assert!(
+            !facts.imports.is_empty(),
+            "using_directive must fill GraphFacts"
+        );
         assert!(
             facts.imports.iter().any(|i| i.path.contains("Lib")),
             "{:?}",
             facts.imports
         );
-        assert!(greet_syms.iter().any(|s| s.name == "Greeter" && s.kind == SymbolKind::Variable));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Variable));
         let shared = SharedIndex::new(svc);
         let factory = CSharpLanguageFactory::with_graph(Arc::new(shared));
         assert_eq!(factory.resolver_chain().len(), 2);
@@ -311,7 +349,9 @@ mod tests {
             ResolveOutcome::Ready(r) => {
                 assert!(r.tier == Tier::Graph || r.tier == Tier::Syntax);
                 assert!(
-                    r.locations.iter().any(|l| l.uri.contains("Greeter.cs") || l.uri.contains("Program.cs")),
+                    r.locations
+                        .iter()
+                        .any(|l| l.uri.contains("Greeter.cs") || l.uri.contains("Program.cs")),
                     "{:?}",
                     r.locations
                 );

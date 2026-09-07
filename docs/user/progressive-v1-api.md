@@ -216,13 +216,15 @@ Unless noted, every response carries `Status`. `code == 0` means the write (if a
 
 ### IndexStatus
 
-**Purpose.** Snapshot of what is indexed: packages, their generations, and a cache-entry count.
+**Purpose.** Snapshot of what is indexed: packages, their generations, a cache-entry count, and **ingest phase**.
 
-**When to call.** To paint an indexing UI, or to poll after connect before the first `TierReady`.
+**When to call.** To paint an indexing UI, or to poll after connect before the first `TierReady`. poc-ide requests this on the control IO thread after connect (never from `fn ui`).
 
 **Reads / writes.** Reads only. `IndexPackage` is `package_id` + `generation`. `cache_entries` is a cache-size hint, not a file list.
 
-**Success / error.** `code == 0` — rows are current. `code != 0` — ignore `packages`.
+**Additive field.** `ingest` (tag 4) is `not_started` \| `running` \| `done`. Distinguishes “no packages yet” from “ingest in flight” and “syntax ingest finished” without a new RPC. Unknown / empty values mean `not_started`. The field is filled from session ingest reality, not guessed from an empty package list.
+
+**Success / error.** `code == 0` — rows and `ingest` are current. `code != 0` — ignore `packages` and `ingest`.
 
 **Relates to.** `TierStatus`, `TierReady`. Stock clients see ingest as LSP `workDoneProgress` / `window/workDoneProgress/create` instead. Locations on stock LSP may include `Location.data.tier` (`syntax` \| `graph` \| `types`).
 

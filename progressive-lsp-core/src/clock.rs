@@ -83,7 +83,10 @@ mod tests {
         clock.advance_ms(250);
         assert_eq!(clock.unix_ms(), 1250);
         assert_eq!(clock.offset_ms(), 250);
-        assert_eq!(clock.now().duration_since(before), Duration::from_millis(250));
+        assert_eq!(
+            clock.now().duration_since(before),
+            Duration::from_millis(250)
+        );
         clock.advance_ms(50);
         assert_eq!(clock.unix_ms(), 1300);
         assert_eq!(clock.offset_ms(), 300);

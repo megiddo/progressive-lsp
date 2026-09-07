@@ -9,7 +9,11 @@ use crate::host::{HookName, ScriptContext, ScriptDecision, SpawnTweak};
 
 /// One loaded script engine (Interpreter).
 pub trait ScriptEngine: Send {
-    fn eval_hook(&mut self, hook: HookName, ctx: &ScriptContext) -> Result<ScriptDecision, ScriptSandbox>;
+    fn eval_hook(
+        &mut self,
+        hook: HookName,
+        ctx: &ScriptContext,
+    ) -> Result<ScriptDecision, ScriptSandbox>;
 }
 
 /// Abstract Factory. Watch tests must not hard-code Rhai.
@@ -61,19 +65,24 @@ impl ScriptEngineFactory for RhaiEngineFactory {
                 || source.contains("std::fs")
                 || source.contains("open(") && source.contains("file"))
         {
-            return Err(ScriptSandbox("I/O is not allowed (allow_shell is false)".into()));
+            return Err(ScriptSandbox(
+                "I/O is not allowed (allow_shell is false)".into(),
+            ));
         }
         let mut engine = Engine::new();
         engine.set_max_operations(ops_limit);
         engine.set_max_string_size(string_cap);
         let clock_now = clock.clone();
         engine.register_fn("now", move || clock_now.unix_ms() as i64);
-        engine.register_fn("abort", |msg: &str| -> Result<Dynamic, Box<EvalAltResult>> {
-            Err(Box::new(EvalAltResult::ErrorRuntime(
-                Dynamic::from(format!("abort:{msg}")),
-                Position::NONE,
-            )))
-        });
+        engine.register_fn(
+            "abort",
+            |msg: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+                Err(Box::new(EvalAltResult::ErrorRuntime(
+                    Dynamic::from(format!("abort:{msg}")),
+                    Position::NONE,
+                )))
+            },
+        );
         let state = Arc::new(Mutex::new(HookState {
             denied: Vec::new(),
             skip: false,
@@ -137,7 +146,11 @@ fn decision_from_err(err: &EvalAltResult) -> Option<ScriptDecision> {
 }
 
 impl ScriptEngine for RhaiEngine {
-    fn eval_hook(&mut self, hook: HookName, ctx: &ScriptContext) -> Result<ScriptDecision, ScriptSandbox> {
+    fn eval_hook(
+        &mut self,
+        hook: HookName,
+        ctx: &ScriptContext,
+    ) -> Result<ScriptDecision, ScriptSandbox> {
         let mut scope = Scope::new();
         scope.push("path", ctx.path.clone());
         // Rhai reserves `package`; scripts read the package id as `pkg`.
@@ -196,7 +209,11 @@ pub struct FakeEngine {
 }
 
 impl ScriptEngine for FakeEngine {
-    fn eval_hook(&mut self, _hook: HookName, _ctx: &ScriptContext) -> Result<ScriptDecision, ScriptSandbox> {
+    fn eval_hook(
+        &mut self,
+        _hook: HookName,
+        _ctx: &ScriptContext,
+    ) -> Result<ScriptDecision, ScriptSandbox> {
         Ok(self.decision.clone())
     }
 }
@@ -267,13 +284,27 @@ mod tests {
             )
             .is_err());
         assert!(
-            f.create("register_method(\"hover\")", "t", Arc::new(FakeClock::at_unix_ms(1)), 10, 10, false)
-                .is_ok(),
+            f.create(
+                "register_method(\"hover\")",
+                "t",
+                Arc::new(FakeClock::at_unix_ms(1)),
+                10,
+                10,
+                false
+            )
+            .is_ok(),
             "register_method alone is not definition"
         );
         assert!(
-            f.create("let x = \"textDocument/definition\";", "t", Arc::new(FakeClock::at_unix_ms(1)), 10, 10, false)
-                .is_ok(),
+            f.create(
+                "let x = \"textDocument/definition\";",
+                "t",
+                Arc::new(FakeClock::at_unix_ms(1)),
+                10,
+                10,
+                false
+            )
+            .is_ok(),
             "definition string alone is not a registration"
         );
     }
@@ -281,7 +312,8 @@ mod tests {
     #[test]
     fn rhai_sandbox_requires_both_definition_tokens_and_blocks_io() {
         let f = RhaiEngineFactory;
-        let clock = || -> Arc<dyn progressive_lsp_core::ClockPort> { Arc::new(FakeClock::at_unix_ms(1)) };
+        let clock =
+            || -> Arc<dyn progressive_lsp_core::ClockPort> { Arc::new(FakeClock::at_unix_ms(1)) };
         assert!(f
             .create(
                 "register_method(\"textDocument/definition\"); fn on_bootstrap() {}",
@@ -292,39 +324,100 @@ mod tests {
                 false
             )
             .is_err());
+        assert!(f
+            .create(
+                "fn on_bootstrap() { register_method(\"hover\"); }",
+                "t",
+                clock(),
+                100,
+                4096,
+                false
+            )
+            .is_ok());
+        assert!(f
+            .create(
+                "fn on_bootstrap() { let x = \"textDocument/definition\"; }",
+                "t",
+                clock(),
+                100,
+                4096,
+                false
+            )
+            .is_ok());
+        assert!(f
+            .create(
+                "shell(\"ls\"); fn on_bootstrap() {}",
+                "t",
+                clock(),
+                100,
+                100,
+                false
+            )
+            .is_err());
+        assert!(f
+            .create(
+                "exec(\"ls\"); fn on_bootstrap() {}",
+                "t",
+                clock(),
+                100,
+                100,
+                false
+            )
+            .is_err());
+        assert!(f
+            .create(
+                "std::fs; fn on_bootstrap() {}",
+                "t",
+                clock(),
+                100,
+                100,
+                false
+            )
+            .is_err());
+        assert!(f
+            .create(
+                "open(\"file\"); fn on_bootstrap() {}",
+                "t",
+                clock(),
+                100,
+                100,
+                false
+            )
+            .is_err());
         assert!(
-            f.create("fn on_bootstrap() { register_method(\"hover\"); }", "t", clock(), 100, 4096, false)
-                .is_ok()
-        );
-        assert!(
-            f.create("fn on_bootstrap() { let x = \"textDocument/definition\"; }", "t", clock(), 100, 4096, false)
-                .is_ok()
-        );
-        assert!(f
-            .create("shell(\"ls\"); fn on_bootstrap() {}", "t", clock(), 100, 100, false)
-            .is_err());
-        assert!(f
-            .create("exec(\"ls\"); fn on_bootstrap() {}", "t", clock(), 100, 100, false)
-            .is_err());
-        assert!(f
-            .create("std::fs; fn on_bootstrap() {}", "t", clock(), 100, 100, false)
-            .is_err());
-        assert!(f
-            .create("open(\"file\"); fn on_bootstrap() {}", "t", clock(), 100, 100, false)
-            .is_err());
-        assert!(
-            f.create("fn on_bootstrap() { let x = \"file\"; }", "t", clock(), 100, 4096, false)
-                .is_ok(),
+            f.create(
+                "fn on_bootstrap() { let x = \"file\"; }",
+                "t",
+                clock(),
+                100,
+                4096,
+                false
+            )
+            .is_ok(),
             "file without open is allowed"
         );
         assert!(
-            f.create("fn on_bootstrap() { open(\"x\"); }", "t", clock(), 100, 4096, false)
-                .is_ok(),
+            f.create(
+                "fn on_bootstrap() { open(\"x\"); }",
+                "t",
+                clock(),
+                100,
+                4096,
+                false
+            )
+            .is_ok(),
             "open without file token is allowed when allow_shell is false"
         );
         assert!(
-            f.create("fn on_bootstrap() { let hint = \"shell(\"; }", "t", clock(), 100, 4096, true)
-                .is_ok(),
+            f.create(
+                "fn on_bootstrap() { let hint = \"shell(\"; }",
+                "t",
+                clock(),
+                100,
+                4096,
+                true
+            )
+            .is_ok(),
             "allow_shell true permits shell("
         );
     }
@@ -356,8 +449,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            skip.eval_hook(HookName::OnPreIndex, &ScriptContext { package: "pkg".into(), ..Default::default() })
-                .unwrap(),
+            skip.eval_hook(
+                HookName::OnPreIndex,
+                &ScriptContext {
+                    package: "pkg".into(),
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
             ScriptDecision::SkipPackage
         );
         let mut deny = RhaiEngineFactory
@@ -371,7 +470,13 @@ mod tests {
             )
             .unwrap();
         match deny
-            .eval_hook(HookName::OnWatch, &ScriptContext { path: "drop.me".into(), ..Default::default() })
+            .eval_hook(
+                HookName::OnWatch,
+                &ScriptContext {
+                    path: "drop.me".into(),
+                    ..Default::default()
+                },
+            )
             .unwrap()
         {
             ScriptDecision::DenyPaths(p) => assert_eq!(p, vec!["drop.me".to_string()]),
@@ -392,8 +497,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            skip.eval_hook(HookName::OnEngineSpawn, &ScriptContext { pack: "python".into(), ..Default::default() })
-                .unwrap(),
+            skip.eval_hook(
+                HookName::OnEngineSpawn,
+                &ScriptContext {
+                    pack: "python".into(),
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
             ScriptDecision::Abort("skip-ty".into())
         );
         let mut tweak = RhaiEngineFactory

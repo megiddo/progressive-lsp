@@ -22,8 +22,8 @@ pub struct ManifestArtifact {
 
 impl Manifest {
     pub fn parse(json: &str) -> Result<Self, InstallError> {
-        let m: Manifest = serde_json::from_str(json)
-            .map_err(|e| InstallError::Manifest(e.to_string()))?;
+        let m: Manifest =
+            serde_json::from_str(json).map_err(|e| InstallError::Manifest(e.to_string()))?;
         m.validate()?;
         Ok(m)
     }
@@ -63,8 +63,7 @@ impl Manifest {
     }
 
     pub fn to_json(&self) -> Result<String, InstallError> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| InstallError::Manifest(e.to_string()))
+        serde_json::to_string_pretty(self).map_err(|e| InstallError::Manifest(e.to_string()))
     }
 }
 
@@ -125,7 +124,10 @@ mod tests {
     fn rejects_bad_schema() {
         assert!(Manifest::parse("{}").is_err());
         assert!(Manifest::parse("[").is_err());
-        assert!(Manifest::parse(r#"{"version":"","artifacts":[{"name":"a","rel_path":"b","sha256":"aa"}]}"#).is_err());
+        assert!(Manifest::parse(
+            r#"{"version":"","artifacts":[{"name":"a","rel_path":"b","sha256":"aa"}]}"#
+        )
+        .is_err());
         let empty_art = r#"{"version":"1","artifacts":[]}"#;
         assert!(Manifest::parse(empty_art).is_err());
         let abs = format!(
@@ -143,7 +145,8 @@ mod tests {
             hex_encode(&sha256(b"x"))
         );
         assert!(Manifest::parse(&no_name).is_err());
-        let short = r#"{"version":"1","artifacts":[{"name":"a","rel_path":"bin/x","sha256":"abcd"}]}"#;
+        let short =
+            r#"{"version":"1","artifacts":[{"name":"a","rel_path":"bin/x","sha256":"abcd"}]}"#;
         assert!(Manifest::parse(short).is_err());
     }
 

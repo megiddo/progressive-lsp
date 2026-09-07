@@ -13,8 +13,8 @@ use progressive_lsp_control::{
     WatchSubscribeResponse,
 };
 use progressive_lsp_core::{
-    apply_worktree_excludes, Config, ConfigError, ConfigLoad, ConfigOverlay, FakeClock,
-    InitializeFailed, LogComponent, LogPort, LogScope, NullLog, PackageId, PrefixLayout,
+    apply_worktree_excludes, path_from_file_uri, Config, ConfigError, ConfigLoad, ConfigOverlay,
+    FakeClock, InitializeFailed, LogComponent, LogPort, LogScope, NullLog, PackageId, PrefixLayout,
     OVERLAY_DIR_NAME,
 };
 use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes, EngineSupervisor};
@@ -299,16 +299,20 @@ impl LspIntelligence for ServeHost {
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
-        let path = uri.strip_prefix("file://").unwrap_or(uri);
-        let _g = LogScope::enter(LogScope::new().path(path).operation("textDocument/didOpen"));
+        let path = path_from_file_uri(uri);
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(path.to_string_lossy().into_owned())
+                .operation("textDocument/didOpen"),
+        );
         self.session.did_open(uri, language_id, text);
     }
 
     fn did_change(&self, uri: &str, text: &str) {
-        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
-                .path(path)
+                .path(path.to_string_lossy().into_owned())
                 .operation("textDocument/didChange"),
         );
         self.session.did_change(uri, text);
@@ -499,6 +503,7 @@ impl ControlPlane for ServeHost {
             status: Some(Status::ok()),
             packages,
             cache_entries: self.session.cache_entries(),
+            ingest: self.session.ingest_state().as_str().into(),
         }
     }
 
@@ -566,11 +571,11 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     if uri.is_empty() || uri == "null" {
         return None;
     }
-    let path = uri.strip_prefix("file://").unwrap_or(uri);
-    if path.is_empty() {
+    let path = path_from_file_uri(uri);
+    if path.as_os_str().is_empty() {
         return None;
     }
-    Some(PathBuf::from(path))
+    Some(path)
 }
 
 fn load_config_file(path: &Path) -> Result<ConfigLoad, ConfigError> {
@@ -761,6 +766,12 @@ mod tests {
         assert_eq!(
             root_from_params(&serde_json::json!({"rootUri": "/plain"})),
             Some(PathBuf::from("/plain"))
+        );
+        assert_eq!(
+            root_from_params(&serde_json::json!({
+                "rootUri": "file:///Users/me/My%20Drive/ws"
+            })),
+            Some(PathBuf::from("/Users/me/My Drive/ws"))
         );
     }
 
@@ -964,6 +975,80 @@ mod tests {
         assert!(!sym.locations.is_empty() || src_now.contains("ghost"));
     }
 
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn encoded_root_uri_f12_reaches_other_package() {
+        use progressive_lsp_core::{path_to_file_uri, FileId};
+        use progressive_lsp_resolve::{Position, QueryKind};
+
+        let prefix = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("My Drive");
+        let app_dir = workspace.join("app/src/main/java/com/example/app");
+        let lib_dir = workspace.join("lib/src/main/java/com/example/lib");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        std::fs::write(
+            workspace.join("pom.xml"),
+            "<project><modules><module>lib</module><module>app</module></modules></project>\n",
+        )
+        .unwrap();
+        for name in ["lib", "app"] {
+            std::fs::write(
+                workspace.join(name).join("pom.xml"),
+                format!("<project><artifactId>{name}</artifactId></project>\n"),
+            )
+            .unwrap();
+        }
+        let app_src = "package com.example.app;\nimport com.example.lib.Lib;\npublic class App { String run() { return Lib.greet(\"x\"); } }\n";
+        let lib_src = "package com.example.lib;\npublic class Lib { public static String greet(String n) { return n; } }\n";
+        let app = app_dir.join("App.java");
+        std::fs::write(&app, app_src).unwrap();
+        std::fs::write(lib_dir.join("Lib.java"), lib_src).unwrap();
+
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let host = ServeHost::new(layout).unwrap();
+        let root_uri = path_to_file_uri(&workspace);
+        assert!(root_uri.contains("%20"), "{root_uri}");
+        host.on_initialize(&serde_json::json!({ "rootUri": root_uri }))
+            .unwrap();
+        let app_uri = path_to_file_uri(&app);
+        host.did_open(&app_uri, "java", app_src);
+        let byte = app_src.find("greet").expect("greet");
+        let mut line = 0u32;
+        let mut col = 0u32;
+        for (i, ch) in app_src.char_indices() {
+            if i == byte {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        let q = ResolveQuery::new(
+            FileId::from_uri(&app_uri),
+            Position::new(line, col),
+            QueryKind::Definition,
+        );
+        let found = host.resolve(&q);
+        assert!(
+            found.locations.iter().any(|l| l.uri.contains("Lib.java")),
+            "F12 through encoded URI must reach Lib.java, got {found:?}"
+        );
+        assert!(
+            found
+                .locations
+                .iter()
+                .all(|l| l.uri.starts_with("file://") && !l.uri.contains("My Drive")),
+            "location URIs must percent-encode spaces: {:?}",
+            found.locations
+        );
+    }
+
     #[test]
     fn control_plane_config_watch_files_since_and_hash_fail() {
         let prefix = tempfile::tempdir().unwrap();
@@ -1048,7 +1133,11 @@ mod tests {
             "{batches:?}"
         );
         let idx = host.index_status(&IndexStatusRequest {});
-        assert!(idx.status.unwrap().is_ok());
+        assert!(idx.status.as_ref().unwrap().is_ok());
+        assert_eq!(
+            idx.ingest_state(),
+            progressive_lsp_control::IngestState::Done
+        );
         let tiers = host.tier_status(&TierStatusRequest {});
         assert!(tiers.status.unwrap().is_ok());
         let ready = host.take_tier_ready();

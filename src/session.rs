@@ -1,12 +1,13 @@
 //! Composition-time session: watch + index + resolve + ingest + scripts. Not a god LspServer.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use progressive_lsp_control::IngestState;
 use progressive_lsp_core::{
-    FakeClock, InitializeFailed, LanguageId, LogComponent, LogPort, LogScope, NullLog, PackageId,
-    PrefixLayout, T2Backend, Tier,
+    path_from_file_uri, FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort,
+    LogRecord, LogScope, NullLog, PackageId, PrefixLayout, T2Backend, Tier,
 };
 use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::{
@@ -14,7 +15,7 @@ use progressive_lsp_index::{
 };
 use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
 use progressive_lsp_resolve::{
-    ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy, TreeSitterResolver,
+    QueryKind, ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy, TreeSitterResolver,
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
@@ -56,6 +57,7 @@ pub struct WorkspaceSession {
     scripts: Mutex<Option<ScriptHost>>,
     progress: Mutex<Vec<WorkDoneProgress>>,
     skipped_packages: Mutex<Vec<PackageId>>,
+    ingest: Mutex<IngestState>,
     supervisor: Option<Arc<EngineSupervisor>>,
     log: Arc<dyn LogPort>,
     unknown_languages: Mutex<HashSet<String>>,
@@ -71,6 +73,7 @@ impl WorkspaceSession {
             scripts: Mutex::new(None),
             progress: Mutex::new(Vec::new()),
             skipped_packages: Mutex::new(Vec::new()),
+            ingest: Mutex::new(IngestState::NotStarted),
             supervisor: None,
             log: Arc::new(NullLog),
             unknown_languages: Mutex::new(HashSet::new()),
@@ -227,11 +230,16 @@ impl WorkspaceSession {
 
     /// Package-stream ingest. Completing a package marks Graph and emits progress.
     /// Never called from [`LspIntelligence::did_change`].
+    pub fn ingest_state(&self) -> IngestState {
+        *self.ingest.lock().expect("ingest")
+    }
+
     pub fn ingest_workspace(&self) {
         let model = self.model.lock().expect("model").clone();
         let Some(model) = model else {
             return;
         };
+        *self.ingest.lock().expect("ingest") = IngestState::Running;
         for pkg in &model.packages {
             if self
                 .skipped_packages
@@ -277,6 +285,7 @@ impl WorkspaceSession {
                 let _ = host.on_post_index(pkg.id.as_str());
             }
         }
+        *self.ingest.lock().expect("ingest") = IngestState::Done;
     }
 
     pub fn package_tier(&self, id: &str) -> Option<Tier> {
@@ -509,23 +518,83 @@ pub(crate) fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
 
 impl LspIntelligence for WorkspaceSession {
     fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+        let operation = match q.kind {
+            QueryKind::Definition => "textDocument/definition",
+            QueryKind::Implementation => "textDocument/implementation",
+            QueryKind::References => "textDocument/references",
+            QueryKind::TypeDefinition => "textDocument/typeDefinition",
+            QueryKind::Hover => "textDocument/hover",
+            QueryKind::DocumentSymbol => "textDocument/documentSymbol",
+            QueryKind::WorkspaceSymbol => "workspace/symbol",
+        };
         let _g = LogScope::enter(
             LogScope::new()
                 .path(q.file.as_str())
                 .line(q.position.line)
-                .operation("textDocument/definition"),
+                .operation(operation),
         );
-        self.log.debug("textDocument/definition");
-        match self.chain.resolve(q) {
+        let result = match self.chain.resolve(q) {
             progressive_lsp_resolve::ResolveOutcome::Ready(r) => r,
             progressive_lsp_resolve::ResolveOutcome::NotReady => {
                 ResolveResult::empty(progressive_lsp_core::Tier::Syntax)
             }
+        };
+        let discover = matches!(
+            q.kind,
+            QueryKind::Definition
+                | QueryKind::Implementation
+                | QueryKind::References
+                | QueryKind::TypeDefinition
+        );
+        if discover && result.locations.is_empty() {
+            let path = Path::new(q.file.as_str());
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+            let language_id = match ext {
+                "java" => "java",
+                "php" => "php",
+                "html" | "htm" => "html",
+                "css" => "css",
+                "js" | "mjs" | "cjs" | "ts" => "javascript",
+                "go" => "go",
+                "zig" => "zig",
+                "py" => "python",
+                "rs" => "rust",
+                "c" | "h" => "c",
+                "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
+                "cs" => "csharp",
+                _ => "",
+            };
+            let package_id = self
+                .model
+                .lock()
+                .expect("model")
+                .as_ref()
+                .and_then(|m| {
+                    m.packages
+                        .iter()
+                        .find(|p| path.starts_with(&p.root))
+                        .map(|p| p.id.as_str().to_string())
+                })
+                .unwrap_or_default();
+            let mut extras = BTreeMap::new();
+            extras.insert("location_count".into(), "0".into());
+            extras.insert("path".into(), q.file.as_str().to_string());
+            extras.insert("line".into(), q.position.line.to_string());
+            extras.insert("character".into(), q.position.character.to_string());
+            extras.insert("language_id".into(), language_id.to_string());
+            extras.insert("package_id".into(), package_id);
+            extras.insert("tier".into(), result.tier.as_str().to_string());
+            let mut rec = LogRecord::at_caller(LogLevel::Info, operation);
+            rec.extras = Some(extras);
+            self.log.emit(rec);
+        } else {
+            self.log.debug(operation);
         }
+        result
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
                 .path(path.to_string_lossy().into_owned())
@@ -541,7 +610,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_change(&self, uri: &str, text: &str) {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
                 .path(path.to_string_lossy().into_owned())
@@ -561,7 +630,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_close(&self, uri: &str) {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let _g = LogScope::enter(
             LogScope::new()
                 .path(path.to_string_lossy().into_owned())
@@ -572,7 +641,7 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn semantic_tokens(&self, uri: &str) -> Vec<u32> {
-        let path = PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri));
+        let path = path_from_file_uri(uri);
         let src = self.index.lock().source(&path).unwrap_or("").to_string();
         if src.is_empty() {
             return Vec::new();
@@ -795,7 +864,8 @@ pub fn ghost_reindex_unopened(session: &WorkspaceSession, path: &Path, new_sourc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use progressive_lsp_resolve::QueryKind;
+    use progressive_lsp_core::FileId;
+    use progressive_lsp_resolve::{FakeResolver, LspLocation, Position, QueryKind, Range};
 
     #[test]
     fn ghost_edit_reindexes_without_progressive_client() {
@@ -847,6 +917,65 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn encoded_did_open_uri_f12_uses_decoded_file_id() {
+        let session = WorkspaceSession::java_default();
+        let src = "class Tmp { void greet() {} }";
+        session.did_open("file:///tmp/My%20Drive/Tmp.java", "java", src);
+        let col = src.find("greet").expect("greet") as u32;
+        let q = ResolveQuery::new(
+            FileId::from_uri("file:///tmp/My%20Drive/Tmp.java"),
+            Position::new(0, col),
+            QueryKind::Definition,
+        );
+        let r = session.resolve(&q);
+        assert!(
+            !r.locations.is_empty(),
+            "didOpen percent-encoded URI must index the decoded path: {r:?}"
+        );
+        assert!(
+            r.locations.iter().any(|l| l.uri.contains("Tmp.java")),
+            "{r:?}"
+        );
+        let _ = session.semantic_tokens("file:///tmp/My%20Drive/Tmp.java");
+        session.did_change(
+            "file:///tmp/My%20Drive/Tmp.java",
+            "class Tmp { void greet() { int x = 1; } }",
+        );
+        session.did_close("file:///tmp/My%20Drive/Tmp.java");
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn implementation_of_concrete_class_usage_finds_declaration() {
+        let session = WorkspaceSession::java_default();
+        session.did_open(
+            "file:///DefaultLocalConfigService.java",
+            "java",
+            "public class DefaultLocalConfigService {}",
+        );
+        let test_src = concat!(
+            "class CacheTest {\n",
+            "    DefaultLocalConfigService configService = DefaultLocalConfigService.builder();\n",
+            "}\n",
+        );
+        session.did_open("file:///CacheTest.java", "java", test_src);
+        let line = test_src.lines().nth(1).expect("line");
+        let col = line.rfind("DefaultLocalConfigService").expect("rhs") as u32;
+        let r = session.resolve(&ResolveQuery::new(
+            FileId::from_uri("file:///CacheTest.java"),
+            Position::new(1, col),
+            QueryKind::Implementation,
+        ));
+        assert!(
+            r.locations
+                .iter()
+                .any(|l| l.uri.contains("DefaultLocalConfigService.java")),
+            "find implementation on a concrete class usage must jump to the class: {r:?}"
+        );
+    }
+
     #[test]
     fn ingest_never_blocks_did_change_highlighting() {
         let dir = tempfile::tempdir().unwrap();
@@ -892,7 +1021,9 @@ mod tests {
             "didChange highlighting must work before ingest finishes"
         );
         assert!(session.package_tier("lib").is_none());
+        assert_eq!(session.ingest_state(), IngestState::NotStarted);
         session.ingest_workspace();
+        assert_eq!(session.ingest_state(), IngestState::Done);
         assert_eq!(session.package_tier("lib"), Some(Tier::Graph));
         assert_eq!(session.package_tier("app"), Some(Tier::Graph));
         assert!(
@@ -907,6 +1038,17 @@ mod tests {
         let progress = session.drain_progress();
         assert!(!progress.is_empty());
         assert!(session.drain_progress().is_empty());
+    }
+
+    #[test]
+    fn ingest_state_value_object_stays_not_started_without_model() {
+        let session = WorkspaceSession::java_default();
+        assert_eq!(session.ingest_state(), IngestState::NotStarted);
+        assert!(session.ingest_state().is_not_started());
+        session.ingest_workspace();
+        assert_eq!(session.ingest_state(), IngestState::NotStarted);
+        assert!(!session.ingest_state().is_done());
+        assert!(!session.ingest_state().is_running());
     }
 
     #[test]
@@ -1067,6 +1209,38 @@ mod tests {
         assert!(!workspace.path().join(".progressivelsp/cache").exists());
     }
 
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn prefix_cache_cold_start_did_open_f12_still_resolves() {
+        let prefix = tempfile::tempdir().unwrap();
+        let layout = PrefixLayout::from_path(prefix.path());
+        layout.ensure_dirs().unwrap();
+        let uri = "file:///CacheConfiguration.java";
+        let src = "class Tmp { void greet() {} }";
+        let col = src.find("greet").expect("greet") as u32;
+        {
+            let session = WorkspaceSession::with_prefix_and_t2(&layout, T2Backend::Heuristic);
+            session.did_open(uri, "java", src);
+            let r = session.resolve(&ResolveQuery::new(
+                FileId::from_uri(uri),
+                Position::new(0, col),
+                QueryKind::Definition,
+            ));
+            assert!(!r.locations.is_empty(), "warm F12: {r:?}");
+        }
+        let session = WorkspaceSession::with_prefix_and_t2(&layout, T2Backend::Heuristic);
+        session.did_open(uri, "java", src);
+        let r = session.resolve(&ResolveQuery::new(
+            FileId::from_uri(uri),
+            Position::new(0, col),
+            QueryKind::Definition,
+        ));
+        assert!(
+            !r.locations.is_empty(),
+            "disk cache cold start must still extract symbols for F12: {r:?}"
+        );
+    }
+
     #[cfg(feature = "lang-css")]
     #[test]
     fn discover_falls_back_to_non_java_sources() {
@@ -1223,6 +1397,186 @@ mod tests {
             .count();
         assert_eq!(
             change_info, 0,
+            "must not emit info on every didChange: {recs:?}"
+        );
+    }
+
+    #[test]
+    fn empty_definition_emits_info_with_location_count_extras() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("App.java");
+        std::fs::write(&path, "class App {}\n").unwrap();
+        let log = progressive_lsp_core::FakeLog::new();
+        let session = WorkspaceSession::new(
+            SharedIndex::new(IndexService::new()),
+            ResolverChain::empty(),
+        )
+        .with_log(Arc::new(log.clone()));
+        {
+            let mut model = WorkspaceModel::new("directory", dir.path().to_path_buf());
+            model.add_package(PackageEntry::new("app", dir.path().to_path_buf()));
+            *session.model.lock().expect("model") = Some(model);
+        }
+        let path_str = path.to_string_lossy().into_owned();
+        let q = ResolveQuery::new(
+            FileId::new(&path_str),
+            Position::new(0, 6),
+            QueryKind::Definition,
+        );
+        let r = session.resolve(&q);
+        assert!(r.locations.is_empty());
+        let recs = log.records();
+        let info: Vec<_> = recs
+            .iter()
+            .filter(|rec| {
+                rec.level == progressive_lsp_core::LogLevel::Info
+                    && rec.operation.as_deref() == Some("textDocument/definition")
+            })
+            .collect();
+        assert_eq!(info.len(), 1, "{recs:?}");
+        let extras = info[0].extras.as_ref().expect("extras");
+        assert_eq!(extras.get("location_count").map(String::as_str), Some("0"));
+        assert_eq!(
+            extras.get("path").map(String::as_str),
+            Some(path_str.as_str())
+        );
+        assert_eq!(extras.get("line").map(String::as_str), Some("0"));
+        assert_eq!(extras.get("character").map(String::as_str), Some("6"));
+        assert_eq!(extras.get("language_id").map(String::as_str), Some("java"));
+        assert_eq!(extras.get("package_id").map(String::as_str), Some("app"));
+        assert_eq!(extras.get("tier").map(String::as_str), Some("syntax"));
+        let impl_q = ResolveQuery::new(
+            FileId::new(&path_str),
+            Position::new(0, 6),
+            QueryKind::Implementation,
+        );
+        let _ = session.resolve(&impl_q);
+        assert!(
+            log.records().iter().any(|rec| {
+                rec.level == progressive_lsp_core::LogLevel::Info
+                    && rec.operation.as_deref() == Some("textDocument/implementation")
+            }),
+            "{:?}",
+            log.records()
+        );
+    }
+
+    #[test]
+    fn empty_discover_language_id_follows_indexer_for_extension_map() {
+        let cases = [
+            ("App.php", "php"),
+            ("page.html", "html"),
+            ("page.htm", "html"),
+            ("site.css", "css"),
+            ("a.js", "javascript"),
+            ("a.ts", "javascript"),
+            ("main.go", "go"),
+            ("main.zig", "zig"),
+            ("app.py", "python"),
+            ("lib.rs", "rust"),
+            ("foo.c", "c"),
+            ("foo.h", "c"),
+            ("foo.cpp", "cpp"),
+            ("foo.hpp", "cpp"),
+            ("app.cs", "csharp"),
+        ];
+        for (name, want) in cases {
+            let log = progressive_lsp_core::FakeLog::new();
+            let session = WorkspaceSession::new(
+                SharedIndex::new(IndexService::new()),
+                ResolverChain::empty(),
+            )
+            .with_log(Arc::new(log.clone()));
+            let path = format!("/ws/{name}");
+            let q = ResolveQuery::new(
+                FileId::new(&path),
+                Position::new(1, 2),
+                QueryKind::References,
+            );
+            let _ = session.resolve(&q);
+            let extras = log
+                .records()
+                .into_iter()
+                .find(|rec| {
+                    rec.level == progressive_lsp_core::LogLevel::Info
+                        && rec.operation.as_deref() == Some("textDocument/references")
+                })
+                .and_then(|rec| rec.extras)
+                .expect(name);
+            assert_eq!(
+                extras.get("language_id").map(String::as_str),
+                Some(want),
+                "{name}"
+            );
+            assert_eq!(extras.get("location_count").map(String::as_str), Some("0"));
+        }
+    }
+
+    #[test]
+    fn resolve_hit_does_not_emit_info_for_resolve_row() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let loc = LspLocation::new(
+            "file:///hit.java",
+            Range::point(Position::new(1, 0)),
+            Tier::Syntax,
+        );
+        let session = WorkspaceSession::new(
+            SharedIndex::new(IndexService::new()),
+            ResolverChain::new(vec![Box::new(
+                FakeResolver::syntax("hit").with_location(loc),
+            )]),
+        )
+        .with_log(Arc::new(log.clone()));
+        let q = ResolveQuery::new(
+            FileId::new("/hit.java"),
+            Position::new(0, 4),
+            QueryKind::Definition,
+        );
+        let r = session.resolve(&q);
+        assert_eq!(r.locations.len(), 1);
+        let recs = log.records();
+        assert!(
+            recs.iter().any(|rec| {
+                rec.level == progressive_lsp_core::LogLevel::Debug
+                    && rec.operation.as_deref() == Some("textDocument/definition")
+            }),
+            "{recs:?}"
+        );
+        assert!(
+            recs.iter().all(|rec| {
+                rec.operation.as_deref() != Some("textDocument/definition")
+                    || rec.level != progressive_lsp_core::LogLevel::Info
+            }),
+            "hit must not emit info for the resolve row: {recs:?}"
+        );
+    }
+
+    #[test]
+    fn did_change_still_must_not_emit_info() {
+        let log = progressive_lsp_core::FakeLog::new();
+        let session = WorkspaceSession::new(
+            SharedIndex::new(IndexService::new()),
+            ResolverChain::empty(),
+        )
+        .with_log(Arc::new(log.clone()));
+        session.did_open("file:///Tmp.java", "java", "class Tmp {}");
+        session.did_change("file:///Tmp.java", "class Tmp { void a() {} }");
+        let recs = log.records();
+        assert!(
+            recs.iter().any(|rec| {
+                rec.level == progressive_lsp_core::LogLevel::Debug
+                    && rec.operation.as_deref() == Some("textDocument/didChange")
+            }),
+            "{recs:?}"
+        );
+        assert_eq!(
+            recs.iter()
+                .filter(|rec| {
+                    rec.operation.as_deref() == Some("textDocument/didChange")
+                        && rec.level == progressive_lsp_core::LogLevel::Info
+                })
+                .count(),
+            0,
             "must not emit info on every didChange: {recs:?}"
         );
     }

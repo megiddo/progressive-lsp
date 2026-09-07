@@ -340,7 +340,7 @@ impl EngineSupervisor {
     }
 
     /// Attach `ChildStderrAdapter` when this child has a stderr pipe **and** a `Read` exists.
-    /// `ChildHandle` has no live OS `Read`; tests pass `FakeChildStderr`.
+    /// Tests pass `FakeChildStderr`. Linux `Command` spawn leaves an OS stderr pipe on the handle.
     pub fn attach_if_stderr_pipe(
         &self,
         pack: &str,
@@ -352,16 +352,33 @@ impl EngineSupervisor {
         if !io.stdout_is_never_log_adapter() {
             return false;
         }
-        let Some(_adapter) = progressive_lsp_log::ChildStderrAdapter::attach_if_stderr_read(
+        if stderr.is_some() {
+            return progressive_lsp_log::ChildStderrAdapter::attach_if_stderr_read(
+                io.has_stderr_pipe(),
+                io.stdout_is_lsp(),
+                stderr,
+                Arc::clone(&self.log),
+                pack,
+            )
+            .is_some();
+        }
+        let has_os_read = self
+            .inner
+            .lock()
+            .expect("sup")
+            .children
+            .get(pack)
+            .is_some_and(|c| c.handle.has_os_stderr());
+        if !has_os_read {
+            return false;
+        }
+        progressive_lsp_log::ChildStderrAdapter::attach_if_stderr_pipe(
             io.has_stderr_pipe(),
             io.stdout_is_lsp(),
-            stderr,
             Arc::clone(&self.log),
             pack,
-        ) else {
-            return false;
-        };
-        true
+        )
+        .is_some()
     }
 
     /// `LogFileTailAdapter` only when a tail path exists. Do not enable `-rpc.trace`.
@@ -1337,5 +1354,62 @@ mod tests {
         assert!(progressive_lsp_log::NullStderrAdapter::forbidden_on_prod_spawn());
         let _ = clock;
         let _ = prefix;
+    }
+
+    #[test]
+    fn supervisor_degrades_when_non_stub_spawn_refuses_on_this_os() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let (_dir, layout) = prefix();
+        let bytes = b"fixture-pack-bytes-not-a-stub";
+        write_pack(&layout, "python", TY_BINARY, bytes, &hex_of(bytes));
+        let log = FakeLog::new();
+        let mut sup = EngineSupervisor::new(clock, layout).with_log(Arc::new(log.clone()));
+        sup.register(Box::new(PackAdapter::python()));
+        let err = sup
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not this OS")
+                || err.to_string().contains("command")
+                || err.to_string().contains("stub pack"),
+            "{err}"
+        );
+        assert!(
+            !sup.is_ready(&LanguageId::new("python"), &PackageId::new("pkg")),
+            "spawn fail keeps T1/T2; T3 is not ready"
+        );
+        assert!(
+            spawn_records(&log)
+                .iter()
+                .any(|r| r.level == LogLevel::Warn),
+            "{:?}",
+            spawn_records(&log)
+        );
+        let port = Arc::new(crate::adapter::RecordingSpawnPort::new());
+        let (_dir2, prefix2) = prefix();
+        write_pack(&prefix2, "python", TY_BINARY, bytes, &hex_of(bytes));
+        let mut injected = EngineSupervisor::new(Arc::new(FakeClock::at_unix_ms(2)), prefix2);
+        injected.register(Box::new(
+            PackAdapter::python().with_spawn_port(port as Arc<dyn crate::adapter::SpawnPort>),
+        ));
+        assert!(injected
+            .try_spawn(
+                "python",
+                &LanguageId::new("python"),
+                &PackageId::new("pkg"),
+                Path::new("/ws"),
+            )
+            .expect("RecordingSpawnPort would-have-spawned"));
+        assert!(injected.is_ready(&LanguageId::new("python"), &PackageId::new("pkg")));
+        assert!(injected.stderr_capture_attached("python"));
+        let fake_err = progressive_lsp_log::FakeChildStderr::new();
+        fake_err.push_line("INFO ty: ready");
+        assert!(injected.attach_if_stderr_pipe("python", Some(&fake_err)));
+        assert!(!injected.attach_if_stderr_pipe("python", None));
     }
 }

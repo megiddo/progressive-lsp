@@ -66,26 +66,126 @@ mod tests {
         let chain = factory.resolver_chain();
 
         let cases = [
-            Case { file: "src/main/java/com/example/app/App.java", needle: "greet", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "Lib", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "baseOnly", expect_uri: "Base.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "one", expect_uri: "Over.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "greet", expect_uri: "Lib.java", kind: QueryKind::Hover },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "run", expect_uri: "App.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/base/Base.java", needle: "Base", expect_uri: "Base.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "Child", expect_uri: "Child.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "two", expect_uri: "Over.java", kind: QueryKind::Hover },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "Lib", expect_uri: "Lib.java", kind: QueryKind::TypeDefinition },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "world", expect_uri: "App.java", kind: QueryKind::References },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "Base", expect_uri: "Base.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "Over", expect_uri: "Over.java", kind: QueryKind::DocumentSymbol },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "App", expect_uri: "App.java", kind: QueryKind::WorkspaceSymbol },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "name", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/child/Child.java", needle: "extra", expect_uri: "Child.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/over/Over.java", needle: "callOne", expect_uri: "Over.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/app/App.java", needle: "staticGreet", expect_uri: "Lib.java", kind: QueryKind::Definition },
-            Case { file: "src/main/java/com/example/base/Base.java", needle: "baseOnly", expect_uri: "Base.java", kind: QueryKind::Hover },
-            Case { file: "src/main/java/com/example/lib/Lib.java", needle: "id", expect_uri: "Lib.java", kind: QueryKind::Definition },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "greet",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "Lib",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "baseOnly",
+                expect_uri: "Base.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "one",
+                expect_uri: "Over.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "greet",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Hover,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "run",
+                expect_uri: "App.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/base/Base.java",
+                needle: "Base",
+                expect_uri: "Base.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "Child",
+                expect_uri: "Child.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "two",
+                expect_uri: "Over.java",
+                kind: QueryKind::Hover,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "Lib",
+                expect_uri: "Lib.java",
+                kind: QueryKind::TypeDefinition,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "world",
+                expect_uri: "App.java",
+                kind: QueryKind::References,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "Base",
+                expect_uri: "Base.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "Over",
+                expect_uri: "Over.java",
+                kind: QueryKind::DocumentSymbol,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "App",
+                expect_uri: "App.java",
+                kind: QueryKind::WorkspaceSymbol,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "name",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/child/Child.java",
+                needle: "extra",
+                expect_uri: "Child.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/over/Over.java",
+                needle: "callOne",
+                expect_uri: "Over.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/app/App.java",
+                needle: "staticGreet",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
+            Case {
+                file: "src/main/java/com/example/base/Base.java",
+                needle: "baseOnly",
+                expect_uri: "Base.java",
+                kind: QueryKind::Hover,
+            },
+            Case {
+                file: "src/main/java/com/example/lib/Lib.java",
+                needle: "id",
+                expect_uri: "Lib.java",
+                kind: QueryKind::Definition,
+            },
         ];
 
         let mut hits = 0usize;
@@ -104,10 +204,23 @@ mod tests {
             match chain.resolve(&q) {
                 ResolveOutcome::Ready(r) => {
                     let ok = match case.kind {
-                        QueryKind::Hover => r.hover.as_ref().map(|h| h.name.contains(case.needle) || !h.name.is_empty()).unwrap_or(!r.locations.is_empty()),
-                        QueryKind::DocumentSymbol => r.symbols.iter().any(|s| s.name.contains(case.expect_uri.trim_end_matches(".java")) || !r.symbols.is_empty()),
-                        QueryKind::WorkspaceSymbol => r.locations.iter().any(|l| l.uri.contains(case.expect_uri)) || !r.locations.is_empty(),
-                        _ => r.locations.iter().any(|l| l.uri.contains(case.expect_uri)) || !r.locations.is_empty(),
+                        QueryKind::Hover => r
+                            .hover
+                            .as_ref()
+                            .map(|h| h.name.contains(case.needle) || !h.name.is_empty())
+                            .unwrap_or(!r.locations.is_empty()),
+                        QueryKind::DocumentSymbol => r.symbols.iter().any(|s| {
+                            s.name.contains(case.expect_uri.trim_end_matches(".java"))
+                                || !r.symbols.is_empty()
+                        }),
+                        QueryKind::WorkspaceSymbol => {
+                            r.locations.iter().any(|l| l.uri.contains(case.expect_uri))
+                                || !r.locations.is_empty()
+                        }
+                        _ => {
+                            r.locations.iter().any(|l| l.uri.contains(case.expect_uri))
+                                || !r.locations.is_empty()
+                        }
                     };
                     if ok {
                         hits += 1;

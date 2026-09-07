@@ -4,9 +4,11 @@
 use crate::buffer::BufferMap;
 use crate::error::IdeError;
 use crate::log::RunLog;
-use crate::lsp::{position_at, LspClient};
+use crate::lsp::{file_uri, position_at, LspClient};
+use crate::lsp_io::LspIoRequest;
 use crate::ports::{FsPort, LspTransport};
 use crate::tabs::TabStrip;
+use std::path::Path;
 
 /// Resolver action. Maps 1:1 onto a stock LSP method.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +57,63 @@ impl DiscoverCommand {
 
     pub fn lsp_method(self) -> &'static str {
         self.kind.lsp_method()
+    }
+
+    /// Build an IO Command from the focused caret. Does not call [`LspTransport::request`].
+    pub fn to_io_request(
+        &self,
+        tabs: &TabStrip,
+        buffers: &BufferMap,
+    ) -> Result<LspIoRequest, IdeError> {
+        let Some(id) = tabs.focused() else {
+            return Err(IdeError::NoFileOpen);
+        };
+        let Some(buf) = buffers.get(id.as_path()) else {
+            return Err(IdeError::NoFileOpen);
+        };
+        let (line, character) = position_at(&buf.text(), buf.selection().start());
+        Ok(LspIoRequest::Discover {
+            kind: self.kind,
+            path: buf.path().to_path_buf(),
+            line,
+            character,
+        })
+    }
+
+    /// Jump + RunLog when the inbox yields. Does not call [`LspTransport::request`].
+    pub fn apply_locations(
+        &self,
+        locations: &[crate::lsp::LspLocation],
+        path: &Path,
+        line: u32,
+        character: u32,
+        tabs: &mut TabStrip,
+        buffers: &mut BufferMap,
+        fs: &impl FsPort,
+        run_log: Option<&mut RunLog>,
+        error: Option<&str>,
+    ) -> Result<usize, IdeError> {
+        let uri = file_uri(path).unwrap_or_default();
+        let location_count = if error.is_some() {
+            None
+        } else {
+            Some(locations.len() as u64)
+        };
+        if let Some(log) = run_log {
+            log.log_discover(
+                self.lsp_method(),
+                path,
+                &uri,
+                line,
+                character,
+                location_count,
+                error,
+            );
+        }
+        if let Some(err) = error {
+            return Err(IdeError::lsp(err));
+        }
+        LspClient::<crate::ports::FakeLsp>::jump(locations, tabs, buffers, fs)
     }
 
     /// Same jump as Navigate / F12 / the editor context menu.
@@ -146,6 +205,15 @@ impl PendingDiscover {
 
     pub fn kind(self) -> DiscoverKind {
         self.kind
+    }
+
+    /// Build an IO Command. Does not call [`LspTransport::request`].
+    pub fn to_io_request(
+        &self,
+        tabs: &TabStrip,
+        buffers: &BufferMap,
+    ) -> Result<LspIoRequest, IdeError> {
+        DiscoverCommand::new(self.kind).to_io_request(tabs, buffers)
     }
 
     /// Apply after the menu UI (same frame after close, or next frame).
@@ -472,6 +540,18 @@ mod tests {
     }
 
     #[test]
+    fn discover_command_to_io_request_never_calls_lsp_transport_request() {
+        let fake = FakeLsp::new();
+        let (fs, tabs, buffers) = open_lib();
+        let req = DiscoverCommand::definition()
+            .to_io_request(&tabs, &buffers)
+            .unwrap();
+        assert!(req.is_discover());
+        assert!(fake.sent().is_empty());
+        drop(fs);
+    }
+
+    #[test]
     fn pending_discover_records_kind_apply_runs_once_and_menu_close_does_not_panic() {
         let click = PendingDiscover::record(DiscoverKind::Definition);
         assert_eq!(click.kind(), DiscoverKind::Definition);
@@ -520,6 +600,75 @@ mod tests {
             buffers.get("/ws/other.rs").unwrap().selection(),
             Selection::new(3, 4)
         );
+        let (fs2, mut tabs2, mut buffers2) = open_lib();
+        buffers2
+            .get_mut("/ws/lib.rs")
+            .unwrap()
+            .set_selection(Selection::collapsed(3));
+        let io_req = PendingDiscover::record(DiscoverKind::Definition)
+            .to_io_request(&tabs2, &buffers2)
+            .unwrap();
+        assert!(io_req.is_discover());
+        assert_eq!(io_req.method(), "textDocument/definition");
+        assert!(DiscoverCommand::definition()
+            .to_io_request(&TabStrip::new(), &BufferMap::new())
+            .unwrap_err()
+            .is_no_file_open());
+        let mut ghost = TabStrip::new();
+        ghost.open("/ws/ghost.rs");
+        assert!(DiscoverCommand::definition()
+            .to_io_request(&ghost, &BufferMap::new())
+            .unwrap_err()
+            .is_no_file_open());
+        let empty_jump = DiscoverCommand::definition()
+            .apply_locations(
+                &[],
+                std::path::Path::new("/ws/lib.rs"),
+                0,
+                0,
+                &mut tabs2,
+                &mut buffers2,
+                &fs2,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(empty_jump, 0);
+        let jumped_inbox = DiscoverCommand::definition()
+            .apply_locations(
+                &[crate::lsp::LspLocation::new(
+                    "file:///ws/other.rs",
+                    0,
+                    3,
+                    0,
+                    4,
+                )],
+                std::path::Path::new("/ws/lib.rs"),
+                0,
+                3,
+                &mut tabs2,
+                &mut buffers2,
+                &fs2,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(jumped_inbox, 1);
+        let mut log = RunLog::memory(crate::ports::FakeClock::at_unix_ms(9)).unwrap();
+        let err = DiscoverCommand::references()
+            .apply_locations(
+                &[],
+                std::path::Path::new("/ws/lib.rs"),
+                0,
+                0,
+                &mut tabs,
+                &mut buffers,
+                &fs,
+                Some(&mut log),
+                Some("eof"),
+            )
+            .unwrap_err();
+        assert!(err.is_lsp());
         let defs = client
             .transport()
             .sent()

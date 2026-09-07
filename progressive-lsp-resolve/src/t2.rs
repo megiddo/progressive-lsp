@@ -115,7 +115,11 @@ mod tests {
     #[test]
     fn heuristic_build_is_not_ready_on_empty_index() {
         let step = T2Strategy::from_backend(T2Backend::Heuristic).build(Arc::new(EmptyIndex));
-        let q = ResolveQuery::new(FileId::new("A.java"), Position::default(), QueryKind::Definition);
+        let q = ResolveQuery::new(
+            FileId::new("A.java"),
+            Position::default(),
+            QueryKind::Definition,
+        );
         assert!(!step.resolve(&q).is_ready());
     }
 }

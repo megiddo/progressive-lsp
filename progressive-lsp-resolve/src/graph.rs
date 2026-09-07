@@ -61,6 +61,31 @@ impl TypeEdge {
     }
 }
 
+/// `KvStoreRouter<K, V>` → `KvStoreRouter`; strips `implements` / `extends`.
+pub fn type_ref_simple(raw: &str) -> String {
+    let trimmed = raw
+        .trim()
+        .trim_start_matches("implements")
+        .trim_start_matches("extends")
+        .trim();
+    trimmed
+        .split('<')
+        .next()
+        .unwrap_or(trimmed)
+        .trim()
+        .to_string()
+}
+
+/// Parent edge matches a cursor symbol's simple name or FQN.
+pub fn type_ref_matches(parent: &str, name: &str, fqn: &str) -> bool {
+    let simple = type_ref_simple(parent);
+    simple == name
+        || simple == fqn
+        || parent == name
+        || parent == fqn
+        || simple.rsplit(['.', '$']).next() == Some(name)
+}
+
 /// Visitor output beyond declarations: imports, hierarchy, call-site arity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GraphFacts {
@@ -90,7 +115,13 @@ pub struct CallSite {
 }
 
 impl CallSite {
-    pub fn new(file: FileId, name: impl Into<String>, arity: u32, line: u32, character: u32) -> Self {
+    pub fn new(
+        file: FileId,
+        name: impl Into<String>,
+        arity: u32,
+        line: u32,
+        character: u32,
+    ) -> Self {
         Self {
             file,
             name: name.into(),
@@ -150,7 +181,9 @@ pub fn prefer_imported<'a>(
             imported.iter().any(|i| {
                 s.fqn == i.path
                     || s.fqn == format!("{}.{}", i.path, name)
-                    || (i.wildcard && (s.fqn.starts_with(&format!("{}.", i.path)) || s.fqn == i.path) && s.name == name)
+                    || (i.wildcard
+                        && (s.fqn.starts_with(&format!("{}.", i.path)) || s.fqn == i.path)
+                        && s.name == name)
             })
         })
         .collect();
@@ -177,6 +210,15 @@ mod tests {
         assert!(w.matches_name("lib"));
         assert!(w.matches_name("App"), "star import matches any simple name");
         assert_eq!(TypeEdge::new("C", "P").parent_fqn, "P");
+        assert_eq!(type_ref_simple("KvStoreRouter<K, V>"), "KvStoreRouter");
+        assert_eq!(type_ref_simple("implements PDFCache<K, V>"), "PDFCache");
+        assert!(type_ref_matches(
+            "KvStoreRouter<K, V>",
+            "KvStoreRouter",
+            "com.amazon.KvStoreRouter"
+        ));
+        assert!(type_ref_matches("com.Base", "Base", "com.Base"));
+        assert!(!type_ref_matches("Face", "Base", "com.Base"));
         assert!(GraphFacts::default().is_empty());
         let mut facts = GraphFacts::default();
         facts.package = Some("p".into());

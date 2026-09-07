@@ -18,7 +18,11 @@ impl GradleAdapter {
             let rest = line.trim_start_matches("include").trim();
             for token in rest.split([',', '(', ')', '[', ']']) {
                 let name = token.trim().trim_matches(['\'', '"', ' ', ':']);
-                if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
                     if !out.iter().any(|e| e == name) {
                         out.push(name.to_string());
                     }

@@ -104,7 +104,8 @@ impl FilesSinceJournal {
 
         let gap = match q {
             Some(FilesSinceQuery::SinceGeneration(g)) => {
-                g < self.retained_from_generation || (self.overflowed && g < self.current_generation)
+                g < self.retained_from_generation
+                    || (self.overflowed && g < self.current_generation)
             }
             _ => self.overflowed && q.is_some(),
         };

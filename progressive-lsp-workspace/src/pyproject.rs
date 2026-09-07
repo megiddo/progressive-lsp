@@ -76,11 +76,17 @@ mod tests {
         );
         assert!(PyprojectAdapter::parse_name("[build-system]\nrequires=[]\n").is_none());
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("pyproject.toml"), "[project]\nname = \"pkg\"\n").unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"pkg\"\n",
+        )
+        .unwrap();
         let model = PyprojectAdapter.detect(dir.path()).unwrap();
         assert_eq!(model.kind, "pyproject");
         assert_eq!(model.packages[0].id.as_str(), "pkg");
-        assert!(PyprojectAdapter.detect(tempfile::tempdir().unwrap().path()).is_none());
+        assert!(PyprojectAdapter
+            .detect(tempfile::tempdir().unwrap().path())
+            .is_none());
         std::fs::write(dir.path().join("pyproject.toml"), "[project]\n").unwrap();
         let model = PyprojectAdapter.detect(dir.path()).unwrap();
         assert!(!model.packages[0].id.as_str().is_empty());

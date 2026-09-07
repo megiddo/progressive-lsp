@@ -133,6 +133,7 @@ pub struct OpenBuffer {
     rope: Rope,
     selection: Selection,
     dirty: DirtyFlag,
+    generation: u64,
 }
 
 impl OpenBuffer {
@@ -145,6 +146,7 @@ impl OpenBuffer {
             rope: Rope::from_str(&text),
             selection: Selection::collapsed(0),
             dirty: DirtyFlag::clean(),
+            generation: 0,
         })
     }
 
@@ -176,6 +178,15 @@ impl OpenBuffer {
         self.dirty
     }
 
+    /// Rope generation. Bumps on insert / delete / reload; not on selection.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn bump_generation(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+    }
+
     pub fn selected_text(&self) -> String {
         let sel = self.clamp_selection(self.selection);
         self.rope.slice(sel.start..sel.end).to_string()
@@ -195,6 +206,7 @@ impl OpenBuffer {
         self.rope = Rope::from_str(&text);
         self.dirty.clear();
         self.selection = self.clamp_selection(self.selection);
+        self.bump_generation();
         Ok(())
     }
 
@@ -211,6 +223,7 @@ impl OpenBuffer {
         self.selection = Selection::collapsed(cursor);
         if changed {
             self.dirty.mark();
+            self.bump_generation();
         }
         changed
     }
@@ -221,12 +234,14 @@ impl OpenBuffer {
             self.rope.remove(sel.start..sel.end);
             self.selection = Selection::collapsed(sel.start);
             self.dirty.mark();
+            self.bump_generation();
             return true;
         }
         let len = self.rope.len_chars();
         if sel.start < len {
             self.rope.remove(sel.start..sel.start + 1);
             self.dirty.mark();
+            self.bump_generation();
             return true;
         }
         false
@@ -240,6 +255,7 @@ impl OpenBuffer {
         self.rope.remove(sel.start..sel.end);
         self.selection = Selection::collapsed(sel.start);
         self.dirty.mark();
+        self.bump_generation();
         true
     }
 
@@ -396,6 +412,7 @@ mod tests {
         assert_eq!(buf.path(), Path::new("/ws/src/lib.rs"));
         assert_eq!(buf.text(), "fn x() {}\n");
         assert_eq!(buf.len_chars(), 10);
+        assert_eq!(buf.generation(), 0);
         assert!(!buf.is_dirty());
         assert!(!buf.dirty_flag().is_dirty());
         assert_eq!(buf.dirty_flag(), DirtyFlag::clean());
@@ -435,10 +452,13 @@ mod tests {
     fn open_buffer_entity_save_clears_dirty_only_on_success() {
         let mut fs = sample_fs();
         let mut buf = OpenBuffer::load("/ws/src/lib.rs", &fs).unwrap();
+        assert_eq!(buf.generation(), 0);
         assert!(buf.insert_text("x"));
+        assert_eq!(buf.generation(), 1);
         assert!(buf.is_dirty());
         buf.save(&mut fs).unwrap();
         assert!(!buf.is_dirty());
+        assert_eq!(buf.generation(), 1);
         assert_eq!(
             fs.read(Path::new("/ws/src/lib.rs")).unwrap(),
             b"xfn x() {}\n"
@@ -446,8 +466,16 @@ mod tests {
 
         buf.insert_text("!");
         assert!(buf.is_dirty());
+        assert_eq!(buf.generation(), 2);
         assert!(buf.save(&mut fs).is_ok());
         assert!(!buf.is_dirty());
+        buf.set_selection(Selection::new(0, 1));
+        assert!(buf.delete_selection_only());
+        assert_eq!(buf.generation(), 3);
+        assert!(buf.delete_range_or_forward());
+        assert_eq!(buf.generation(), 4);
+        assert!(!buf.delete_selection_only());
+        assert_eq!(buf.generation(), 4);
     }
 
     #[test]
@@ -469,13 +497,16 @@ mod tests {
         let mut fs = sample_fs();
         let mut buf = OpenBuffer::load("/ws/src/lib.rs", &fs).unwrap();
         assert!(buf.insert_text("EDIT"));
+        assert_eq!(buf.generation(), 1);
         buf.set_selection(Selection::new(0, 100));
+        assert_eq!(buf.generation(), 1);
         assert!(buf.is_dirty());
         fs.write(Path::new("/ws/src/lib.rs"), b"from disk\n")
             .unwrap();
         buf.reload_from(&fs).unwrap();
         assert_eq!(buf.text(), "from disk\n");
         assert!(!buf.is_dirty());
+        assert_eq!(buf.generation(), 2);
         assert_eq!(buf.selection(), Selection::new(0, buf.len_chars()));
 
         let mut dirty = OpenBuffer::load("/ws/src/lib.rs", &fs).unwrap();

@@ -83,6 +83,15 @@ impl FileId {
         Self(Arc::from(id.as_ref()))
     }
 
+    /// `file:` URI → interned OS path. Percent-decodes so ingest and resolve match.
+    pub fn from_uri(uri: &str) -> Self {
+        Self::new(
+            crate::file_uri::path_from_file_uri(uri)
+                .to_string_lossy()
+                .as_ref(),
+        )
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -210,9 +219,8 @@ fn canonicalize_workspace(path: &Path) -> Result<std::path::PathBuf, ConfigError
     if path.as_os_str().is_empty() {
         return Err(ConfigError::Prefix("workspace path is empty".into()));
     }
-    std::fs::canonicalize(path).map_err(|e| {
-        ConfigError::Io(format!("canonicalize {}: {e}", path.display()))
-    })
+    std::fs::canonicalize(path)
+        .map_err(|e| ConfigError::Io(format!("canonicalize {}: {e}", path.display())))
 }
 
 fn path_fingerprint(path: &Path) -> Vec<u8> {
@@ -267,6 +275,10 @@ mod tests {
         assert_ne!(FileId::new("f"), FileId::new("g"));
         assert_eq!(FileId::new("f").as_str(), "f");
         assert_eq!(FileId::new("f").to_string(), "f");
+        assert_eq!(
+            FileId::from_uri("file:///Users/me/My%20Drive/a.rs").as_str(),
+            "/Users/me/My Drive/a.rs"
+        );
         let mut pkgs = HashSet::new();
         pkgs.insert(PackageId::new("p"));
         assert!(pkgs.contains(&PackageId::new("p")));
@@ -397,6 +409,9 @@ mod tests {
     fn min_version_prefers_equal_left() {
         let a = Version::new(1, 0, 0);
         assert_eq!(min_version(a.clone(), Version::new(1, 0, 0)), a);
-        assert_eq!(min_version(Version::new(2, 0, 0), Version::new(1, 0, 0)), Version::new(1, 0, 0));
+        assert_eq!(
+            min_version(Version::new(2, 0, 0), Version::new(1, 0, 0)),
+            Version::new(1, 0, 0)
+        );
     }
 }

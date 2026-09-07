@@ -117,7 +117,6 @@ impl LspLocation {
             tier,
         }
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,6 +179,10 @@ impl SymbolKind {
             Self::Variable => 13,
             Self::Package => 4,
         }
+    }
+
+    pub fn is_type(self) -> bool {
+        matches!(self, Self::Class | Self::Interface | Self::Enum)
     }
 }
 
@@ -326,6 +329,11 @@ mod tests {
         }
         assert_eq!(SymbolKind::Class.lsp_number(), 5);
         assert_eq!(SymbolKind::Method.lsp_number(), 6);
+        assert!(SymbolKind::Class.is_type());
+        assert!(SymbolKind::Interface.is_type());
+        assert!(SymbolKind::Enum.is_type());
+        assert!(!SymbolKind::Method.is_type());
+        assert!(!SymbolKind::Variable.is_type());
     }
 
     #[test]
@@ -347,11 +355,10 @@ mod tests {
         assert!(empty.locations.is_empty());
         assert_eq!(empty.tier, Tier::Graph);
         assert!(empty.hover.is_none());
-        let ready = ResolveResult::locations(Tier::Syntax, vec![LspLocation::new(
-            "u",
-            Range::default(),
+        let ready = ResolveResult::locations(
             Tier::Syntax,
-        )]);
+            vec![LspLocation::new("u", Range::default(), Tier::Syntax)],
+        );
         assert_eq!(ready.locations.len(), 1);
         assert!(ResolveOutcome::Ready(empty).is_ready());
         assert!(!ResolveOutcome::NotReady.is_ready());
