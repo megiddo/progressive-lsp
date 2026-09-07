@@ -303,7 +303,13 @@ llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
 
 | Component / type | Pattern | Invariant (testable) |
 |---|---|---|
-| `PocArgs` | Value object | Split at the first `--`; left side is xtask flags (`-h` / `--help` only); right side is forwarded to `poc-ide`; leftover without `--` is an error. `poc::run` spawn is a thin shell (N/A for unit tests). |
+| `PocArgs` | Value object | Split at the first `--`; left side is xtask flags (`-h` / `--help` only); right side is forwarded to `poc-ide`; leftover without `--` is an error. `poc::run` spawn is a thin shell (N/A for unit tests). Prefer `./build run ide`. |
+| `XtaskCommand` | Value object | `help` / `lsp` / `ide` / `run ide` / `build` (low-level) / `Legacy`; empty argv is root help; unknown command points at `./build help`. Spawn shells N/A. |
+| `HelpTopic` | Value object | `Root` / `Lsp` / `Ide` / `Run` / `Build`; `help lsp` lists arches; unknown topic fails closed. |
+| `LspArch` | Value object | `all` / `x86_64` / `aarch64` (aliases `amd64`, `arm64`, full musl triples); unknown or missing arch prints the valid list and fails closed. |
+| `BuildTarget` | Value object | Low-level `backends` / `controller` / `package` / `poc`; unknown target fails closed; `controller`/`poc` refuse `--full`/`--target`/`--both`. |
+| `BuildFlags` | Value object | `--full` / `--target` / `--both`; default docker args name this host’s musl triple (not both); `--full` is pack-only. |
+| `RunLaunch` | Value object | `./build run ide` then `--folder` / `--file` / `--container` / `--control-socket`; `--` still forwards; relative `--folder` + `--container` fails closed (bind-mount identity). |
 
 ## Adding a type
 
