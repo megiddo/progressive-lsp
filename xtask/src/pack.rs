@@ -145,14 +145,19 @@ impl ZigToolchainPin {
 
 /// Native container ISA for Zig packs. qemu `linux/amd64` on Darwin is ENOSYS
 /// (`faccessat`) in Zig 0.15.1's Options step. Rust/Go packs still follow the triple.
-pub fn host_native_docker_platform() -> Result<&'static str, String> {
-    match std::env::consts::ARCH {
+/// Native linux/amd64 CI is this same function (`x86_64` → `linux/amd64`, no qemu).
+pub fn docker_platform_for_host_arch(arch: &str) -> Result<&'static str, String> {
+    match arch {
         "aarch64" => Ok("linux/arm64"),
         "x86_64" => Ok("linux/amd64"),
         other => Err(format!(
             "unsupported host arch {other} for zig pack docker platform; expected aarch64 or x86_64"
         )),
     }
+}
+
+pub fn host_native_docker_platform() -> Result<&'static str, String> {
+    docker_platform_for_host_arch(std::env::consts::ARCH)
 }
 
 fn zig_target_for_triple(triple: &str) -> Result<&'static str, String> {
@@ -211,6 +216,21 @@ impl PackBuildPlan {
         zig: Option<&ZigToolchainPin>,
         go: Option<&GoToolchainPin>,
     ) -> Result<Self, String> {
+        Self::for_pin_on_host_arch(root, pin, triple, rust, zig, go, std::env::consts::ARCH)
+    }
+
+    /// Zig `--platform` is the **host** ISA. Tests inject `x86_64` / `aarch64` so
+    /// native linux/amd64 CI argv is locked without a daemon (never qemu amd64
+    /// when the host is arm64). Rust/Go/cached still follow the triple.
+    pub fn for_pin_on_host_arch(
+        root: &Path,
+        pin: &PackPin,
+        triple: &str,
+        rust: Option<&RustToolchainPin>,
+        zig: Option<&ZigToolchainPin>,
+        go: Option<&GoToolchainPin>,
+        host_arch: &str,
+    ) -> Result<Self, String> {
         let triple_platform = match triple {
             X86_64_MUSL => "linux/amd64",
             AARCH64_MUSL => "linux/arm64",
@@ -223,7 +243,7 @@ impl PackBuildPlan {
         // Zig cross-compiles (`-Dtarget`); do not qemu the compiler. Rust/Go stay
         // on the triple platform (those already PASS under qemu).
         let docker_platform = match pin.kind {
-            PackKind::Zig => host_native_docker_platform()?,
+            PackKind::Zig => docker_platform_for_host_arch(host_arch)?,
             PackKind::Rust | PackKind::Go | PackKind::Cached | PackKind::Cmake => triple_platform,
         };
         let dockerfile = root.join(&pin.dockerfile);
@@ -1175,6 +1195,89 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             .unwrap_err();
         assert!(err.contains("unknown docker platform"), "{err}");
         assert!(zig_target_for_triple("x86_64-unknown-linux-gnu").is_err());
+        assert!(docker_platform_for_host_arch("s390x").is_err());
+    }
+
+    #[test]
+    fn zig_packs_lock_native_ci_argv_for_both_host_isas() {
+        let root = fixture_root();
+        let (pins, rust, zig, go) = load_pins(root.path()).unwrap();
+        let html = pins.iter().find(|p| p.name() == SUPERHTML_PACK).unwrap();
+        let zls = pins.iter().find(|p| p.name() == ZLS_PACK).unwrap();
+        for (host_arch, host_platform, host_zig_arch) in [
+            ("x86_64", "linux/amd64", "x86_64"),
+            ("aarch64", "linux/arm64", "aarch64"),
+        ] {
+            let host_sha = zig
+                .as_ref()
+                .unwrap()
+                .for_docker_platform(host_platform)
+                .unwrap()
+                .2;
+            for (pin, triple, zig_target) in [
+                (html, X86_64_MUSL, "x86_64-linux-musl"),
+                (html, AARCH64_MUSL, "aarch64-linux-musl"),
+                (zls, X86_64_MUSL, "x86_64-linux-musl"),
+                (zls, AARCH64_MUSL, "aarch64-linux-musl"),
+            ] {
+                let plan = PackBuildPlan::for_pin_on_host_arch(
+                    root.path(),
+                    pin,
+                    triple,
+                    rust.as_ref(),
+                    zig.as_ref(),
+                    go.as_ref(),
+                    host_arch,
+                )
+                .unwrap();
+                assert_eq!(
+                    plan.docker_platform(),
+                    host_platform,
+                    "{host_arch} {triple} must use host-native {host_platform}"
+                );
+                let args = plan.docker_build_args();
+                assert!(
+                    args.contains(&host_platform.to_string()),
+                    "{host_arch} {triple} args={args:?}"
+                );
+                assert!(
+                    args.iter()
+                        .any(|a| a == &format!("ZIG_ARCH={host_zig_arch}")),
+                    "{host_arch} {triple} args={args:?}"
+                );
+                assert!(
+                    args.iter()
+                        .any(|a| a == &format!("ZIG_TARGET={zig_target}")),
+                    "{host_arch} {triple} args={args:?}"
+                );
+                assert!(
+                    args.iter().any(|a| a == &format!("ZIG_SHA256={host_sha}")),
+                    "{host_arch} {triple} args={args:?}"
+                );
+                if host_arch == "aarch64" {
+                    assert!(
+                        !args.contains(&"linux/amd64".to_string()),
+                        "must not qemu amd64 when host is arm64, args={args:?}"
+                    );
+                }
+            }
+        }
+        let rust_pin = pins.iter().find(|p| p.name() == PYTHON_PACK).unwrap();
+        let rust_on_amd_host = PackBuildPlan::for_pin_on_host_arch(
+            root.path(),
+            rust_pin,
+            X86_64_MUSL,
+            rust.as_ref(),
+            zig.as_ref(),
+            go.as_ref(),
+            "x86_64",
+        )
+        .unwrap();
+        assert_eq!(
+            rust_on_amd_host.docker_platform(),
+            "linux/amd64",
+            "rust packs still follow the triple on native linux/amd64"
+        );
     }
 
     #[test]

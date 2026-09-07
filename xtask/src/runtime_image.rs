@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use progressive_lsp_core::PrefixLayout;
 use progressive_lsp_engine::{
-    binary_name_for_pack, full_pack_names, is_heavy_pack, slim_pack_names, SUPERHTML_PACK,
+    binary_name_for_pack, full_pack_names, slim_pack_names,
 };
 
 use crate::musl::{
@@ -97,8 +97,7 @@ impl RuntimeImagePlan {
                 let binary = binary_name_for_pack(pack)
                     .ok_or_else(|| format!("unknown pack {pack}"))?
                     .to_string();
-                let required = slim_pack_names().contains(pack)
-                    && !(*pack == SUPERHTML_PACK && triple == X86_64_MUSL);
+                let required = slim_pack_names().contains(pack);
                 Ok(PackImageCopy {
                     pack: (*pack).to_string(),
                     binary: binary.clone(),
@@ -171,8 +170,8 @@ impl RuntimeImagePlan {
 
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
     /// Fail closed if the core ELF or a required slim pack is missing.
-    /// superhtml × x86_64 may be absent (HOST-3 qemu/Zig miss).
-    /// Full packs (clangd/tsgo/gopls/zls) are optional (HOST-7 miss / cache miss).
+    /// Slim packs (including superhtml) are required on both triples.
+    /// Full packs (clangd/tsgo/gopls/zls) are optional (HOST-7 miss / clangd cache miss).
     pub fn stage(&self) -> Result<Vec<String>, String> {
         if !self.core_dest.is_file() {
             return Err(format!(
@@ -215,13 +214,8 @@ impl RuntimeImagePlan {
                         self.triple
                     ));
                 }
-                let why = if is_heavy_pack(&pack.pack) {
-                    "HOST-7 miss"
-                } else {
-                    "HOST-3 miss"
-                };
                 omitted.push(format!(
-                    "{}:{} omitted ({why}; not a Mach-O green)",
+                    "{}:{} omitted (HOST-7 miss; not a Mach-O green)",
                     pack.pack, self.triple
                 ));
                 continue;
@@ -306,7 +300,7 @@ fn parse_targets(args: &[String]) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use crate::musl::RecordingDockerPort;
-    use progressive_lsp_engine::PYTHON_PACK;
+    use progressive_lsp_engine::{PYTHON_PACK, SUPERHTML_PACK};
 
     fn fixture_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -380,7 +374,10 @@ mod tests {
             .iter()
             .find(|p| p.pack() == SUPERHTML_PACK)
             .unwrap();
-        assert!(!superhtml.required(), "superhtml x86_64 is the HOST-3 miss");
+        assert!(
+            superhtml.required(),
+            "superhtml is required on both triples (HOST-3 miss closed)"
+        );
         assert_eq!(
             superhtml.image_rel(),
             PathBuf::from("engines/superhtml/superhtml")
@@ -523,15 +520,24 @@ mod tests {
     }
 
     #[test]
-    fn stage_omits_superhtml_x86_64_host3_miss() {
+    fn stage_fails_closed_when_superhtml_x86_64_dest_missing() {
         let root = fixture_root();
         seed_required_elfs(root.path(), X86_64_MUSL, false);
         let plan = RuntimeImagePlan::for_triple(root.path(), X86_64_MUSL).unwrap();
+        let err = plan.stage().unwrap_err();
+        assert!(err.contains("missing required slim pack"), "{err}");
+        assert!(err.contains(SUPERHTML_PACK), "{err}");
+        assert!(err.contains(X86_64_MUSL), "{err}");
+    }
+
+    #[test]
+    fn stage_copies_required_superhtml_x86_64_when_seeded() {
+        let root = fixture_root();
+        seed_required_elfs(root.path(), X86_64_MUSL, true);
+        let plan = RuntimeImagePlan::for_triple(root.path(), X86_64_MUSL).unwrap();
         let omitted = plan.stage().unwrap();
         assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains("superhtml") && n.contains("HOST-3 miss")),
+            !omitted.iter().any(|n| n.contains("superhtml")),
             "{omitted:?}"
         );
         assert!(
@@ -547,9 +553,10 @@ mod tests {
             "{omitted:?}"
         );
         let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
-        assert!(!prefix.engines_dir().join("superhtml/superhtml").exists());
+        assert!(prefix.engines_dir().join("superhtml/superhtml").is_file());
         assert!(prefix.engines_dir().join("python/ty").is_file());
         assert!(prefix.engines_dir().join("biome/biome").is_file());
+        assert!(!prefix.engines_dir().join("clangd/clangd").exists());
     }
 
     #[test]
@@ -580,7 +587,7 @@ mod tests {
     #[test]
     fn run_at_stages_then_tags_without_daemon() {
         let root = fixture_root();
-        seed_required_elfs(root.path(), X86_64_MUSL, false);
+        seed_required_elfs(root.path(), X86_64_MUSL, true);
         seed_required_elfs(root.path(), AARCH64_MUSL, true);
         let docker = RecordingDockerPort::new();
         run_at(

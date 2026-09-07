@@ -1,6 +1,6 @@
 # Agent context policy (host stack)
 
-**Pointer-based context.** Every orchestrator, implementer, hygiene agent, and sub-orchestrator on `host0` → `host7` receives the **same** payload. Do not paste this tree or the pattern table into prompts. Do not grow context “because the parent had it.”
+**Pointer-based context.** Every orchestrator, implementer, hygiene agent, and sub-orchestrator on `host0` → `host7` and the `host-cleanup` break receives the **same** payload. Do not paste this tree or the pattern table into prompts. Do not grow context “because the parent had it.”
 
 Parent of `host0` is `poc-no-stall` (`63507ff`), stacked after the POC-proof stack. Do not reopen LOG-0–LOG-11. Do not merge `RunLog` with the serve WAL. Do not `git stash`. Do not `git config`. Do not `--no-verify`. Do not force-push `main`. This repo uses **git-branchless** (`git sl`). Do not install Graphite.
 
@@ -55,7 +55,8 @@ Children that only implement one WP also get that WP id from [../implementation-
 | `host4` | Runtime image: copy prebuilt core+slim into `/opt/plsp`; `xtask runtime-image`; never cargo/LLVM in the runtime image | Attach wiring; mux; full packs |
 | `host5` | `DockerRuntime.start`: `docker run -i --rm`, bind-mount `$WS:$WS`, `--prefix /opt/plsp`; poc-ide `StdioLsp` talks to docker stdin/stdout; no local Darwin serve | Mux; full packs |
 | `host6` | poc-ide mux client + `serve --mux` for control on the same stdio. Unix sockets through Docker Desktop forbidden | Full packs |
-| `host7` | Full flavor: clangd, tsgo, gopls, zls. PR CI still must not compile LLVM from scratch | — |
+| `host7` | Full flavor: clangd, tsgo, gopls, zls. PR CI still must not compile LLVM from scratch | host8 |
+| `host-cleanup` | Superhtml required on both image triples (HOST-3 miss closed); clangd cache miss stays HOST-7; Zig host-native `--platform` locked for both host ISAs | `host8`; attach/mux; `--cache-fill` cmake |
 
 ## Locks
 
