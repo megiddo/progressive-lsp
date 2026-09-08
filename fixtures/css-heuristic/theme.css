@@ -1,0 +1,12 @@
+@import "app.css";
+
+:root {
+  --brand: #111;
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.hero { color: var(--brand); }

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "CSS LanguageFactory T1 + biome T3 (no Node CSS LS)"
+description = "CSS LanguageFactory T1 + heuristic T2 + biome T3 (no Node CSS LS)"
 
 [dependencies]
 progressive-lsp-core.workspace = true

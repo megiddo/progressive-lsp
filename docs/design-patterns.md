@@ -53,7 +53,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `FilesSincePort` / `SharedCoalescer` | Port / Adapter | Control proto calls the journal; no `$/` JSON-RPC |
 | `NotifyWatcher` | Adapter | Maps notify-style kinds; coalescer never calls OS APIs |
 | `SharedIndex` | Adapter | `IndexService` behind a mutex is a `SymbolIndex` |
-| `LanguageIndexer` / `JavaIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
+| `LanguageIndexer` / `JavaIndexer` / `CIndexer` / `CppIndexer` / `RustIndexer` / `PythonIndexer` / `CssIndexer` / `HtmlIndexer` | Visitor + Strategy | CST walk fills `extract` symbols + `extract_graph` facts; index does not parse JSON-RPC |
 | `JavaLanguageFactory` | Abstract Factory | `language_id` = java; T3 `EngineResolver` when supervisor ready; else T2 Strategy from config (`heuristic` default) then T1 |
 | `ResolverChain` | Chain of Responsibility | First `Ready` wins; `NotReady` continues; `prepend` puts T3 `EngineResolver` first (LOG-8) |
 | `NotReadyResolver` | Test double | T3 skip; must not drop a later T2 `FakeResolver` |
@@ -85,7 +85,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `GraphIndex` | Port | Same store as `SymbolIndex`; package tier is Graph only after ingest |
 | `StackGraphResolver` | Strategy | `unused()` is NotReady; `load_java` / `with_tsg_source` loads pinned Java TSG when selected |
 | `ComposerAdapter` / `GoModAdapter` / `ZigBuildAdapter` | Adapter | Manifest files only; no host php/go/zig |
-| `PhpLanguageFactory` / `HtmlLanguageFactory` / `CssLanguageFactory` / `JavaScriptLanguageFactory` / `GoLanguageFactory` / `ZigLanguageFactory` | Abstract Factory | `language_id` is stable; T3 when supervisor ready (Go/Zig also require project manifest) |
+| `PhpLanguageFactory` / `HtmlLanguageFactory` / `CssLanguageFactory` / `JavaScriptLanguageFactory` / `GoLanguageFactory` / `ZigLanguageFactory` | Abstract Factory | `language_id` is stable; `with_graph` inserts `T2Strategy::default_heuristic()` between optional T3 and T1; T3 when supervisor ready (Go/Zig also require project manifest) |
 | `PhpIndexer` / `HtmlIndexer` / `CssIndexer` / `JavaScriptIndexer` / `GoIndexer` / `ZigIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
 | `HookName` / `ScriptContext` / `ScriptDecision` | Command / DTO | Abort skips the documented side effect; scripts cannot register `textDocument/definition` |
 | `RhaiEngineFactory` / `FakeEngineFactory` | Abstract Factory | Tests inject a fake engine; production is Rhai |
@@ -99,15 +99,15 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `EngineHooks` / `ScriptHookBridge` / `NoopHooks` | Port / Adapter | Supervisor does not hard-code Rhai; tests inject Abort/Noop |
 | `PackAdapter` | Adapter | Discover + hash; stub bytes never exec; Darwin / non-Linux `EngineError::Spawn` (“not this OS”); Linux `Command` via `CommandSpawnPort` + `ChildIo::lsp_with_stderr_pipe`; tests inject `RecordingSpawnPort` (would-have-spawned, no exec) |
 | `EngineMessage` | Event / DTO | Forwarded didChange/watch recorded on `ChildHandle` inbox |
-| `PythonLanguageFactory` / `RustLanguageFactory` | Abstract Factory | `language_id` is stable; T3 only when supervisor ready (Rust also requires sysroot) |
-| `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
+| `PythonLanguageFactory` / `RustLanguageFactory` | Abstract Factory | `language_id` is stable; heuristic T2 on `with_graph`; Python TSG stays opt-in via `with_t2_backend`; T3 only when supervisor ready (Rust also requires sysroot) |
+| `PythonIndexer` / `RustIndexer` | Visitor + Strategy | CST walk fills `extract` symbols + `extract_graph` facts; index does not parse JSON-RPC |
 | `PyprojectAdapter` / `CargoTomlAdapter` | Adapter | Manifest files only; no host CPython/rustc |
-| `RustT1Resolver` | Decorator | Missing sysroot/pack annotates T1 hover; never a dedicated Rust T2 |
+| `RustT1Resolver` | Decorator | Missing sysroot/pack annotates T1 hover; heuristic T2 still sits in the factory chain |
 | `CompileCommandsAdapter` | Adapter | Reads `compile_commands.json` only; cmake argv only if `CMakeLists.txt` already exists |
 | `CsprojAdapter` | Adapter | `*.csproj` manifest only; no host `dotnet` |
-| `CLanguageFactory` / `CppLanguageFactory` | Abstract Factory | T1 Tree-sitter; T3 clangd when supervisor ready; same pack serves C and C++ (`extra_languages`) |
+| `CLanguageFactory` / `CppLanguageFactory` | Abstract Factory | Heuristic T2 (`#include`, name/arity, C++ namespace/container) on `with_graph`; T3 clangd when supervisor ready; same pack serves C and C++ (`extra_languages`) |
 | `CSharpLanguageFactory` | Abstract Factory | T1 + T2 heuristics; no T3 pack (matrix ceiling) |
-| `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk extracts symbols; index does not parse JSON-RPC |
+| `CIndexer` / `CppIndexer` / `CSharpIndexer` | Visitor + Strategy | CST walk fills `extract` symbols + `extract_graph` facts (C# already had T2); index does not parse JSON-RPC |
 | `EngineAdapter::extra_languages` | Adapter extension | clangd also serves `cpp`; tsgo also serves `javascript` |
 | `slim_pack_names` / `full_pack_names` / `is_heavy_pack` | Strategy helpers | Slim default includes `java` and excludes clangd/tsgo/gopls/zls; census is still `PackSelector` |
 | `ServeHost` | Facade | Composition-root serve: prefix `Config` + overlay merge + `apply_worktree_excludes` on initialize; cache stays in prefix; unknown keys do not fail; `ConfigWarnAdapter` emits; `LogScope` around didOpen/didChange/definition; initialize success `info` `operation=initialize`; truncated FilesSince `info` `operation=filesSince` (LOG-8) |

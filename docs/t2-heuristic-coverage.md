@@ -31,7 +31,7 @@ Reuse the Java/PHP/JS pattern: indexer `extract` / `extract_graph` fills symbols
 | CSS | selectors, custom properties, `@keyframes` names as symbols; same-name jump | Full cascade / specificity engine |
 | HTML | `id` / `class` as symbols; `href` / `src` as import-like edges to same-tree files | A browser |
 
-Existing T2 languages (Java, C#, JS, TS, PHP, Go, Zig) are unchanged.
+Existing T2 languages (Java, C#, JS, TS, PHP, Go, Zig) are unchanged. The six languages above are landed on `t2-coverage`.
 
 ## POC / catalog
 

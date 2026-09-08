@@ -4,8 +4,8 @@ Per language, per tier pass rates from `fixtures/matrix/` (LATEST+2) plus the
 Darwin T3 reality: pack stubs are not musl ELFs, so T3 is **0%** unless a cell
 is N/A. Numbers are computed by `tests/conformance.rs`. Do not invent 100%s.
 
-C# is T1/T2 only. Java T3 is a native pack (0% on Darwin stubs; aarch64 may need host libc). Linux CI with real engine packs is the
-place to re-score T3. T2 `N/A` rows below are **pre-T2-COV**; after [t2-heuristic-coverage.md](t2-heuristic-coverage.md) they become scored cells.
+C# is T1/T2 only. Java T3 is a static pack (0% on Darwin stubs). Linux CI with real engine packs is the
+place to re-score T3. T2-COV landed heuristic T2 in-process; conformance T2 cells below stay **N/A** (not re-scored on this WP).
 
 | Language | T1 (syntax) | T2 (heuristics) | T3 (types) |
 |---|---|---|---|

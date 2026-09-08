@@ -65,9 +65,9 @@ impl LanguageCatalog {
             .find(|o| o.kind == kind)
     }
 
-    /// Languages with a T2 row (not Rust/CSS/HTML `—`).
+    /// Every v1 language has heuristic T2; plaintext does not.
     pub fn has_t2(&self, language_id: &str) -> bool {
-        !matches!(language_id, "rust" | "css" | "html" | "plaintext") && self.is_known(language_id)
+        language_id != "plaintext" && self.is_known(language_id)
     }
 
     /// C# T1/T2 ceiling; Java and other typed languages have a types engine in the matrix.
@@ -340,21 +340,11 @@ const T2_THEN_T3: &[DiscoverOffer] = &[
     DiscoverOffer::new(DiscoverKind::References, WireTier::Syntax, WireTier::Types),
 ];
 
-const T1_THEN_T3: &[DiscoverOffer] = &[
-    DiscoverOffer::new(DiscoverKind::Definition, WireTier::Syntax, WireTier::Types),
-    DiscoverOffer::new(
-        DiscoverKind::Implementation,
-        WireTier::Types,
-        WireTier::Types,
-    ),
-    DiscoverOffer::new(DiscoverKind::References, WireTier::Syntax, WireTier::Types),
-];
-
 fn offers_for(language_id: &str) -> &'static [DiscoverOffer] {
     match language_id {
         "csharp" => T1_T2_CEILING,
-        "java" | "javascript" | "typescript" | "php" | "go" | "zig" => T2_THEN_T3,
-        "rust" | "css" | "html" | "python" | "c" | "cpp" => T1_THEN_T3,
+        "java" | "javascript" | "typescript" | "php" | "go" | "zig" | "rust" | "css" | "html"
+        | "python" | "c" | "cpp" => T2_THEN_T3,
         _ => &[],
     }
 }
@@ -550,11 +540,18 @@ mod tests {
         assert!(!catalog.is_known("unknown"));
         assert!(catalog.has_t2("java"));
         assert!(catalog.has_t2("csharp"));
-        assert!(!catalog.has_t2("rust"));
-        assert!(!catalog.has_t2("css"));
-        assert!(!catalog.has_t2("html"));
+        assert!(catalog.has_t2("rust"));
+        assert!(catalog.has_t2("css"));
+        assert!(catalog.has_t2("html"));
+        assert!(catalog.has_t2("python"));
+        assert!(catalog.has_t2("c"));
+        assert!(catalog.has_t2("cpp"));
         assert!(!catalog.has_t2("plaintext"));
+        assert!(!catalog.has_t2("unknown"));
         assert!(catalog.has_t2("javascript"));
+        for id in stock_language_ids() {
+            assert!(catalog.has_t2(id), "{id}");
+        }
         assert!(catalog.t3_supported("java"));
         assert!(!catalog.t3_supported("csharp"));
         assert!(catalog.t3_supported("rust"));
@@ -583,9 +580,19 @@ mod tests {
                 .min_tier(),
             WireTier::Syntax
         );
+        let csharp = catalog.discover_offers("csharp");
+        assert_eq!(csharp.len(), 3);
+        assert!(csharp.iter().all(|o| o.ceiling() == WireTier::Graph));
+        assert_eq!(
+            catalog
+                .offer("csharp", DiscoverKind::Implementation)
+                .unwrap()
+                .min_tier(),
+            WireTier::Graph
+        );
         let rust_impl = catalog.offer("rust", DiscoverKind::Implementation).unwrap();
-        assert_eq!(rust_impl.min_tier(), WireTier::Types);
-        assert!(rust_impl.is_t3_only());
+        assert_eq!(rust_impl.min_tier(), WireTier::Graph);
+        assert!(!rust_impl.is_t3_only());
         assert!(catalog
             .offer("plaintext", DiscoverKind::Definition)
             .is_none());

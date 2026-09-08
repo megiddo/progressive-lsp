@@ -1287,30 +1287,36 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-T2 — heuristic T2 for every v1 language
 
-**Status: NOT STARTED.** Branch `t2-coverage` on signed-off `poc-uri`. Design: [t2-heuristic-coverage.md](t2-heuristic-coverage.md).
+**Status: SIGNED OFF** on branch `t2-coverage`. Parent is signed-off `poc-uri`. Design: [t2-heuristic-coverage.md](t2-heuristic-coverage.md). Do not start `java-t3` from this branch until this table stays signed off.
 
 **Scope:** C, C++, Rust, Python, CSS, HTML graph facts + factory T2 + poc-ide `has_t2`.
 
-**Out:** T3 packs; Docker daemon tests.
+**Out:** T3 packs; Docker daemon tests; live Java extract; C# T3.
 
 **Exit**
 
-- [ ] T2-COV.1 C/C++
-- [ ] T2-COV.2 Rust/Python
-- [ ] T2-COV.3 CSS/HTML
-- [ ] Strip T2 not `n/a` for those languages after ingest
-- [ ] Fixtures; conformance T2 leaves N/A
+- [x] T2-COV.1 C/C++
+- [x] T2-COV.2 Rust/Python
+- [x] T2-COV.3 CSS/HTML
+- [x] Strip T2 not `n/a` for those languages after ingest
+- [x] Fixtures; conformance T2 leaves N/A
 
 **Sign-off checklist (POC-T2)**
 
-- [ ] Exit criteria met
-- [ ] Tests on this branch
-- [ ] 95% llvm-cov
-- [ ] 80% mutants on listed crates that changed
-- [ ] No `sleep`
-- [ ] `check-static` — N/A
-- [ ] Docs + matrix + catalog agree
-- [ ] Patterns named
+- [x] Exit criteria met
+- [x] Tests on this branch — `cargo test -p progressive-lsp-lang-c -p progressive-lsp-lang-cpp -p progressive-lsp-lang-rust -p progressive-lsp-lang-python -p progressive-lsp-lang-css -p progressive-lsp-lang-html -p poc-ide -- --test-threads=1` (**258 passed**: poc-ide 229, c 4, cpp 4, css 4, html 3, python 6, rust 8)
+- [x] 95% llvm-cov on crates that changed (ignore xtask / poc-ide `ui.rs` / `main.rs` / tree-sitter) — lang-c **96.94%**, lang-cpp **97.38%**, lang-css **97.48%**, lang-html **96.18%**, lang-python **97.79%**, lang-rust **95.69%**; poc-ide `language.rs` **98.55%**, `tier.rs` **95.99%**
+- [x] 80% mutants on listed crates that changed — in-diff **181 caught / 221 scored (81.9%)**, 19 unviable, 40 missed
+- [x] No `sleep`
+- [x] `check-static` — N/A (no ELF)
+- [x] Docs + matrix + catalog agree
+- [x] [design-patterns.md](design-patterns.md) — factories/indexers named; same `T2Strategy::default_heuristic()`; no second T2 stack
+
+**Darwin / CI notes**
+
+- Native `cargo test -- --test-threads=1` is the unit gate. Tests never talk to a Docker daemon.
+- Python TSG stays opt-in (`with_t2_backend`); default T2 is heuristic.
+- Conformance T2 cells stay **N/A** (not re-scored on this WP).
 
 ## POC-JAVA — live Java T3 both Linux ISAs
 

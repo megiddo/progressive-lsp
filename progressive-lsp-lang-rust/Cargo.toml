@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Rust LanguageFactory T1 + optional rust-analyzer T3 (no dedicated T2)"
+description = "Rust LanguageFactory T1 + heuristic T2 + optional rust-analyzer T3"
 
 [dependencies]
 progressive-lsp-core.workspace = true

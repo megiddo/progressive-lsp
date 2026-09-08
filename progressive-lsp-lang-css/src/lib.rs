@@ -1,4 +1,4 @@
-//! CSS T1 + biome T3 when pack ready. T1 fallback. No Node CSS LS.
+//! CSS T1 + heuristic T2 + biome T3 when pack ready. T1 fallback. No Node CSS LS.
 //! Darwin: biome musl-clean unknown; adapter + Fake tests, real ELF is Linux CI.
 
 use std::sync::Arc;
@@ -8,7 +8,8 @@ use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    GraphIndex, IndexedSymbol, Position, Range, ResolverChain, SymbolKind, TreeSitterResolver,
+    GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, Range, ResolverChain, SymbolKind,
+    T2Strategy, TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -40,6 +41,9 @@ impl LanguageIndexer for CssIndexer {
         walk(tree.root_node(), source.as_bytes(), file, uri, &mut out);
         out
     }
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        extract_graph_facts(file, source, tree)
+    }
 }
 
 #[derive(Clone)]
@@ -55,6 +59,9 @@ impl CssLanguageFactory {
         }
     }
     pub fn with_index(graph: Arc<dyn GraphIndex>) -> Self {
+        Self::with_graph(graph)
+    }
+    pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
         Self {
             graph: Some(graph),
             supervisor: None,
@@ -87,7 +94,11 @@ impl LanguageFactory for CssLanguageFactory {
                         PackageId::new("pkg"),
                     )) as Box<dyn progressive_lsp_resolve::Resolver>
                 });
-                ResolverChain::with_tiers(t3, None, Box::new(TreeSitterResolver::new(g.clone())))
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(T2Strategy::default_heuristic().build(g.clone())),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
             }
             None => ResolverChain::empty(),
         }
@@ -97,7 +108,13 @@ impl LanguageFactory for CssLanguageFactory {
 fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedSymbol>) {
     if matches!(
         node.kind(),
-        "class_name" | "id_name" | "tag_name" | "property_name" | "id_selector" | "class_selector"
+        "class_name"
+            | "id_name"
+            | "tag_name"
+            | "property_name"
+            | "id_selector"
+            | "class_selector"
+            | "keyframes_name"
     ) {
         let raw = node
             .utf8_text(src)
@@ -117,6 +134,32 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
     let mut c = node.walk();
     for child in node.children(&mut c) {
         walk(child, src, file, uri, out);
+    }
+}
+
+fn extract_graph_facts(file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+    let mut facts = GraphFacts::default();
+    walk_graph(tree.root_node(), source.as_bytes(), file, &mut facts);
+    facts
+}
+
+fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
+    if node.kind() == "import_statement" || node.kind() == "at_rule" {
+        let raw = node.utf8_text(src).unwrap_or("");
+        if raw.contains("@import") {
+            if let Some(path) = raw.split_whitespace().nth(1) {
+                let path = path
+                    .trim_matches(|c| c == '"' || c == '\'' || c == ';' || c == '(' || c == ')')
+                    .to_string();
+                if !path.is_empty() {
+                    facts.imports.push(ImportDecl::new(file.clone(), path));
+                }
+            }
+        }
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts);
     }
 }
 
@@ -197,13 +240,34 @@ fn collect(node: Node, src: &[u8], out: &mut Vec<(u32, u32, u32, u32)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use progressive_lsp_index::{IndexService, SharedIndex};
+    use progressive_lsp_index::{IndexService, PackageIngest, SharedIndex};
     use progressive_lsp_resolve::{QueryKind, ResolveOutcome, ResolveQuery, Resolver};
 
     fn parse(src: &str) -> Tree {
         let mut p = tree_sitter::Parser::new();
         p.set_language(&tree_sitter_language()).unwrap();
         p.parse(src, None).unwrap()
+    }
+
+    fn fixture_dir(name: &str, marker: &str) -> std::path::PathBuf {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = vec![
+            manifest.join(format!("../fixtures/{name}")),
+            std::path::PathBuf::from(format!("fixtures/{name}")),
+        ];
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join(format!("fixtures/{name}")));
+        }
+        for c in &candidates {
+            if c.join(marker).is_file() {
+                return c.clone();
+            }
+        }
+        panic!("missing fixtures/{name}/{marker}; tried {candidates:?}");
+    }
+
+    fn heuristic_fixture_root() -> std::path::PathBuf {
+        fixture_dir("css-heuristic", "theme.css")
     }
 
     fn token_types(data: &[u32]) -> Vec<u32> {
@@ -226,8 +290,8 @@ mod tests {
             &CssIndexer,
             false,
         );
-        let factory = CssLanguageFactory::with_index(Arc::new(SharedIndex::new(svc)));
-        assert_eq!(factory.resolver_chain().len(), 1);
+        let factory = CssLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        assert_eq!(factory.resolver_chain().len(), 2);
         assert!(!factory.resolver_chain().is_empty());
     }
 
@@ -311,15 +375,64 @@ mod tests {
         )
         .unwrap();
         let factory =
-            CssLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
+            CssLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())))
                 .with_supervisor(Arc::new(sup));
-        assert_eq!(factory.resolver_chain().len(), 2);
+        assert_eq!(factory.resolver_chain().len(), 3);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("a.css"),
             Position::default(),
             QueryKind::Definition,
         )) {
             ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn css_heuristic_fixture_definition_and_references() {
+        let root = heuristic_fixture_root();
+        let theme = root.join("theme.css");
+        let app = root.join("app.css");
+        let mut svc = IndexService::new();
+        svc.ingest_package(
+            &PackageIngest::new("heuristic", "css")
+                .with_file(&theme)
+                .with_file(&app),
+            &CssIndexer,
+        );
+        let theme_src = std::fs::read_to_string(&theme).unwrap();
+        let tree = parse(&theme_src);
+        let facts = CssIndexer.extract_graph(
+            &FileId::new(theme.to_string_lossy().as_ref()),
+            &theme_src,
+            &tree,
+        );
+        assert!(
+            facts.imports.iter().any(|i| i.path.contains("app.css")) || !facts.imports.is_empty()
+        );
+        let factory = CssLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        let src = std::fs::read_to_string(&app).unwrap();
+        let needle = src.find("hero").expect("hero");
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(app.to_string_lossy().as_ref()),
+            Position::new(0, needle as u32),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, progressive_lsp_core::Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(app.to_string_lossy().as_ref()),
+            Position::new(0, needle as u32),
+            QueryKind::References,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, progressive_lsp_core::Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
             other => panic!("{other:?}"),
         }
     }

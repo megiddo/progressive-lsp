@@ -547,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn tier_strip_value_object_java_t3_offered_csharp_not_supported_rust_t2_na() {
+    fn tier_strip_value_object_java_t3_offered_csharp_not_supported_rust_t2_done() {
         let c = catalog();
         let java = TierStrip::paint(&c, "java", IngestState::Done, Some(WireTier::Graph));
         assert_eq!(java.t1().state(), TierCellState::Done);
@@ -588,10 +588,16 @@ mod tests {
 
         let rust = TierStrip::paint(&c, "rust", IngestState::Done, Some(WireTier::Syntax));
         assert_eq!(rust.t1().state(), TierCellState::Done);
-        assert_eq!(rust.t2().state(), TierCellState::Na);
-        assert_eq!(rust.t2().status(), "n/a");
+        assert_eq!(rust.t2().state(), TierCellState::Done);
+        assert_eq!(rust.t2().status(), "done");
         assert_eq!(rust.t3().state(), TierCellState::Skipped);
         assert_eq!(rust.t3().status(), "skipped");
+
+        for id in ["c", "cpp", "python", "css", "html"] {
+            let strip = TierStrip::paint(&c, id, IngestState::Done, Some(WireTier::Syntax));
+            assert_ne!(strip.t2().status(), "n/a", "{id}");
+            assert_eq!(strip.t2().state(), TierCellState::Done, "{id}");
+        }
 
         let rust_types = TierStrip::paint(&c, "rust", IngestState::Done, Some(WireTier::Types));
         assert_eq!(rust_types.t3().state(), TierCellState::Done);
@@ -621,7 +627,7 @@ mod tests {
         assert_eq!(unknown.t1().state(), TierCellState::Done);
         assert_eq!(unknown.t2().state(), TierCellState::Done);
         assert_eq!(unknown.t3().state(), TierCellState::Na);
-        assert_ne!(java, rust);
+        assert_ne!(java, csharp);
         let cell = TierCell::new(TierCellKind::T1, TierCellState::Done);
         assert_eq!(cell.kind(), TierCellKind::T1);
         assert_eq!(cell.state(), TierCellState::Done);
@@ -812,7 +818,7 @@ mod tests {
         assert_eq!(
             rust.item(DiscoverKind::Implementation)
                 .label("Find Implementation"),
-            "T3 skipped (stub pack)"
+            "needs T2"
         );
 
         let java_t3 = menu(
@@ -1004,12 +1010,12 @@ mod tests {
         );
         assert_eq!(
             rust.item(DiscoverKind::Implementation).reason(),
-            Some(MenuDisableReason::NeedsContainer)
+            Some(MenuDisableReason::NeedsT2)
         );
         assert_eq!(
             rust.item(DiscoverKind::Implementation)
                 .label("Find Implementation"),
-            "open folder in container"
+            "needs T2"
         );
     }
 }

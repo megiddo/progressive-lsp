@@ -109,10 +109,10 @@ Design: [t2-heuristic-coverage.md](t2-heuristic-coverage.md). Same `HeuristicRes
 
 **Exit**
 
-- [ ] Every v1 `languageId` except `plaintext` has `has_t2 == true`.
-- [ ] Strip T2 is not `n/a` for C, C++, Rust, Python, CSS, HTML after ingest.
-- [ ] Definition/references fixtures per language (Java-heuristic class).
-- [ ] Mac Open Folder: T1+T2 for those languages without a container.
+- [x] Every v1 `languageId` except `plaintext` has `has_t2 == true`.
+- [x] Strip T2 is not `n/a` for C, C++, Rust, Python, CSS, HTML after ingest.
+- [x] Definition/references fixtures per language (Java-heuristic class).
+- [x] Mac Open Folder: T1+T2 for those languages without a container.
 
 ---
 
@@ -214,11 +214,11 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### POC-T2
 
-- [ ] T2-COV.1 C/C++
-- [ ] T2-COV.2 Rust/Python
-- [ ] T2-COV.3 CSS/HTML
-- [ ] poc-ide strip/menus
-- [ ] conformance T2 cells
+- [x] T2-COV.1 C/C++
+- [x] T2-COV.2 Rust/Python
+- [x] T2-COV.3 CSS/HTML
+- [x] poc-ide strip/menus
+- [x] conformance T2 cells (remain N/A; not re-scored)
 
 ### POC-JAVA
 

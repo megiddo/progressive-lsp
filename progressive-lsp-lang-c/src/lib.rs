@@ -1,4 +1,4 @@
-//! C T1 (Tree-sitter) without pack. T3 via clangd when EngineSupervisor is ready.
+//! C T1 + heuristic T2 (Tree-sitter) without pack. T3 via clangd when EngineSupervisor is ready.
 //! Fail closed: stub / DT_NEEDED packs never exec.
 
 use std::sync::Arc;
@@ -8,7 +8,8 @@ use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    GraphIndex, IndexedSymbol, Position, Range, ResolverChain, SymbolKind, TreeSitterResolver,
+    CallSite, GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, Range, ResolverChain,
+    SymbolKind, T2Strategy, TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -39,6 +40,9 @@ impl LanguageIndexer for CIndexer {
         let mut out = Vec::new();
         walk(tree.root_node(), source.as_bytes(), file, uri, &mut out);
         out
+    }
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        extract_graph_facts(file, source, tree)
     }
 }
 
@@ -90,7 +94,11 @@ impl LanguageFactory for CLanguageFactory {
                         PackageId::new("pkg"),
                     )) as Box<dyn progressive_lsp_resolve::Resolver>
                 });
-                ResolverChain::with_tiers(t3, None, Box::new(TreeSitterResolver::new(g.clone())))
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(T2Strategy::default_heuristic().build(g.clone())),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
             }
             None => ResolverChain::empty(),
         }
@@ -108,14 +116,46 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
                     } else {
                         SymbolKind::Variable
                     };
-                    out.push(make(file, uri, &name, name_n, kind));
+                    let arity = if node.kind() == "function_definition" {
+                        Some(c_arity(node, src))
+                    } else {
+                        None
+                    };
+                    out.push(make(file, uri, &name, name_n, kind, arity, None));
+                }
+            }
+        }
+        "struct_specifier" | "enum_specifier" | "type_definition" => {
+            if let Some(name_n) = node
+                .child_by_field_name("name")
+                .or_else(|| find_type_ident(node))
+            {
+                let name = name_n.utf8_text(src).unwrap_or("").to_string();
+                if !name.is_empty() {
+                    out.push(make(
+                        file,
+                        uri,
+                        &name,
+                        name_n,
+                        SymbolKind::Class,
+                        None,
+                        None,
+                    ));
                 }
             }
         }
         "identifier" | "type_identifier" => {
             let name = node.utf8_text(src).unwrap_or("").to_string();
             if !name.is_empty() {
-                out.push(make(file, uri, &name, node, SymbolKind::Variable));
+                out.push(make(
+                    file,
+                    uri,
+                    &name,
+                    node,
+                    SymbolKind::Variable,
+                    None,
+                    None,
+                ));
             }
         }
         _ => {}
@@ -124,6 +164,134 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
     for child in node.children(&mut c) {
         walk(child, src, file, uri, out);
     }
+}
+
+fn extract_graph_facts(file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+    let mut facts = GraphFacts::default();
+    walk_graph(tree.root_node(), source.as_bytes(), file, &mut facts);
+    facts
+}
+
+fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
+    match node.kind() {
+        "preproc_include" => {
+            if let Some(path) = include_path(node, src) {
+                facts.imports.push(ImportDecl::new(file.clone(), path));
+            }
+        }
+        "call_expression" => {
+            if let Some((name, arity, line, col)) = call_site(node, src) {
+                facts
+                    .calls
+                    .push(CallSite::new(file.clone(), name, arity, line, col));
+            }
+        }
+        _ => {}
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts);
+    }
+}
+
+fn include_path(node: Node, src: &[u8]) -> Option<String> {
+    let raw = if let Some(n) = node.child_by_field_name("path") {
+        n.utf8_text(src).unwrap_or("").to_string()
+    } else {
+        let mut found = String::new();
+        let mut c = node.walk();
+        for ch in node.children(&mut c) {
+            if matches!(ch.kind(), "string_literal" | "system_lib_string") {
+                found = ch.utf8_text(src).unwrap_or("").to_string();
+                break;
+            }
+        }
+        found
+    };
+    let path = raw
+        .trim()
+        .trim_matches(|c| c == '"' || c == '<' || c == '>')
+        .to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+fn call_site(node: Node, src: &[u8]) -> Option<(String, u32, u32, u32)> {
+    let fn_n = node.child_by_field_name("function")?;
+    let name_n = find_ident(fn_n)?;
+    let name = name_n.utf8_text(src).unwrap_or("").to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let arity = node
+        .child_by_field_name("arguments")
+        .map(named_arg_count)
+        .unwrap_or(0);
+    let start = name_n.start_position();
+    Some((name, arity, start.row as u32, start.column as u32))
+}
+
+fn named_arg_count(args: Node) -> u32 {
+    let mut n = 0u32;
+    let mut c = args.walk();
+    for child in args.children(&mut c) {
+        if child.is_named() {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn c_arity(node: Node, src: &[u8]) -> u32 {
+    let Some(params) = find_kind(node, "parameter_list") else {
+        return 0;
+    };
+    let mut n = 0u32;
+    let mut only_void = true;
+    let mut c = params.walk();
+    for child in params.children(&mut c) {
+        if child.kind() == "parameter_declaration" {
+            n += 1;
+            let text = child.utf8_text(src).unwrap_or("").trim();
+            if text != "void" {
+                only_void = false;
+            }
+        }
+    }
+    if n == 1 && only_void {
+        0
+    } else {
+        n
+    }
+}
+
+fn find_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        if let Some(n) = find_kind(child, kind) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+fn find_type_ident(node: Node) -> Option<Node> {
+    if node.kind() == "type_identifier" {
+        return Some(node);
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        if let Some(n) = find_type_ident(child) {
+            return Some(n);
+        }
+    }
+    None
 }
 
 fn find_ident(node: Node) -> Option<Node> {
@@ -139,7 +307,15 @@ fn find_ident(node: Node) -> Option<Node> {
     None
 }
 
-fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
+fn make(
+    file: &FileId,
+    uri: &str,
+    name: &str,
+    node: Node,
+    kind: SymbolKind,
+    arity: Option<u32>,
+    container: Option<String>,
+) -> IndexedSymbol {
     let range = Range::new(
         Position::new(
             node.start_position().row as u32,
@@ -157,9 +333,12 @@ fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> I
         kind,
         range,
         selection_range: range,
-        arity: None,
-        fqn: name.to_string(),
-        container: None,
+        arity,
+        fqn: match &container {
+            Some(c) => format!("{c}::{name}"),
+            None => name.to_string(),
+        },
+        container,
     }
 }
 
@@ -221,6 +400,23 @@ mod tests {
     use progressive_lsp_resolve::{QueryKind, ResolveOutcome, ResolveQuery, Resolver};
     use progressive_lsp_workspace::{CompileCommandsAdapter, WorkspaceSource};
     use std::path::PathBuf;
+
+    fn fixture_dir(name: &str, marker: &str) -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = vec![
+            manifest.join(format!("../fixtures/{name}")),
+            PathBuf::from(format!("fixtures/{name}")),
+        ];
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join(format!("fixtures/{name}")));
+        }
+        for c in &candidates {
+            if c.join(marker).is_file() {
+                return c.clone();
+            }
+        }
+        panic!("missing fixtures/{name}/{marker}; tried {candidates:?}");
+    }
 
     fn line_col(src: &str, needle: &str) -> Position {
         let byte = src.find(needle).expect(needle);
@@ -320,14 +516,14 @@ mod tests {
         );
         let shared = SharedIndex::new(svc);
         let factory = CLanguageFactory::with_graph(Arc::new(shared));
-        assert_eq!(factory.resolver_chain().len(), 1);
+        assert_eq!(factory.resolver_chain().len(), 2);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new(main.to_string_lossy().as_ref()),
             line_col(&src, "greet"),
             QueryKind::Definition,
         )) {
             ResolveOutcome::Ready(r) => {
-                assert_eq!(r.tier, Tier::Syntax);
+                assert_eq!(r.tier, Tier::Graph);
                 assert!(
                     r.locations
                         .iter()
@@ -336,7 +532,7 @@ mod tests {
                     r.locations
                 );
             }
-            ResolveOutcome::NotReady => panic!("T1 must answer without clangd pack"),
+            ResolveOutcome::NotReady => panic!("T2 must answer without clangd pack"),
         }
     }
 
@@ -365,7 +561,7 @@ mod tests {
         .unwrap();
         let index = SharedIndex::new(IndexService::new());
         let factory = CLanguageFactory::with_graph(Arc::new(index)).with_supervisor(Arc::new(sup));
-        assert_eq!(factory.resolver_chain().len(), 2);
+        assert_eq!(factory.resolver_chain().len(), 3);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("main.c"),
             Position::default(),
@@ -383,6 +579,99 @@ mod tests {
             QueryKind::Implementation,
         )) {
             ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn c_extract_graph_include_arity_call_and_types() {
+        let src = r#"
+#include <stdio.h>
+#include "local.h"
+struct Point { int x; };
+enum Color { RED };
+typedef struct Point Pt;
+int add(int a, int b) { return a + b; }
+int greet(void) { return add(1, 2); }
+"#;
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let tree = p.parse(src, None).unwrap();
+        let file = FileId::new("t.c");
+        let facts = CIndexer.extract_graph(&file, src, &tree);
+        assert!(facts.imports.iter().any(|i| i.path.contains("stdio.h")));
+        assert!(facts.imports.iter().any(|i| i.path.contains("local.h")));
+        assert!(facts.calls.iter().any(|c| c.name == "add" && c.arity == 2));
+        let syms = CIndexer.extract(&file, "file:///t.c", src, &tree);
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
+        assert!(syms.iter().any(|s| s.name == "add" && s.arity == Some(2)));
+        assert!(syms.iter().any(|s| s.name == "greet" && s.arity == Some(0)));
+        assert!(include_path(tree.root_node(), src.as_bytes()).is_none());
+        assert!(call_site(tree.root_node(), src.as_bytes()).is_none());
+        let _ = c_arity(tree.root_node(), src.as_bytes());
+        assert!(find_kind(tree.root_node(), "missing_kind").is_none());
+        assert!(find_type_ident(tree.root_node()).is_some());
+    }
+
+    #[test]
+    fn c_heuristic_fixture_definition_and_references() {
+        let root = fixture_dir("c-heuristic", "src/greet.c");
+        let greet = root.join("src/greet.c");
+        let main = root.join("src/main.c");
+        let mut svc = IndexService::new();
+        svc.ingest_package(
+            &PackageIngest::new("heuristic", "c")
+                .with_file(&greet)
+                .with_file(&main),
+            &CIndexer,
+        );
+        let greet_src = std::fs::read_to_string(&greet).unwrap();
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let greet_tree = p.parse(&greet_src, None).unwrap();
+        let facts = CIndexer.extract_graph(
+            &FileId::new(greet.to_string_lossy().as_ref()),
+            &greet_src,
+            &greet_tree,
+        );
+        assert!(
+            facts.imports.iter().any(|i| i.path.contains("greet.h")),
+            "{:?}",
+            facts.imports
+        );
+        let greet_syms = CIndexer.extract(
+            &FileId::new(greet.to_string_lossy().as_ref()),
+            "file:///greet.c",
+            &greet_src,
+            &greet_tree,
+        );
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method && s.arity == Some(1)));
+        let factory = CLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        let src = std::fs::read_to_string(&main).unwrap();
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(main.to_string_lossy().as_ref()),
+            line_col(&src, "greet("),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(r.locations.iter().any(|l| l.uri.contains("greet.c")));
+            }
+            other => panic!("{other:?}"),
+        }
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(main.to_string_lossy().as_ref()),
+            line_col(&src, "greet("),
+            QueryKind::References,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
             other => panic!("{other:?}"),
         }
     }

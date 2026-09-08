@@ -1,4 +1,4 @@
-//! HTML T1 + superhtml T3 when pack ready. T1 fallback if pack absent.
+//! HTML T1 + heuristic T2 + superhtml T3 when pack ready. T1 fallback if pack absent.
 
 use std::sync::Arc;
 
@@ -7,7 +7,8 @@ use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    GraphIndex, IndexedSymbol, Position, Range, ResolverChain, SymbolKind, TreeSitterResolver,
+    GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, Range, ResolverChain, SymbolKind,
+    T2Strategy, TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -37,6 +38,9 @@ impl LanguageIndexer for HtmlIndexer {
     fn extract(&self, file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
         extract_symbols(file, uri, source, tree)
     }
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        extract_graph_facts(file, source, tree)
+    }
 }
 
 #[derive(Clone)]
@@ -52,6 +56,9 @@ impl HtmlLanguageFactory {
         }
     }
     pub fn with_index(graph: Arc<dyn GraphIndex>) -> Self {
+        Self::with_graph(graph)
+    }
+    pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
         Self {
             graph: Some(graph),
             supervisor: None,
@@ -84,7 +91,11 @@ impl LanguageFactory for HtmlLanguageFactory {
                         PackageId::new("pkg"),
                     )) as Box<dyn progressive_lsp_resolve::Resolver>
                 });
-                ResolverChain::with_tiers(t3, None, Box::new(TreeSitterResolver::new(g.clone())))
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(T2Strategy::default_heuristic().build(g.clone())),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
             }
             None => ResolverChain::empty(),
         }
@@ -98,6 +109,31 @@ fn extract_symbols(file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<I
 }
 
 fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedSymbol>) {
+    if node.kind() == "attribute" {
+        let name = node
+            .child_by_field_name("name")
+            .or_else(|| child_of_kind(node, "attribute_name"))
+            .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+            .unwrap_or_default();
+        let value_n = node
+            .child_by_field_name("value")
+            .or_else(|| child_of_kind(node, "quoted_attribute_value"))
+            .or_else(|| child_of_kind(node, "attribute_value"));
+        if matches!(name.as_str(), "id" | "class") {
+            if let Some(val) = value_n {
+                for part in split_attr_values(val, src) {
+                    out.push(make(
+                        file,
+                        uri,
+                        &part,
+                        val.start_position().row as u32,
+                        val.start_position().column as u32,
+                        SymbolKind::Field,
+                    ));
+                }
+            }
+        }
+    }
     if node.kind() == "tag_name" {
         let name = node.utf8_text(src).unwrap_or("").to_string();
         if !name.is_empty() {
@@ -128,6 +164,62 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
     for child in node.children(&mut c) {
         walk(child, src, file, uri, out);
     }
+}
+
+fn extract_graph_facts(file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+    let mut facts = GraphFacts::default();
+    walk_graph(tree.root_node(), source.as_bytes(), file, &mut facts);
+    facts
+}
+
+fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
+    if node.kind() == "attribute" {
+        let name = node
+            .child_by_field_name("name")
+            .or_else(|| child_of_kind(node, "attribute_name"))
+            .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+            .unwrap_or_default();
+        if matches!(name.as_str(), "href" | "src") {
+            if let Some(val) = node
+                .child_by_field_name("value")
+                .or_else(|| child_of_kind(node, "quoted_attribute_value"))
+                .or_else(|| child_of_kind(node, "attribute_value"))
+            {
+                for part in split_attr_values(val, src) {
+                    if !part.is_empty() && !part.starts_with('#') {
+                        facts.imports.push(ImportDecl::new(file.clone(), part));
+                    }
+                }
+            }
+        }
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts);
+    }
+}
+
+fn child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        if child.kind() == kind {
+            return Some(child);
+        }
+    }
+    None
+}
+
+fn split_attr_values(node: Node, src: &[u8]) -> Vec<String> {
+    let raw = node
+        .utf8_text(src)
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string();
+    raw.split_whitespace()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn make(
@@ -211,6 +303,23 @@ mod tests {
     use progressive_lsp_index::{IndexService, SharedIndex};
     use progressive_lsp_resolve::{QueryKind, ResolveOutcome, ResolveQuery, Resolver};
 
+    fn fixture_dir(name: &str, marker: &str) -> std::path::PathBuf {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = vec![
+            manifest.join(format!("../fixtures/{name}")),
+            std::path::PathBuf::from(format!("fixtures/{name}")),
+        ];
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join(format!("fixtures/{name}")));
+        }
+        for c in &candidates {
+            if c.join(marker).is_file() {
+                return c.clone();
+            }
+        }
+        panic!("missing fixtures/{name}/{marker}; tried {candidates:?}");
+    }
+
     #[test]
     fn html_symbols_tokens_and_id_usages() {
         assert_eq!(language_id().as_str(), "html");
@@ -259,8 +368,8 @@ mod tests {
         assert!(types.contains(&6), "attribute_value");
         let mut svc = IndexService::new();
         svc.index_text(std::path::Path::new("a.html"), src, &HtmlIndexer, false);
-        let factory = HtmlLanguageFactory::with_index(Arc::new(SharedIndex::new(svc)));
-        assert_eq!(factory.resolver_chain().len(), 1);
+        let factory = HtmlLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        assert_eq!(factory.resolver_chain().len(), 2);
         let pos = Position::new(0, src.find("main").unwrap() as u32);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("a.html"),
@@ -313,15 +422,70 @@ mod tests {
         )
         .unwrap();
         let factory =
-            HtmlLanguageFactory::with_index(Arc::new(SharedIndex::new(IndexService::new())))
+            HtmlLanguageFactory::with_graph(Arc::new(SharedIndex::new(IndexService::new())))
                 .with_supervisor(Arc::new(sup));
-        assert_eq!(factory.resolver_chain().len(), 2);
+        assert_eq!(factory.resolver_chain().len(), 3);
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new("a.html"),
             Position::default(),
             QueryKind::Definition,
         )) {
             ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Types),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn html_heuristic_fixture_definition_and_references() {
+        use progressive_lsp_core::Tier;
+        use progressive_lsp_index::PackageIngest;
+
+        let root = fixture_dir("html-heuristic", "index.html");
+        let index = root.join("index.html");
+        let about = root.join("about.html");
+        let mut svc = IndexService::new();
+        svc.ingest_package(
+            &PackageIngest::new("heuristic", "html")
+                .with_file(&index)
+                .with_file(&about),
+            &HtmlIndexer,
+        );
+        let index_src = std::fs::read_to_string(&index).unwrap();
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let tree = p.parse(&index_src, None).unwrap();
+        let facts = HtmlIndexer.extract_graph(
+            &FileId::new(index.to_string_lossy().as_ref()),
+            &index_src,
+            &tree,
+        );
+        assert!(
+            facts.imports.iter().any(|i| i.path.contains("about.html")),
+            "{:?}",
+            facts.imports
+        );
+        let factory = HtmlLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        let pos = Position::new(0, index_src.find("hero").expect("hero") as u32);
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(index.to_string_lossy().as_ref()),
+            pos,
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(index.to_string_lossy().as_ref()),
+            pos,
+            QueryKind::References,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
             other => panic!("{other:?}"),
         }
     }

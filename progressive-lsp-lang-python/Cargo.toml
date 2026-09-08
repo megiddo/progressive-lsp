@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Python LanguageFactory T1 + optional ty T3 (no CPython, pylsp, pyright)"
+description = "Python LanguageFactory T1 + heuristic T2 + optional ty T3 (no CPython, pylsp, pyright)"
 
 [dependencies]
 progressive-lsp-core.workspace = true

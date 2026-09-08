@@ -1,14 +1,15 @@
-//! Python T1 (Tree-sitter) without pack. T3 via ty when EngineSupervisor is ready.
-//! No CPython, pylsp, pyright, or ruff-as-types.
+//! Python T1 + heuristic T2 (Tree-sitter) without pack. T3 via ty when EngineSupervisor is ready.
+//! Optional stack-graphs stay opt-in. No CPython, pylsp, pyright, or ruff-as-types.
 
 use std::sync::Arc;
 
-use progressive_lsp_core::{FileId, LanguageId, PackageId};
+use progressive_lsp_core::{FileId, LanguageId, PackageId, T2Backend};
 use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    GraphIndex, IndexedSymbol, Position, Range, ResolverChain, SymbolKind, TreeSitterResolver,
+    CallSite, GraphFacts, GraphIndex, ImportDecl, IndexedSymbol, Position, Range, ResolverChain,
+    SymbolKind, T2Strategy, TreeSitterResolver, TypeEdge,
 };
 use tree_sitter::{Node, Tree};
 
@@ -37,8 +38,18 @@ impl LanguageIndexer for PythonIndexer {
     }
     fn extract(&self, file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
         let mut out = Vec::new();
-        walk(tree.root_node(), source.as_bytes(), file, uri, &mut out);
+        walk(
+            tree.root_node(),
+            source.as_bytes(),
+            file,
+            uri,
+            None,
+            &mut out,
+        );
         out
+    }
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        extract_graph_facts(file, source, tree)
     }
 }
 
@@ -46,6 +57,7 @@ impl LanguageIndexer for PythonIndexer {
 pub struct PythonLanguageFactory {
     graph: Option<Arc<dyn GraphIndex>>,
     supervisor: Option<Arc<EngineSupervisor>>,
+    t2: T2Strategy,
 }
 
 impl PythonLanguageFactory {
@@ -53,17 +65,29 @@ impl PythonLanguageFactory {
         Self {
             graph: None,
             supervisor: None,
+            t2: T2Strategy::default_heuristic(),
         }
     }
     pub fn with_graph(graph: Arc<dyn GraphIndex>) -> Self {
         Self {
             graph: Some(graph),
             supervisor: None,
+            t2: T2Strategy::default_heuristic(),
         }
     }
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
         self.supervisor = Some(supervisor);
         self
+    }
+    pub fn with_t2(mut self, t2: T2Strategy) -> Self {
+        self.t2 = t2;
+        self
+    }
+    pub fn with_t2_backend(self, backend: T2Backend) -> Self {
+        self.with_t2(T2Strategy::from_backend(backend))
+    }
+    pub fn t2_name(&self) -> &'static str {
+        self.t2.backend_name()
     }
 }
 
@@ -90,14 +114,25 @@ impl LanguageFactory for PythonLanguageFactory {
                         PackageId::new("pkg"),
                     )) as Box<dyn progressive_lsp_resolve::Resolver>
                 });
-                ResolverChain::with_tiers(t3, None, Box::new(TreeSitterResolver::new(g.clone())))
+                ResolverChain::with_tiers(
+                    t3,
+                    Some(self.t2.build(g.clone())),
+                    Box::new(TreeSitterResolver::new(g.clone())),
+                )
             }
             None => ResolverChain::empty(),
         }
     }
 }
 
-fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedSymbol>) {
+fn walk(
+    node: Node,
+    src: &[u8],
+    file: &FileId,
+    uri: &str,
+    container: Option<&str>,
+    out: &mut Vec<IndexedSymbol>,
+) {
     match node.kind() {
         "function_definition" | "class_definition" => {
             if let Some(name_n) = node.child_by_field_name("name") {
@@ -107,24 +142,148 @@ fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedS
                 } else {
                     SymbolKind::Method
                 };
-                out.push(make(file, uri, &name, name_n, kind));
+                let arity = if kind == SymbolKind::Method {
+                    Some(py_arity(node))
+                } else {
+                    None
+                };
+                out.push(make(file, uri, &name, name_n, kind, arity, container));
+                if kind == SymbolKind::Class {
+                    let next = Some(name);
+                    let mut c = node.walk();
+                    for child in node.children(&mut c) {
+                        walk(child, src, file, uri, next.as_deref(), out);
+                    }
+                    return;
+                }
             }
         }
         "identifier" => {
             let name = node.utf8_text(src).unwrap_or("").to_string();
             if !name.is_empty() {
-                out.push(make(file, uri, &name, node, SymbolKind::Variable));
+                out.push(make(
+                    file,
+                    uri,
+                    &name,
+                    node,
+                    SymbolKind::Variable,
+                    None,
+                    container,
+                ));
             }
         }
         _ => {}
     }
     let mut c = node.walk();
     for child in node.children(&mut c) {
-        walk(child, src, file, uri, out);
+        walk(child, src, file, uri, container, out);
     }
 }
 
-fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
+fn extract_graph_facts(file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+    let mut facts = GraphFacts::default();
+    walk_graph(tree.root_node(), source.as_bytes(), file, &mut facts);
+    facts
+}
+
+fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
+    match node.kind() {
+        "import_statement" | "import_from_statement" => {
+            let raw = node.utf8_text(src).unwrap_or("").to_string();
+            let path = raw
+                .trim()
+                .trim_start_matches("from")
+                .trim()
+                .trim_start_matches("import")
+                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_end_matches(',')
+                .replace('/', ".");
+            if !path.is_empty() && path != "*" {
+                facts.imports.push(ImportDecl::new(file.clone(), path));
+            }
+        }
+        "class_definition" => {
+            let name = node
+                .child_by_field_name("name")
+                .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+                .unwrap_or_default();
+            if let Some(supers) = node.child_by_field_name("superclasses") {
+                let mut c = supers.walk();
+                for child in supers.children(&mut c) {
+                    if child.kind() == "identifier" {
+                        let parent = child.utf8_text(src).unwrap_or("").to_string();
+                        if !parent.is_empty() && !name.is_empty() {
+                            facts.edges.push(TypeEdge::new(name.clone(), parent));
+                        }
+                    }
+                }
+            }
+        }
+        "call" => {
+            if let Some(fn_n) = node.child_by_field_name("function") {
+                let name = fn_n.utf8_text(src).unwrap_or("").to_string();
+                let simple = name.rsplit('.').next().unwrap_or(&name).to_string();
+                if !simple.is_empty() {
+                    let arity = node
+                        .child_by_field_name("arguments")
+                        .map(named_arg_count)
+                        .unwrap_or(0);
+                    let start = fn_n.start_position();
+                    facts.calls.push(CallSite::new(
+                        file.clone(),
+                        simple,
+                        arity,
+                        start.row as u32,
+                        start.column as u32,
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts);
+    }
+}
+
+fn py_arity(node: Node) -> u32 {
+    let Some(params) = node.child_by_field_name("parameters") else {
+        return 0;
+    };
+    let mut n = 0u32;
+    let mut c = params.walk();
+    for child in params.children(&mut c) {
+        if child.is_named() {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn named_arg_count(args: Node) -> u32 {
+    let mut n = 0u32;
+    let mut c = args.walk();
+    for child in args.children(&mut c) {
+        if child.is_named() {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn make(
+    file: &FileId,
+    uri: &str,
+    name: &str,
+    node: Node,
+    kind: SymbolKind,
+    arity: Option<u32>,
+    container: Option<&str>,
+) -> IndexedSymbol {
     let range = Range::new(
         Position::new(
             node.start_position().row as u32,
@@ -142,9 +301,12 @@ fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> I
         kind,
         range,
         selection_range: range,
-        arity: None,
-        fqn: name.to_string(),
-        container: None,
+        arity,
+        fqn: match container {
+            Some(c) => format!("{c}.{name}"),
+            None => name.to_string(),
+        },
+        container: container.map(str::to_string),
     }
 }
 
@@ -205,6 +367,23 @@ mod tests {
     use progressive_lsp_resolve::{QueryKind, ResolveOutcome, ResolveQuery, Resolver};
     use progressive_lsp_workspace::{PyprojectAdapter, WorkspaceSource};
     use std::path::PathBuf;
+
+    fn fixture_dir(name: &str, marker: &str) -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = vec![
+            manifest.join(format!("../fixtures/{name}")),
+            PathBuf::from(format!("fixtures/{name}")),
+        ];
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join(format!("fixtures/{name}")));
+        }
+        for c in &candidates {
+            if c.join(marker).is_file() {
+                return c.clone();
+            }
+        }
+        panic!("missing fixtures/{name}/{marker}; tried {candidates:?}");
+    }
 
     fn line_col(src: &str, needle: &str) -> Position {
         let byte = src.find(needle).expect(needle);
@@ -280,7 +459,8 @@ mod tests {
             .any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
         let shared = SharedIndex::new(svc);
         let factory = PythonLanguageFactory::with_graph(Arc::new(shared));
-        assert_eq!(factory.resolver_chain().len(), 1);
+        assert_eq!(factory.t2_name(), "heuristic");
+        assert_eq!(factory.resolver_chain().len(), 2);
         let pos = line_col(&src, "greet");
         match factory.resolver_chain().resolve(&ResolveQuery::new(
             FileId::new(main.to_string_lossy().as_ref()),
@@ -288,14 +468,14 @@ mod tests {
             QueryKind::Definition,
         )) {
             ResolveOutcome::Ready(r) => {
-                assert_eq!(r.tier, Tier::Syntax);
+                assert_eq!(r.tier, Tier::Graph);
                 assert!(
                     r.locations.iter().any(|l| l.uri.contains("greet.py")),
                     "{:?}",
                     r.locations
                 );
             }
-            ResolveOutcome::NotReady => panic!("T1 must answer without ty pack"),
+            ResolveOutcome::NotReady => panic!("T2 must answer without ty pack"),
         }
     }
 
@@ -328,7 +508,7 @@ mod tests {
         let index = SharedIndex::new(IndexService::new());
         let factory =
             PythonLanguageFactory::with_graph(Arc::new(index)).with_supervisor(Arc::new(sup));
-        assert_eq!(factory.resolver_chain().len(), 2);
+        assert_eq!(factory.resolver_chain().len(), 3);
         let q = ResolveQuery::new(
             FileId::new("main.py"),
             Position::default(),
@@ -407,7 +587,125 @@ mod tests {
             line_col("def greet(name):\n    return name\n", src),
             QueryKind::Definition,
         )) {
-            ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Syntax),
+            ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Graph),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn python_tsg_stays_opt_in() {
+        let g: Arc<dyn GraphIndex> = Arc::new(progressive_lsp_resolve::EmptyIndex);
+        let f = PythonLanguageFactory::with_graph(g).with_t2_backend(T2Backend::StackGraphs);
+        assert_eq!(f.t2_name(), "stack-graphs");
+        assert_eq!(f.resolver_chain().len(), 2);
+    }
+
+    #[test]
+    fn python_extract_graph_import_class_and_call() {
+        let src = r#"
+import math
+from greet import greet
+
+class Base:
+    pass
+
+class Lib(Base):
+    def extra(self):
+        return greet("x")
+
+def greet(name):
+    return name
+
+def run():
+    return greet("x")
+"#;
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let tree = p.parse(src, None).unwrap();
+        let file = FileId::new("t.py");
+        let facts = PythonIndexer.extract_graph(&file, src, &tree);
+        assert!(facts
+            .imports
+            .iter()
+            .any(|i| i.path.contains("math") || i.path.contains("greet")));
+        assert!(facts
+            .edges
+            .iter()
+            .any(|e| e.child_fqn == "Lib" && e.parent_fqn == "Base"));
+        assert!(facts.calls.iter().any(|c| c.name == "greet"));
+        let syms = PythonIndexer.extract(&file, "file:///t.py", src, &tree);
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Lib" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "extra" && s.container.as_deref() == Some("Lib")));
+        let _ = py_arity(tree.root_node());
+        let _ = named_arg_count(tree.root_node());
+    }
+
+    #[test]
+    fn python_heuristic_fixture_definition_and_references() {
+        let root = fixture_dir("python-heuristic", "greet.py");
+        let greet = root.join("greet.py");
+        let app = root.join("app.py");
+        let mut svc = IndexService::new();
+        svc.ingest_package(
+            &PackageIngest::new("heuristic", "python")
+                .with_file(&greet)
+                .with_file(&app),
+            &PythonIndexer,
+        );
+        let greet_src = std::fs::read_to_string(&greet).unwrap();
+        let app_src = std::fs::read_to_string(&app).unwrap();
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let greet_tree = p.parse(&greet_src, None).unwrap();
+        let app_tree = p.parse(&app_src, None).unwrap();
+        let facts = PythonIndexer.extract_graph(
+            &FileId::new(app.to_string_lossy().as_ref()),
+            &app_src,
+            &app_tree,
+        );
+        assert!(
+            facts.imports.iter().any(|i| i.path.contains("greet")),
+            "{:?}",
+            facts.imports
+        );
+        let greet_syms = PythonIndexer.extract(
+            &FileId::new(greet.to_string_lossy().as_ref()),
+            "file:///greet.py",
+            &greet_src,
+            &greet_tree,
+        );
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method && s.arity == Some(1)));
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "Lib" && s.kind == SymbolKind::Class));
+        let factory = PythonLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        let src = std::fs::read_to_string(&app).unwrap();
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(app.to_string_lossy().as_ref()),
+            line_col(&src, "greet"),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(r.locations.iter().any(|l| l.uri.contains("greet.py")));
+            }
+            other => panic!("{other:?}"),
+        }
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(app.to_string_lossy().as_ref()),
+            line_col(&src, "greet"),
+            QueryKind::References,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
             other => panic!("{other:?}"),
         }
     }
