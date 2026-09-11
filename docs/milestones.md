@@ -1392,6 +1392,32 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 - [x] Docs + matrix updated
 - [x] Patterns named
 
+## Post–POC-tier
+
+Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md). Branches: `post-build` → `post-artifacts` → `post-ide`.
+
+### POST-ART — SHA-pegged artifact store
+
+**Status: SIGNED OFF** on branch `post-artifacts` (stacked on merged POST-BUILD / PR #9).
+
+**Exit**
+
+- [x] POST-ART.1 — `StoreManifest` schema documented in [consumer.md](consumer.md); [xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json) (URLs only)
+- [x] POST-ART.2 — URL layout `{base}/engines/{pack}/{upstream_sha}/{triple}.{format}`
+- [x] POST-ART.3 — `xtask pack --pack clangd --cache pull|push`; env `PROGRESSIVE_LSP_ARTIFACT_BASE` / `PROGRESSIVE_LSP_ARTIFACT_MANIFEST`
+- [x] POST-ART.4 — `./build lsp --flavor dogfood` tries cache pull for clangd before fail-closed miss
+- [x] POST-ART.5–6 — Fat dist/image + verify-only install documented in [consumer.md](consumer.md)
+
+**Sign-off checklist (POST-ART)**
+
+- [x] Exit criteria met
+- [x] `CARGO_TARGET_DIR=$PWD/target cargo test -p xtask -- --test-threads=1` (no Docker daemon in unit tests)
+- [x] No pack-cache blobs or ELFs in git
+- [x] PR CI does not run `--cache-fill`
+- [x] Patterns named in [design-patterns.md](design-patterns.md)
+
+**Blocker (live store):** example manifest URLs are placeholders until a maintainer publishes real clangd archives.
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 
 Drop aarch64 Java libc exception when Graal fully-static ARM ships. Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas). C# T3 only if musl AOT `check-static` greens.

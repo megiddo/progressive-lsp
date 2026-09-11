@@ -1,0 +1,21 @@
+{
+  "version": "1",
+  "artifacts": [
+    {
+      "pack": "clangd",
+      "upstream_sha": "3623fe661ae35c6c80ac221f14d85be76aa870f1",
+      "triple": "x86_64-unknown-linux-musl",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "url": "https://artifacts.example.invalid/progressive-lsp/engines/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/x86_64-unknown-linux-musl.tar.gz",
+      "format": "tar.gz"
+    },
+    {
+      "pack": "clangd",
+      "upstream_sha": "3623fe661ae35c6c80ac221f14d85be76aa870f1",
+      "triple": "aarch64-unknown-linux-musl",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "url": "https://artifacts.example.invalid/progressive-lsp/engines/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/aarch64-unknown-linux-musl.tar.gz",
+      "format": "tar.gz"
+    }
+  ]
+}

@@ -593,7 +593,7 @@ Valid architectures:
             dest ELFs / image stamp are fresh
   --flavor  slim (default): slim engine packs only. dogfood: slim + full
             packs (clangd, tsgo, gopls, zls) required by the runtime image.
-            clangd needs pack-cache or --cache-fill (see rest-live-proof).
+            clangd needs pack-cache (--cache pull or --cache-fill; see consumer.md).
 ";
 
 const IDE_HELP: &str = "\

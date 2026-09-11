@@ -418,7 +418,7 @@ fn verify_dogfood_pack_dests(root: &Path, triples: &[&str]) -> Result<(), String
     if missing.iter().any(|m| m.starts_with(CLANGD_PACK)) {
         msg.push_str(
             "; clangd needs target/pack-cache/clangd/<sha>/<triple>/clangd \
-             (xtask pack --pack clangd --cache-fill or POST-ART cache pull)",
+             (xtask pack --pack clangd --cache pull or --cache-fill)",
         );
     }
     Err(msg)
@@ -466,6 +466,9 @@ fn rebuild_packs(
     for triple in triples {
         let mut stale = Vec::new();
         for name in pack_names_for_flavor(flags.flavor) {
+            if flags.flavor == LspFlavor::Dogfood {
+                let _ = pack::try_cache_pull_for_pack(root, name, triple);
+            }
             if let Some(note) = pack::documented_miss_for_pack(root, name, triple)? {
                 eprintln!(
                     "./build lsp {}: backends {} ({}) {note}",
