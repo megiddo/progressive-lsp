@@ -30,7 +30,7 @@ zeds-dead-host stays thin: SSH, mux, file tree, git, PTY, IDE config remain **th
 
 ## In-tree POC editor
 
-`poc-ide/` is a native egui sample that speaks stock stdio LSP and, optionally, `progressive.v1`. It is how we exercise this repo’s contracts in a folder-shaped UI. It is **not** zeds-dead and **not** a shipped musl artifact. On non-Linux, **Open Folder…** is a native T1/T2 serve; **Open Folder in Container…** is one Linux `progressive-lsp serve --mux` for T1/T2/T3. The container is a local Linux host: identity bind-mount, **same `file:` URIs**, no rewriter ([t3-linux-hosts.md](t3-linux-hosts.md)). Linux native open is the full host. Never two serves. See [poc-ide/README.md](poc-ide/README.md).
+`poc-ide/` is a native egui sample that speaks stock stdio LSP and, optionally, `progressive.v1`. It is how we exercise this repo’s contracts in a folder-shaped UI. It is **not** zeds-dead and **not** a shipped musl artifact. **Long-term:** one consistent client interface to `progressive-lsp` (LSP stdio + optional control). On non-Linux the **default** intelligence host is a **Linux container** (`serve --mux`): progressive T1/T2/T3 on one serve; missing engine packs gate **T3 per language**, not the whole session. Optional native **Open Folder…** remains for T1/T2 only and must not warp product design. Identity bind-mount, **same `file:` URIs**, no rewriter ([t3-linux-hosts.md](t3-linux-hosts.md)). Never two serves per workspace. See [poc-ide/README.md](poc-ide/README.md).
 
 ## Bootstrap
 

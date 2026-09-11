@@ -1018,4 +1018,29 @@ mod tests {
             "needs T2"
         );
     }
+
+    #[test]
+    fn container_open_offers_t3_strip_and_discover_honest_per_language() {
+        let c = catalog();
+        let python = TierStrip::paint_for_open(
+            &c,
+            "python",
+            IngestState::Running,
+            Some(WireTier::Graph),
+            T3HostOffer::Offered,
+        );
+        assert_eq!(python.t3().state(), TierCellState::InProgress);
+        assert_eq!(python.t3().status(), "processing");
+
+        let python_native = TierStrip::paint_for_open(
+            &c,
+            "python",
+            IngestState::Running,
+            Some(WireTier::Graph),
+            T3HostOffer::NeedsContainer,
+        );
+        assert_eq!(python_native.t3().state(), TierCellState::Skipped);
+        assert_eq!(python.t3().state(), TierCellState::InProgress);
+        assert_ne!(python_native.t3().state(), python.t3().state());
+    }
 }

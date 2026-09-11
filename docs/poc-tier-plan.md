@@ -9,7 +9,7 @@ Related: [t2-heuristic-coverage.md](t2-heuristic-coverage.md), [t3-linux-hosts.m
 | Lock | Meaning |
 |---|---|
 | One serve | Native **or** container, never both. |
-| Mac POC | Open Folder = Darwin T1/T2. Open Folder in Container = one Linux T1/T2/T3. |
+| Mac POC | Default: container = one Linux serve (progressive T1/T2/T3). Optional native Open Folder = T1/T2 only (non-product). |
 | URIs | Identity bind-mount. Same `file:` URIs as native. No rewriter in core or poc-ide. |
 | Static T3 | Fully static backends. **Exception:** aarch64 Java T3 may need host libc until Graal fully-static ARM. Prefer “static except libc.” |
 | No JVM / JDT / Node / CPython / host `php` as our runtime | Unchanged. |

@@ -113,15 +113,30 @@ pub struct LaunchFlags {
     pub file: Option<PathBuf>,
     pub control_socket: Option<PathBuf>,
     pub container: bool,
+    /// Opt out of non-Linux default container when `--folder` is set.
+    pub native: bool,
 }
 
 impl LaunchFlags {
     pub fn open_mode(&self) -> OpenMode {
+        self.effective_open_mode(HostOs::current())
+    }
+
+    pub fn effective_open_mode(&self, host: HostOs) -> OpenMode {
         if self.container {
-            OpenMode::Container
-        } else {
-            OpenMode::Native
+            return OpenMode::Container.for_host(host);
         }
+        if self.native {
+            return OpenMode::Native;
+        }
+        if host.shows_container_open() && self.folder.is_some() {
+            return OpenMode::Container;
+        }
+        OpenMode::Native
+    }
+
+    pub fn folder_defaults_to_container(host: HostOs, folder: &Option<PathBuf>) -> bool {
+        host.shows_container_open() && folder.is_some()
     }
 }
 
@@ -142,6 +157,8 @@ pub fn parse_launch_args(args: impl Iterator<Item = String>) -> LaunchFlags {
             flags.file = args.next().map(PathBuf::from);
         } else if arg == "--container" {
             flags.container = true;
+        } else if arg == "--native" {
+            flags.native = true;
         } else if arg == "--control-socket" {
             match args.peek() {
                 Some(next) if !next.starts_with('-') => {
@@ -218,7 +235,32 @@ mod tests {
     fn parse_launch_args_folder_file_container_and_socket() {
         let empty = parse_launch_args(std::iter::empty());
         assert_eq!(empty, LaunchFlags::default());
-        assert_eq!(empty.open_mode(), OpenMode::Native);
+        assert_eq!(
+            empty.effective_open_mode(HostOs::Linux),
+            OpenMode::Native
+        );
+        assert_eq!(
+            LaunchFlags {
+                folder: Some(PathBuf::from("/ws")),
+                ..LaunchFlags::default()
+            }
+            .effective_open_mode(HostOs::Other),
+            OpenMode::Container
+        );
+        assert_eq!(
+            LaunchFlags {
+                folder: Some(PathBuf::from("/ws")),
+                native: true,
+                ..LaunchFlags::default()
+            }
+            .effective_open_mode(HostOs::Other),
+            OpenMode::Native
+        );
+        assert!(LaunchFlags::folder_defaults_to_container(
+            HostOs::Other,
+            &Some(PathBuf::from("/ws"))
+        ));
+        assert!(!LaunchFlags::folder_defaults_to_container(HostOs::Linux, &None));
 
         let flags = parse_launch_args(
             [

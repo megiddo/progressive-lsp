@@ -214,11 +214,39 @@ pub struct RunLaunch {
     pub folder: Option<PathBuf>,
     pub file: Option<PathBuf>,
     pub container: bool,
+    /// Explicit native open (T1/T2 on non-Linux). Opts out of folder container default.
+    pub native: bool,
     pub control_socket: Option<PathBuf>,
     pub extra: Vec<String>,
 }
 
 impl RunLaunch {
+    /// Non-Linux `--folder` opens in the container unless `--native` or `--container` was set.
+    pub fn apply_host_defaults(&mut self) {
+        if cfg!(target_os = "linux") {
+            return;
+        }
+        if self.native || self.container {
+            return;
+        }
+        if self.folder.is_some() {
+            self.container = true;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn apply_host_defaults_for_editor_linux(&mut self, editor_is_linux: bool) {
+        if editor_is_linux {
+            return;
+        }
+        if self.native || self.container {
+            return;
+        }
+        if self.folder.is_some() {
+            self.container = true;
+        }
+    }
+
     pub fn to_forwarded(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(folder) = &self.folder {
@@ -231,6 +259,9 @@ impl RunLaunch {
         }
         if self.container {
             out.push("--container".into());
+        }
+        if self.native {
+            out.push("--native".into());
         }
         if let Some(sock) = &self.control_socket {
             out.push("--control-socket".into());
@@ -514,6 +545,8 @@ fn parse_run_flags(args: &[String]) -> Result<XtaskCommand, String> {
             take_path(&mut launch.control_socket, value, "run --control-socket")?;
         } else if arg == "--container" {
             launch.container = true;
+        } else if arg == "--native" {
+            launch.native = true;
         } else if arg == "-h" || arg == "--help" {
             return Ok(XtaskCommand::Help {
                 topic: HelpTopic::Run,
@@ -523,6 +556,7 @@ fn parse_run_flags(args: &[String]) -> Result<XtaskCommand, String> {
         }
         i += 1;
     }
+    launch.apply_host_defaults();
     launch.validate()?;
     Ok(XtaskCommand::Run { launch })
 }
@@ -604,18 +638,22 @@ Does not open the window. Start it with: ./build run ide
 ";
 
 const RUN_HELP: &str = "\
-usage: ./build run ide [--folder DIR] [--file PATH] [--container]
+usage: ./build run ide [--folder DIR] [--file PATH] [--container] [--native]
 
 Start the POC IDE. Stays running until you quit the editor window.
 
   ./build run ide
   ./build run ide --folder DIR
-  ./build run ide --folder DIR --container
+  ./build run ide --folder DIR --native
 
---folder DIR must be an absolute path when using --container
-(bind-mount identity). Container mode needs Docker Desktop and
-./build lsp <arch> first. First T3 proof is Python, PHP, or Java source,
-not a Darwin Cargo tree.
+On macOS/Windows, --folder DIR defaults to container mode (absolute path
+required for bind-mount identity). Use --native for optional T1/T2-only
+native serve without Docker.
+
+Container mode needs Docker Desktop and ./build lsp <arch> first.
+For full T3 engines in the runtime image: ./build lsp <arch> --flavor dogfood
+(missing packs gate T3 per language only). First T3 proof is Python, PHP, or
+Java source, not a Darwin Cargo tree.
 ";
 
 const BUILD_HELP: &str = "\
@@ -1057,6 +1095,19 @@ mod tests {
                     launch.folder.as_deref().map(|p| p.to_str().unwrap()),
                     Some("/ws")
                 );
+                let mut native_only = RunLaunch {
+                    folder: Some(PathBuf::from("/ws")),
+                    native: true,
+                    ..RunLaunch::default()
+                };
+                native_only.apply_host_defaults_for_editor_linux(false);
+                assert!(!native_only.container);
+                let mut default_container = RunLaunch {
+                    folder: Some(PathBuf::from("/ws")),
+                    ..RunLaunch::default()
+                };
+                default_container.apply_host_defaults_for_editor_linux(false);
+                assert!(default_container.container);
             }
             other => panic!("{other:?}"),
         }
@@ -1148,7 +1199,8 @@ mod tests {
         assert!(LSP_ARCHES.contains("--force"));
         assert!(LSP_ARCHES.contains("[--force]"));
         assert!(IDE_HELP.contains("./build ide"));
-        assert!(RUN_HELP.contains("./build run ide --folder DIR --container"));
+        assert!(RUN_HELP.contains("--flavor dogfood"));
+        assert!(RUN_HELP.contains("--native"));
         assert!(RUN_HELP.contains("absolute"));
         assert!(BUILD_HELP.contains(IMAGE_TAG) || BUILD_HELP.contains("runtime image"));
     }

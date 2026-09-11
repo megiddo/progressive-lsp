@@ -442,7 +442,7 @@ impl PocIdeApp {
         self.launch_journal = ev.journal().clone();
         if finished {
             self.run_log.log_container_journal(&self.launch_journal);
-            if self.launch_journal.all_ok() {
+            if self.launch_journal.serve_ready() {
                 if let Some(root) = self.root.clone() {
                     self.spawn_lsp(&root);
                     self.status = "Connecting language server…".into();
@@ -952,16 +952,20 @@ impl eframe::App for PocIdeApp {
         egui::Panel::top("menu").resizable(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button(OpenMode::Native.folder_label()).clicked() {
+                    if self.host.shows_container_open() {
+                        if ui.button(OpenMode::Container.folder_label()).clicked() {
+                            ui.close_kind(egui::UiKind::Menu);
+                            self.queue_dialog(PendingDialog::open_folder_in_container());
+                            ui.ctx().request_repaint();
+                        }
+                        if ui.button(OpenMode::Native.folder_label()).clicked() {
+                            ui.close_kind(egui::UiKind::Menu);
+                            self.queue_dialog(PendingDialog::open_folder());
+                            ui.ctx().request_repaint();
+                        }
+                    } else if ui.button(OpenMode::Native.folder_label()).clicked() {
                         ui.close_kind(egui::UiKind::Menu);
                         self.queue_dialog(PendingDialog::open_folder());
-                        ui.ctx().request_repaint();
-                    }
-                    if self.host.shows_container_open()
-                        && ui.button(OpenMode::Container.folder_label()).clicked()
-                    {
-                        ui.close_kind(egui::UiKind::Menu);
-                        self.queue_dialog(PendingDialog::open_folder_in_container());
                         ui.ctx().request_repaint();
                     }
                     if ui.button("Open File…").clicked() {

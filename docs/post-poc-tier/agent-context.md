@@ -8,7 +8,7 @@ Plan: [../post-poc-tier-development-plan.md](../post-poc-tier-development-plan.m
 
 ## Meta-orchestrator (orchestrator of orchestrators)
 
-**Role:** Run tracks **in order**. Do not start `post-artifacts` until POST-BUILD exit criteria are met (or human waives with a written reason in the PR). Do not start `post-ide` until POST-ART.1–3 at minimum (manifest + pull) or human waives. **Skip POST-PROOF** until the human runs overnight clangd.
+**Role:** Run tracks **in order**. POST-BUILD and POST-ART are merged. **POST-IDE** may start without POST-PROOF. **Skip POST-PROOF** until the human runs overnight clangd. Do not let optional native Darwin T1/T2 drive design — default container, progressive T1/T2/T3 inside one Linux serve.
 
 **Loop:**
 
@@ -33,8 +33,9 @@ READ:
   docs/branching.md
   docs/consumer.md
 ROLE: meta-orchestrator
-TRACK_ORDER: POST-BUILD → POST-ART → POST-IDE
+TRACK_ORDER: POST-IDE (active) → POST-PROOF when human ready
 SKIP: POST-PROOF (human overnight)
+PRODUCT: single client interface to progressive-lsp; container-default on laptop; optional native T1/T2 non-product
 Spawn each track orchestrator with TRACK payload below. Same REPO. No external worktrees.
 ```
 
@@ -94,7 +95,7 @@ POST-DOC runs inside each track (milestones + implementation-plan rows when sign
 |---|---|---|
 | `post-build` | `./build lsp --flavor dogfood`; full pack rebuild; image stamp includes full dests | HTTP pull; poc-ide UX |
 | `post-artifacts` | Manifest schema, **local** `target/local-artifacts/` store, cache pull/push, wire dogfood pull for `cached`; remote CDN optional later | IDE default container |
-| `post-ide` | Container-primary open; preflight_t3; `./build run ide` defaults | Changing pack pins; cmake CI |
+| `post-ide` | Container-default open; progressive T1/T2/T3 in one serve; per-pack T3 gating; optional native T1/T2 only | Warping design for Darwin; cmake CI; POST-PROOF |
 
 ---
 

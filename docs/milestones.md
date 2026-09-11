@@ -1418,6 +1418,24 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 
 **Day-to-day:** populate clangd via `--cache-fill` then `--cache push` into the gitignored local store; dogfood pull needs no remote host. CDN upload is optional later.
 
+### POST-IDE — Container-default, progressive tiers
+
+**Status: SIGNED OFF** on branch `post-ide` (stacked on merged POST-ART).
+
+**Exit**
+
+- [x] POST-IDE.1 — Non-Linux default **Open Folder in Container…** (File menu primary); optional native **Open Folder…** (T1/T2); docs state single-interface goal
+- [x] POST-IDE.2 — Docker + image gate serve start; dogfood preflight honest (`DogfoodEnginePreflight`); missing packs skip T3 preflight, `serve_ready` still attaches for T1/T2
+- [x] POST-IDE.3 — `./build run ide --folder DIR` defaults container off-Linux; `--native` opt-out; help cites `./build lsp <arch> --flavor dogfood`
+- [x] POST-IDE.4 — `cargo test -p poc-ide` locks launch defaults, journal slim vs dogfood, tier strip (fakes only)
+
+**Sign-off checklist (POST-IDE)**
+
+- [x] Exit criteria met
+- [x] `CARGO_TARGET_DIR=$PWD/target cargo test -p poc-ide` and `cargo test -p xtask -- --test-threads=1`
+- [x] No Docker daemon in unit tests
+- [x] Patterns named in [design-patterns.md](design-patterns.md)
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 
 Drop aarch64 Java libc exception when Graal fully-static ARM ships. Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas). C# T3 only if musl AOT `check-static` greens.

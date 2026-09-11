@@ -26,7 +26,9 @@ Local dev     ./build lsp {arch} [--flavor dogfood]  →  musl core + all image-
 Deploy        Default manifest base URL + per-artifact URLs (tar.gz primary; zip/tar.bz2 optional)
               Thin: core + per-pack tarballs. Fat: full dist tarball or runtime OCI image.
 
-POC / laptop  Non-Linux: intelligence only via Linux host (container = local remote)
+POC / laptop  Default: one Linux serve in container (progressive T1→T2→T3)
+              Optional native T1/T2 on non-Linux (legacy/dev); must not drive product design
+              Long-term: single client interface to progressive-lsp (container = local remote)
               Linux prod: same musl binaries as container ISA
 ```
 
@@ -91,20 +93,22 @@ Do not start a child branch until the parent WP’s exit criteria are met. Small
 
 ---
 
-## POST-IDE — Container as primary intelligence host (laptop)
+## POST-IDE — Container-default, progressive tiers (laptop)
 
-**Why.** On macOS/Windows, the editor should not treat a **Darwin** `progressive-lsp serve` as the product path for language intelligence. Docker (or a real remote Linux host) is **remote semantics** with an identity mount—not a optional T3 side door.
+**Why.** The long-term product is **one client interface** to `progressive-lsp` (stdio LSP + optional `progressive.v1`), backed by a **Linux intelligence host**. On macOS/Windows that host is the **container** (identity mount, same `file:` URIs). The POC must not let optional **native T1/T2** (Darwin serve) warp design: keep it as an explicit opt-in for fast local index without Docker, not the default path.
 
-**Branch:** `post-ide` off `post-artifacts` (or `post-build` if artifact pull is not required for preflight).
+**Progressive container (canonical).** One `serve --mux` in the container. **T1/T2 always run there** when the container starts. **T3 is per language / per pack**: missing overnight **clangd** gates **C/C++ T3 only**, not the session. POST-PROOF fills packs; POST-IDE must not require POST-PROOF to land code/tests.
+
+**Branch:** `post-ide` off merged `main` (POST-ART merged).
 
 | ID | Task | Exit |
 |---|---|---|
-| POST-IDE.1 | **Non-Linux:** default folder open = container; deprecate or hide native Open Folder for intelligence (T1/T2 in container on same serve) | [poc-ide/README.md](poc-ide/README.md) + [t3-linux-hosts.md](t3-linux-hosts.md) updated; one serve only |
-| POST-IDE.2 | **`DockerRuntime::preflight_t3`**: inspect image or prefix layout for required engines (not `Ok(())`) | Honest T3 strip / journal when image built without dogfood packs |
-| POST-IDE.3 | `./build run ide --folder DIR` defaults to `--container` on non-Linux | `./build help run ide` documents requirement: `./build lsp <arch> --flavor dogfood` first |
-| POST-IDE.4 | Tests: `FakeRuntime` + argv/journal; no daemon | `cargo test -p poc-ide` green |
+| POST-IDE.1 | **Default open = container** on non-Linux (`./build run ide`, File menu primary). **Optional** native Open Folder for T1/T2 only (flag/menu); T3 stays `NeedsContainer` on native. Docs: [poc-ide/README.md](../poc-ide/README.md), [t3-linux-hosts.md](../t3-linux-hosts.md), [consumer.md](../consumer.md) — single-interface goal stated | One serve per workspace; native path documented as non-product |
+| POST-IDE.2 | **Runtime gates:** (a) Docker + image → can start serve; (b) **preflight** reports missing **dogfood** engines without blocking T1/T2. Journal + tier strip honest per language | `DockerRuntime::preflight_t3` (or renamed preflight) not `Ok(())`; `FakeRuntime` tests |
+| POST-IDE.3 | `./build run ide --folder DIR` defaults `--container` on non-Linux; help cites `./build lsp <arch> --flavor dogfood` for full T3 when packs exist | `./build help run ide` updated |
+| POST-IDE.4 | Tests: launch flags, journal steps, tier labels for slim vs dogfood image scenarios (fakes only) | `cargo test -p poc-ide` green |
 
-**Linux dev laptops:** choose container-only for parity with Mac **or** native musl serve on the host (still Linux intelligence). Document the chosen default in poc-ide; production Linux remains native serve on the server.
+**Linux dev laptops:** default **container** for parity with Mac POC, **or** document native musl serve as Linux-only dev shortcut; production Linux server stays native serve. Neither path may fork URIs or tier protocol.
 
 ---
 
