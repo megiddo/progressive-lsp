@@ -53,6 +53,8 @@ Do not start a branch until the parent milestone is signed off. Do not open `hos
 
 **POC-tier stack:** signed off on `t3-rest` (URI → REST). **clangd** required in code; live cache-fill ELF proof is orchestrator-only ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)).
 
+**After merge:** follow [post-poc-tier-development-plan.md](../post-poc-tier-development-plan.md) (dogfood `./build lsp`, artifact store, container-primary IDE). Do not fold that work into this stack PR.
+
 ---
 
 ## POC-URI — identity `file:` URIs

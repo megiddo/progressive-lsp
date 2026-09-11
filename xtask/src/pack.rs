@@ -527,6 +527,12 @@ impl PackBuildPlan {
         if self.kind == PackKind::Cmake {
             args.push("--build-arg".into());
             args.push(format!("CACHE_KEY={}", self.cache_key()));
+            if let Ok(ninja) = std::env::var("NINJAFLAGS") {
+                if !ninja.is_empty() {
+                    args.push("--build-arg".into());
+                    args.push(format!("NINJAFLAGS={ninja}"));
+                }
+            }
         }
         if self.kind == PackKind::Graal {
             let (tag, flags) = graal_native_image_args(&self.triple);

@@ -888,6 +888,19 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `MuslBuildPlan`, `DockerPort`, `CommandDockerPort`, `RecordingDockerPort`
 
+## Post–POC-tier (after `t3-rest` → `main` PR)
+
+**Status: PLANNED.** Master: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md). Branches: `post-build` → `post-artifacts` → `post-ide`. Orchestrator proof for live clangd (POST-PROOF) may run on `main` without waiting for POST-BUILD if only blobs + image proof are needed.
+
+| Track | IDs | Summary |
+|---|---|---|
+| Proof | POST-PROOF.* | Overnight cache-fill, `runtime-image --both`, rest-live-proof rows |
+| Build | POST-BUILD.* | `./build lsp --flavor dogfood`; full packs + image stamp |
+| Artifacts | POST-ART.* | SHA manifest, URLs, cache pull; fat dist/image release |
+| IDE | POST-IDE.* | Container-primary on non-Linux; real T3 preflight |
+
+Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stack new branches instead.
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |

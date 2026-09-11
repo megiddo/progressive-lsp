@@ -18,6 +18,7 @@ This directory is the **source of truth** for the product. Implement from these 
 | Global logging (`LogPort`, sqlite WAL) | [logging.md](logging.md), [plan](logging-plan.md), [agent context](logging/agent-context.md) |
 | Host stack (`host0`–`host7`; native vs container open) | [host/agent-context.md](host/agent-context.md) |
 | POC tier stack (T1/T2 complete + container T3) | [poc-tier-plan.md](poc-tier-plan.md), [poc-tier/agent-context.md](poc-tier/agent-context.md) |
+| After POC-tier PR (build, artifacts, IDE) | [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |
 

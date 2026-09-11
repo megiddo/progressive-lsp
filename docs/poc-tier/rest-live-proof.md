@@ -18,7 +18,22 @@ cargo xtask check-static target/musl/x86_64-unknown-linux-musl/engines/clangd/cl
 cargo xtask runtime-image --both
 ```
 
-**2026-09-11 session:** x86_64 `--cache-fill` ran in Docker; host-stage `ninja` hit **OOM** (`g++: fatal error: Killed`) around object ~1650/2962 with default parallelism. `docker/engine-pack-clangd-cache-fill.Dockerfile` now sets `NINJAFLAGS=-j2`. Re-run cache-fill locally (or raise Docker Desktop memory) before claiming REST.2 live proof.
+**2026-09-11 session:** x86_64 `--cache-fill` failed in Docker (**OOM** / `ResourceExhausted: cannot allocate memory` on musl `ninja clangd`). Dockerfile caps **`NINJAFLAGS=-j2`** (override build-arg `-j1` if still OOM).
+
+### Overnight run (when Docker is resourced)
+
+1. **Docker Desktop → Settings → Resources:** give the VM **≥ 12 GiB RAM** (16 GiB safer for musl LLVM link). **≥ 80 GiB disk** free on the data disk. Quit other heavy containers.
+2. **Branch:** `t3-rest`, repo root = Google Drive checkout.
+3. **Kick off** (logs under `target/clangd-overnight-logs/`). If musl `ninja` still OOMs, `export NINJAFLAGS=-j1` before the script (xtask forwards it to the cache-fill image build):
+
+```sh
+chmod +x scripts/clangd-overnight.sh
+./scripts/clangd-overnight.sh
+```
+
+Or run the commands in the **Live ELF** block above one triple at a time. Expect **several hours per triple** for cache-fill; **do not** run two cache-fills in parallel.
+
+4. **Morning:** if the script exits 0, optional `cargo xtask runtime-image --both`, then paste `check-static` output + image digests into this file and check REST.2 live rows in [milestones.md](../milestones.md).
 
 Dest paths stay gitignored under `target/musl/<triple>/engines/` and `target/pack-cache/clangd/<sha>/<triple>/`.
 
