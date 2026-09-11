@@ -254,12 +254,13 @@ In-tree editor in `poc-ide/`. Types live there only. The server map above is unc
 | `HostOs` | Value object | `linux` vs `other`; container File-menu item only on `other` |
 | `OpenMode` | Strategy | `native` vs `container`; `for_host` forces native on Linux; T3 offered for native-on-Linux or container; never two LSP processes |
 | `T3HostOffer` | Value object | `Offered` vs `NeedsContainer`; strip skip + discover `open folder in container` |
-| `LaunchFlags` / `parse_launch_args` | DTO + parser | `--folder` / `--file` / `--container` / `--control-socket`; tests parse strings |
-| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime`. `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS. `start` validates [`DockerRunPlan`] and does not exec; `MuxStdio::from_command` is the single container `docker run` |
+| `LaunchFlags` / `parse_launch_args` | DTO + parser | `--folder` / `--file` / `--container` / `--native` / `--control-socket`; non-Linux `--folder` defaults to container via [`LaunchFlags::effective_open_mode`]; tests parse strings |
+| `DogfoodEnginePreflight` | Value object | Full packs (`clangd`, `tsgo`, `gopls`, `zls`) under `/opt/plsp/engines/`; `DockerRuntime::preflight_t3` probes the runtime image; missing packs → journal `skipped`, not serve block |
+| `RuntimePort` / `FakeRuntime` / `DockerRuntime` | Port / test double / Adapter | Tests inject `FakeRuntime` (`slim_image_missing_clangd`, `dogfood_image`). `DockerRuntime` uses a missing binary or a scripted CLI in tests; no daemon, registry, or AWS. `start` validates [`DockerRunPlan`] and does not exec; `MuxStdio::from_command` is the single container `docker run` |
 | `DockerRunPlan` | Value object | docker binary + `run -i --rm` + `-v WS:WS` + `-w WS` + image + `serve --prefix /opt/plsp --mux`; identity mount so `file:` URIs match native; never `-t`; never a URI rewriter |
 | `RuntimeInfo` | Value object / DTO | `available` + platform string; `is_linux_pack_platform` is `linux/arm64` / `linux/amd64` (and `aarch64`/`x86_64` aliases); empty platform is not available |
 | `RuntimeSession` | Value object | Workspace path of a validated container plan; Clone; does not own Child; tests never hold a live Docker id |
-| `LaunchJournal` / `LaunchStep` / `StepState` | Value objects | Ordered `pending`/`running`/`ok`/`fail`/`skipped`; container plan: probe → platform → image → mount → start → T3 preflight. T3 click uses `t3_not_supported` for C# only (T1/T2 ceiling); Java uses the same T3 journal as other typed languages. Container launch stays on the Container modal |
+| `LaunchJournal` / `LaunchStep` / `StepState` | Value objects | Ordered `pending`/`running`/`ok`/`fail`/`skipped`; container plan: probe → platform → image → mount → start → T3 preflight; [`LaunchJournal::serve_ready`] when `start_serve` is ok (T3 preflight may be `skipped`). T3 click uses `t3_not_supported` for C# only (T1/T2 ceiling); Java uses the same T3 journal as other typed languages. Container launch stays on the Container modal |
 | `StatusModal` / `StatusModalKind` | Value object | Closed or open T1/T2/T3/container; Close does not cancel work |
 | `RuntimeIoRequest` / `RuntimeIoEvent` / `RuntimeIoMailbox` / `RuntimeIoHandle` | Command + Event mailbox | UI submits launch; worker yields `Progress` then `Finished` journal; tests `pump_runtime_io` / `FakeRuntime` |
 | `LanguageCatalog` | Registry | Extension lookup is deterministic; unknown → `plaintext`; plaintext skips `didOpen`. `discover_offers` is method × min tier × ceiling from the language matrix; every v1 language has T2 after T2-COV; Java has T3 offers when the static pack can answer; C# ceiling is T1/T2 |
@@ -320,7 +321,7 @@ llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
 | `Freshness` | Value object | Make semantics: `Fresh` = dest exists and stamp matches → skip; `Stale` = dest exists but inputs changed → rebuild; `Missing` = dest (or stamp) absent → rebuild. `--force` short-circuits to `Stale`. |
 | `BuildTarget` | Value object | Low-level `backends` / `controller` / `package` / `poc`; unknown target fails closed; `controller`/`poc` refuse `--full`/`--target`/`--both`. |
 | `BuildFlags` | Value object | `--full` / `--target` / `--both`; default docker args name this host’s musl triple (not both); `--full` is pack-only. |
-| `RunLaunch` | Value object | `./build run ide` then `--folder` / `--file` / `--container` / `--control-socket`; `--` still forwards; relative `--folder` + `--container` fails closed (bind-mount identity). |
+| `RunLaunch` | Value object | `./build run ide` then `--folder` / `--file` / `--container` / `--native` / `--control-socket`; non-Linux `--folder` defaults to `--container` via [`RunLaunch::apply_host_defaults`]; `--` still forwards; relative `--folder` + container fails closed (bind-mount identity). |
 
 ## Adding a type
 

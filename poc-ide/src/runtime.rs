@@ -11,6 +11,52 @@ use crate::open_mode::OpenMode;
 /// Image the container host would run. Not pulled in unit tests.
 pub const RUNTIME_IMAGE: &str = "progressive-lsp-runtime:local";
 
+/// Dogfood full packs staged under [`DockerRunPlan::PREFIX`]. Slim images may omit these;
+/// missing engines gate T3 per language, not T1/T2 in the container serve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DogfoodEnginePreflight;
+
+impl DogfoodEnginePreflight {
+    pub const PACKS: &'static [(&'static str, &'static str)] =
+        &[("clangd", "clangd"), ("tsgo", "tsgo"), ("gopls", "gopls"), ("zls", "zls")];
+
+    pub fn missing_from(mut present: impl FnMut(&str, &str) -> bool) -> Vec<&'static str> {
+        Self::PACKS
+            .iter()
+            .filter(|(pack, bin)| !present(pack, bin))
+            .map(|(pack, _)| *pack)
+            .collect()
+    }
+
+    pub fn format_missing(missing: &[&str]) -> String {
+        if missing.is_empty() {
+            "packs ready".into()
+        } else {
+            format!("missing dogfood packs: {}", missing.join(", "))
+        }
+    }
+
+    /// One `sh -c` script for `docker run --rm --entrypoint sh IMAGE -c …`.
+    pub fn shell_probe(prefix: &str) -> String {
+        let mut lines = String::from("missing=\"\"\n");
+        for (pack, bin) in Self::PACKS {
+            lines.push_str(&format!(
+                "test -x {prefix}/engines/{pack}/{bin} || missing=\"$missing {pack}\"\n"
+            ));
+        }
+        lines.push_str("[ -z \"$missing\" ] || { echo \"missing dogfood packs:$missing\"; exit 1; }\n");
+        lines
+    }
+
+    pub fn parse_probe_stdout(stdout: &str) -> Result<(), String> {
+        let line = stdout.lines().find(|l| l.contains("missing dogfood packs:"));
+        match line {
+            Some(l) => Err(l.trim().to_string()),
+            None => Ok(()),
+        }
+    }
+}
+
 /// `docker run -i --rm` attach plan. Value object. Tests inspect argv; they
 /// do not start a daemon. [`DockerRuntime::start`] validates this plan and
 /// does not exec. [`crate::lsp::StdioLsp::from_command`] is the single exec.
@@ -283,6 +329,15 @@ impl LaunchJournal {
         !self.steps.is_empty() && self.steps.iter().all(|s| s.state == StepState::Ok)
     }
 
+    /// Container attach may proceed (T1/T2) once `start_serve` succeeded. T3 preflight may
+    /// be `skipped` when dogfood packs are absent.
+    pub fn serve_ready(&self) -> bool {
+        self.steps
+            .iter()
+            .find(|s| s.id == "start_serve")
+            .is_some_and(|s| s.state == StepState::Ok)
+    }
+
     fn set(&mut self, id: &str, state: StepState, detail: Option<String>) {
         if let Some(step) = self.steps.iter_mut().find(|s| s.id == id) {
             step.state = state;
@@ -486,8 +541,18 @@ impl FakeRuntime {
             info: Ok(RuntimeInfo::new(true, "linux/arm64")),
             image: Ok(()),
             start: Ok(()),
-            preflight: Err("stub pack".into()),
+            preflight: Err("missing dogfood packs: clangd".into()),
         }
+    }
+
+    /// Slim runtime image: T1/T2 packs present; at least one dogfood engine missing.
+    pub fn slim_image_missing_clangd() -> Self {
+        Self::preflight_fails()
+    }
+
+    /// Dogfood image: all full packs staged under `/opt/plsp`.
+    pub fn dogfood_image() -> Self {
+        Self::ready()
     }
 }
 
@@ -574,7 +639,23 @@ impl RuntimePort for DockerRuntime {
     }
 
     fn preflight_t3(&self) -> Result<(), IdeError> {
-        Ok(())
+        let script = DogfoodEnginePreflight::shell_probe(DockerRunPlan::PREFIX);
+        let out = Command::new(&self.docker)
+            .args(["run", "--rm", "--entrypoint", "sh", RUNTIME_IMAGE, "-c", &script])
+            .output()
+            .map_err(|e| IdeError::runtime(format!("docker preflight: {e}")))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if let Err(msg) = DogfoodEnginePreflight::parse_probe_stdout(&stdout) {
+            return Err(IdeError::runtime(msg));
+        }
+        Err(IdeError::runtime(format!(
+            "dogfood preflight failed: {}",
+            stderr.trim()
+        )))
     }
 }
 
@@ -668,7 +749,7 @@ pub fn run_launch_reporting(
     report(journal);
     match runtime.preflight_t3() {
         Ok(()) => journal.ok("t3_preflight", "packs ready"),
-        Err(e) => journal.fail("t3_preflight", e.to_string()),
+        Err(e) => journal.skip("t3_preflight", e.to_string()),
     }
     report(journal);
 }
@@ -819,10 +900,15 @@ mod tests {
         assert_eq!(j.steps()[5].state(), StepState::Skipped);
 
         let mut j = LaunchJournal::container_plan();
-        run_launch(&FakeRuntime::preflight_fails(), ws, &mut j);
-        assert_eq!(j.steps()[5].state(), StepState::Fail);
-        assert!(j.is_failed());
-        assert!(!j.is_running());
+        run_launch(&FakeRuntime::slim_image_missing_clangd(), ws, &mut j);
+        assert_eq!(j.steps()[5].state(), StepState::Skipped);
+        assert!(j.steps()[5].detail().unwrap().contains("clangd"));
+        assert!(!j.is_failed());
+        assert!(j.serve_ready());
+        assert!(!j.all_ok());
+
+        run_launch(&FakeRuntime::dogfood_image(), ws, &mut j);
+        assert!(j.all_ok());
         j.start("t3_preflight");
         assert!(j.is_running());
         j.skip("t3_preflight", "later");
@@ -863,7 +949,7 @@ mod tests {
         let start_err = rt.start(Path::new("/ws")).unwrap_err();
         assert!(start_err.is_runtime());
         assert!(start_err.to_string().contains("docker binary missing"));
-        assert!(rt.preflight_t3().is_ok());
+        assert!(rt.preflight_t3().is_err());
         assert_eq!(DockerRuntime::new().docker, PathBuf::from("docker"));
         assert_eq!(DockerRuntime::default().docker, PathBuf::from("docker"));
         let path_rt = DockerRuntime::new();
@@ -897,6 +983,12 @@ mod tests {
 case "$1" in
   version) echo "linux/arm64"; exit 0 ;;
   image) exit 0 ;;
+  run)
+    if [ "$2" = "--rm" ] && [ "$4" = "sh" ]; then
+      exit 0
+    fi
+    exit 1
+    ;;
   *) exit 1 ;;
 esac
 "#,
@@ -909,6 +1001,26 @@ esac
         let session = rt.start(Path::new("/ws")).unwrap();
         assert_eq!(session.workspace(), Path::new("/ws"));
         assert!(rt.preflight_t3().is_ok());
+
+        let (_keep, slim_bin) = scripted_docker(
+            r#"
+case "$1" in
+  version) echo "linux/arm64"; exit 0 ;;
+  image) exit 0 ;;
+  run)
+    if [ "$2" = "--rm" ] && [ "$4" = "sh" ]; then
+      echo "missing dogfood packs: clangd"
+      exit 1
+    fi
+    exit 1
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+        );
+        let slim = DockerRuntime::from_binary(&slim_bin);
+        let err = slim.preflight_t3().unwrap_err();
+        assert!(err.to_string().contains("clangd"), "{err}");
 
         let (_keep, fail_bin) = scripted_docker("exit 1\n");
         let fail = DockerRuntime::from_binary(&fail_bin);
@@ -980,6 +1092,30 @@ esac
         assert_eq!(plan, plan.clone());
         let other = DockerRunPlan::new("docker", Path::new("/other")).unwrap();
         assert_ne!(plan, other);
+    }
+
+    #[test]
+    fn dogfood_preflight_value_object_and_slim_journal_does_not_block_serve() {
+        let missing = DogfoodEnginePreflight::missing_from(|pack, _| pack != "clangd");
+        assert_eq!(missing, vec!["clangd"]);
+        assert!(DogfoodEnginePreflight::format_missing(&missing).contains("clangd"));
+        assert_eq!(
+            DogfoodEnginePreflight::format_missing(&[]),
+            "packs ready"
+        );
+        let script = DogfoodEnginePreflight::shell_probe("/opt/plsp");
+        assert!(script.contains("/opt/plsp/engines/clangd/clangd"));
+
+        let ws = Path::new("/ws");
+        let mut slim = LaunchJournal::container_plan();
+        run_launch(&FakeRuntime::slim_image_missing_clangd(), ws, &mut slim);
+        assert!(slim.serve_ready());
+        assert_eq!(slim.steps()[5].state(), StepState::Skipped);
+
+        let mut dogfood = LaunchJournal::container_plan();
+        run_launch(&FakeRuntime::dogfood_image(), ws, &mut dogfood);
+        assert!(dogfood.all_ok());
+        assert!(dogfood.serve_ready());
     }
 
     #[test]
