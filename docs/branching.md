@@ -92,7 +92,15 @@ main   # after host-cleanup + Java T3 wiring merge
               └── java-t3
                     └── t3-image
                           └── t3-rest
+                                # merged to main (PR #8)
+
+main   # after POC-tier merge
+  └── post-build
+        └── post-artifacts
+              └── post-ide
 ```
+
+Agent policy: [post-poc-tier/agent-context.md](post-poc-tier/agent-context.md). Plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md).
 
 ## Rules
 
