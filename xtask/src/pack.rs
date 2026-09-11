@@ -1159,6 +1159,7 @@ fn run_cache_action(
                 )
                 .map(|_| ()),
                 CacheAction::Push => push_cache_binary(
+                    root,
                     &pin.name,
                     &pin.sha,
                     triple,
@@ -1181,7 +1182,7 @@ fn run_cache_action(
     }
 }
 
-/// Best-effort remote cache populate (POST-ART.4). Ignores missing store config.
+/// Best-effort cache populate from local store or optional remote (POST-ART.4).
 pub fn try_cache_pull_for_pack(root: &Path, pack: &str, triple: &str) -> Result<bool, String> {
     let (pins, rust, zig, go) = load_pins(root)?;
     let pin = pins
@@ -1198,11 +1199,6 @@ pub fn try_cache_pull_for_pack(root: &Path, pack: &str, triple: &str) -> Result<
 fn try_cache_pull_for_plan(plan: &PackBuildPlan) -> Result<bool, String> {
     if plan.cache_src().is_file() {
         return Ok(true);
-    }
-    if std::env::var(artifact_store::ARTIFACT_BASE_ENV).is_err()
-        && std::env::var(artifact_store::ARTIFACT_MANIFEST_ENV).is_err()
-    {
-        return Ok(false);
     }
     let fetcher = NetworkFetcher;
     pull_cache_binary(

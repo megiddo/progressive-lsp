@@ -56,7 +56,7 @@ musl default malloc is **unacceptable**. Go/Zig/C# keep their own heaps (not in 
 
 `xtask check-static` fails if a shipped ELF has a dynamic interpreter **or** any `DT_NEEDED`. Same bar for musl and glibc-static. Go packs: `CGO_ENABLED=0`. After rusqlite is linked (LOG-2+), fail closed if sqlite pulls `libdl` as `DT_NEEDED`.
 
-`./build lsp {arch} --flavor dogfood` (POST-BUILD + POST-ART): rebuilds slim + full pack dests; for `kind = cached` (clangd) tries `xtask pack --cache pull` when `PROGRESSIVE_LSP_ARTIFACT_BASE` or `PROGRESSIVE_LSP_ARTIFACT_MANIFEST` is set, then fail-closes if dests are still missing (message cites `--cache pull` or `--cache-fill`). Default `--flavor slim` only rebuilds slim packs; image stamp uses slim pack dest bytes only.
+`./build lsp {arch} --flavor dogfood` (POST-BUILD + POST-ART): rebuilds slim + full pack dests; for `kind = cached` (clangd) tries `xtask pack --cache pull` from `target/local-artifacts/` first, then fail-closes if dests are still missing (message cites `--cache pull` or `--cache-fill`). Default `--flavor slim` only rebuilds slim packs; image stamp uses slim pack dest bytes only.
 
 `xtask pack --pack clangd --cache pull` (POST-ART): verifies manifest/archive sha256 and writes `target/pack-cache/clangd/<upstream_sha>/<triple>/clangd`. Unit tests use `file://` URLs only (no network). PR CI must not run `--cache-fill`.
 

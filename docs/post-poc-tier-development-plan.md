@@ -74,7 +74,7 @@ Do not start a child branch until the parent WP’s exit criteria are met. Small
 
 ## POST-ART — SHA-pegged artifact store (no git blobs)
 
-**Why.** Users must build locally **or** download bytes pegged to the same SHAs as `pack-pins.toml`. Deployment accepts **any URL**; default points at a project artifact store (GitHub Releases and/or CDN).
+**Why.** Users must build locally **or** reuse SHA-pegged bytes from a **local maintainer store** (`target/local-artifacts/`, gitignored). Remote HTTPS/CDN is **optional later** (upload when ready); deployment still accepts any URL in the manifest.
 
 **Branch:** `post-artifacts` off signed-off `post-build` (POST-BUILD.1 may be parallel if only pull is needed for clangd).
 
@@ -82,12 +82,12 @@ Do not start a child branch until the parent WP’s exit criteria are met. Small
 |---|---|---|
 | POST-ART.1 | **Manifest schema** (JSON): `pack`, `upstream_sha`, `triple`, `sha256`, `url`, `format` (`tar.gz` \| `tar` \| `zip` \| `tar.bz2`) | Documented in [consumer.md](consumer.md); example manifest in repo (URLs only, no blobs) |
 | POST-ART.2 | **Layout convention** e.g. `{base}/engines/{pack}/{upstream_sha}/{triple}.{format}` | Matches `pack-cache` and musl dest layout |
-| POST-ART.3 | `xtask pack --pack clangd --cache pull` (and optional `push` for maintainers) | Pull verifies sha256 → writes `target/pack-cache/clangd/<sha>/<triple>/clangd`; env `PROGRESSIVE_LSP_ARTIFACT_BASE` or manifest URL |
-| POST-ART.4 | Wire `./build lsp --flavor dogfood` to **try pull** for `kind = cached` before reporting miss | Local build succeeds without cmake when blob exists on store |
+| POST-ART.3 | `xtask pack --pack clangd --cache pull` (and `push` → local store) | Pull reads `target/local-artifacts/` first; push writes archive + `manifest.json`; optional remote upload later |
+| POST-ART.4 | Wire `./build lsp --flavor dogfood` to **try pull** for `kind = cached` before reporting miss | Dogfood succeeds when local store (or pack-cache) has clangd; no artifact host required |
 | POST-ART.5 | **Fat bundle**: document `xtask dist --pack full` and runtime image as equivalent “everything under prefix” | Release process publishes one full tarball + optional OCI tag per ISA |
 | POST-ART.6 | **Install path**: keep in-tree install verify-only; document consumer `ArtifactTransport` fetching manifest URLs | No silent network inside `progressive-lsp install` unless an explicit future flag says otherwise |
 
-**Default store:** TBD (GitHub Releases vs personal CDN). PR/post-PR docs use a placeholder base URL; production default is config, not hard-coded vendor lock-in.
+**Default store:** `target/local-artifacts/` on disk (not in git). Remote default base URL is unset until maintainers upload; no placeholder HTTPS host required for day-to-day dev.
 
 ---
 

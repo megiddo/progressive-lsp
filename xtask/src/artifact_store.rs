@@ -1,5 +1,6 @@
-//! SHA-pegged remote artifact store (POST-ART). Manifest schema, URL layout,
-//! cache pull/push. No blobs in git; tests use `file://` and injected fetchers.
+//! SHA-pegged artifact store (POST-ART). **Local store first** under
+//! `target/local-artifacts/` (gitignored); remote `http(s)://` is optional later.
+//! Manifest schema, URL layout, cache pull/push. No blobs in git.
 
 use std::io::Read;
 use std::path::Path;
@@ -11,6 +12,8 @@ use serde::{Deserialize, Serialize};
 pub const ARTIFACT_BASE_ENV: &str = "PROGRESSIVE_LSP_ARTIFACT_BASE";
 pub const ARTIFACT_MANIFEST_ENV: &str = "PROGRESSIVE_LSP_ARTIFACT_MANIFEST";
 pub const ARTIFACT_DEFAULT_FORMAT: &str = "tar.gz";
+/// Gitignored maintainer store (same layout as future CDN upload).
+pub const LOCAL_ARTIFACT_STORE_REL: &str = "target/local-artifacts";
 
 /// Archive extension for [`ArtifactFormat`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,6 +142,44 @@ impl StoreArtifact {
     }
 }
 
+pub fn local_store_root(root: &Path) -> std::path::PathBuf {
+    root.join(LOCAL_ARTIFACT_STORE_REL)
+}
+
+pub fn local_manifest_path(root: &Path) -> std::path::PathBuf {
+    local_store_root(root).join("manifest.json")
+}
+
+/// POST-ART.2 layout: `{base}/engines/{pack}/{upstream_sha}/{triple}.{format}`.
+pub fn local_archive_path(
+    root: &Path,
+    pack: &str,
+    upstream_sha: &str,
+    triple: &str,
+    format: ArtifactFormat,
+) -> std::path::PathBuf {
+    local_store_root(root)
+        .join("engines")
+        .join(pack)
+        .join(upstream_sha)
+        .join(format!("{triple}.{}", format.file_suffix()))
+}
+
+fn file_url(path: &Path) -> String {
+    format!("file://{}", path.display())
+}
+
+fn load_manifest_file(path: &Path) -> Result<StoreManifest, String> {
+    let json =
+        std::fs::read_to_string(path).map_err(|e| format!("read manifest {}: {e}", path.display()))?;
+    StoreManifest::parse(&json)
+}
+
+fn try_local_manifest(root: &Path) -> Option<StoreManifest> {
+    let path = local_manifest_path(root);
+    load_manifest_file(&path).ok()
+}
+
 /// POST-ART.2 layout: `{base}/engines/{pack}/{upstream_sha}/{triple}.{format}`.
 pub fn artifact_url_from_base(
     base: &str,
@@ -226,31 +267,56 @@ pub fn resolve_store_entry(
     triple: &str,
     fetcher: &dyn ByteFetcher,
 ) -> Result<StoreArtifact, String> {
+    let format = ArtifactFormat::parse(
+        std::env::var("PROGRESSIVE_LSP_ARTIFACT_FORMAT")
+            .as_deref()
+            .unwrap_or(ARTIFACT_DEFAULT_FORMAT),
+    )?;
+
+    if let Some(manifest) = try_local_manifest(root) {
+        if let Some(entry) = manifest.find(pack, upstream_sha, triple) {
+            return Ok(entry.clone());
+        }
+    }
+
     if std::env::var(ARTIFACT_MANIFEST_ENV).is_ok() {
         let manifest = load_store_manifest(root, fetcher)?;
         if let Some(entry) = manifest.find(pack, upstream_sha, triple) {
             return Ok(entry.clone());
         }
     }
-    let base = std::env::var(ARTIFACT_BASE_ENV).map_err(|_| {
-        format!(
-            "no manifest entry for {pack}:{upstream_sha}:{triple}; set {ARTIFACT_BASE_ENV} \
-             or {ARTIFACT_MANIFEST_ENV}"
-        )
-    })?;
-    let format = ArtifactFormat::parse(
-        std::env::var("PROGRESSIVE_LSP_ARTIFACT_FORMAT")
-            .as_deref()
-            .unwrap_or(ARTIFACT_DEFAULT_FORMAT),
-    )?;
-    Ok(StoreArtifact {
-        pack: pack.to_string(),
-        upstream_sha: upstream_sha.to_string(),
-        triple: triple.to_string(),
-        sha256: String::new(),
-        url: artifact_url_from_base(&base, pack, upstream_sha, triple, format),
-        format,
-    })
+
+    let local_path = local_archive_path(root, pack, upstream_sha, triple, format);
+    if local_path.is_file() {
+        let bytes = std::fs::read(&local_path)
+            .map_err(|e| format!("read {}: {e}", local_path.display()))?;
+        return Ok(StoreArtifact {
+            pack: pack.to_string(),
+            upstream_sha: upstream_sha.to_string(),
+            triple: triple.to_string(),
+            sha256: hex_encode(&sha256(&bytes)),
+            url: file_url(&local_path),
+            format,
+        });
+    }
+
+    if let Ok(base) = std::env::var(ARTIFACT_BASE_ENV) {
+        return Ok(StoreArtifact {
+            pack: pack.to_string(),
+            upstream_sha: upstream_sha.to_string(),
+            triple: triple.to_string(),
+            sha256: String::new(),
+            url: artifact_url_from_base(&base, pack, upstream_sha, triple, format),
+            format,
+        });
+    }
+
+    Err(format!(
+        "no artifact for {pack}:{upstream_sha}:{triple}; \
+         run cache-fill then `xtask pack --pack {pack} --cache push`, \
+         or place archive at {}",
+        local_path.display()
+    ))
 }
 
 fn verify_payload_hash(payload: &[u8], want: Option<[u8; 32]>) -> Result<(), String> {
@@ -383,8 +449,31 @@ pub fn pull_cache_binary(
     Ok(true)
 }
 
-/// Maintainer helper: emit manifest JSON for a local cache file (no upload unless env set).
+fn merge_manifest_entry(root: &Path, entry: StoreArtifact) -> Result<(), String> {
+    let path = local_manifest_path(root);
+    let mut manifest = if path.is_file() {
+        load_manifest_file(&path)?
+    } else {
+        StoreManifest {
+            version: "1".into(),
+            artifacts: Vec::new(),
+        }
+    };
+    manifest
+        .artifacts
+        .retain(|a| !(a.pack == entry.pack && a.upstream_sha == entry.upstream_sha && a.triple == entry.triple));
+    manifest.artifacts.push(entry);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    write_atomic(&path, json.as_bytes())?;
+    Ok(())
+}
+
+/// Maintainer helper: write archive + manifest under `target/local-artifacts/`; optional remote upload later.
 pub fn push_cache_binary(
+    root: &Path,
     pack: &str,
     upstream_sha: &str,
     triple: &str,
@@ -397,36 +486,48 @@ pub fn push_cache_binary(
     }
     let bytes = std::fs::read(cache_src)
         .map_err(|e| format!("read {}: {e}", cache_src.display()))?;
-    let digest = hex_encode(&sha256(&bytes));
-    let url = std::env::var(ARTIFACT_BASE_ENV).map(|base| {
-        artifact_url_from_base(&base, pack, upstream_sha, triple, format)
-    });
+    let archive = tar_single_member(binary, &bytes)?;
+    let upload = match format {
+        ArtifactFormat::Tar => archive.clone(),
+        ArtifactFormat::TarGz => gzip_bytes(&archive)?,
+        other => {
+            return Err(format!(
+                "cache push supports tar/tar.gz only, not {}",
+                other.as_str()
+            ));
+        }
+    };
+    let digest_upload = hex_encode(&sha256(&upload));
+    let local_path = local_archive_path(root, pack, upstream_sha, triple, format);
+    if let Some(parent) = local_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    write_atomic(&local_path, &upload)?;
+    eprintln!(
+        "xtask pack: cache push wrote {} (archive sha256 {digest_upload})",
+        local_path.display()
+    );
+
     let entry = StoreArtifact {
         pack: pack.to_string(),
         upstream_sha: upstream_sha.to_string(),
         triple: triple.to_string(),
-        sha256: digest.clone(),
-        url: url.clone().unwrap_or_else(|_| "<set PROGRESSIVE_LSP_ARTIFACT_BASE>".into()),
+        sha256: digest_upload.clone(),
+        url: file_url(&local_path),
         format,
     };
-    let json = serde_json::to_string_pretty(&entry).map_err(|e| e.to_string())?;
-    eprintln!("xtask pack: cache push manifest row:\n{json}");
+    merge_manifest_entry(root, entry.clone())?;
+    eprintln!(
+        "xtask pack: updated {}",
+        local_manifest_path(root).display()
+    );
+
     if std::env::var("PROGRESSIVE_LSP_ARTIFACT_PUSH").as_deref() == Ok("1") {
-        let base = url.map_err(|_| format!("cache push upload needs {ARTIFACT_BASE_ENV}"))?;
-        let archive = tar_single_member(binary, &bytes)?;
-        let upload = match format {
-            ArtifactFormat::Tar => archive,
-            ArtifactFormat::TarGz => gzip_bytes(&archive)?,
-            other => {
-                return Err(format!(
-                    "cache push upload supports tar/tar.gz only, not {}",
-                    other.as_str()
-                ));
-            }
-        };
-        let digest_upload = hex_encode(&sha256(&upload));
-        curl_put(&base, &upload)?;
-        eprintln!("xtask pack: uploaded {base} (archive sha256 {digest_upload})");
+        let base = std::env::var(ARTIFACT_BASE_ENV)
+            .map_err(|_| format!("cache push upload needs {ARTIFACT_BASE_ENV}"))?;
+        let remote_url = artifact_url_from_base(&base, pack, upstream_sha, triple, format);
+        curl_put(&remote_url, &upload)?;
+        eprintln!("xtask pack: uploaded {remote_url}");
     }
     Ok(())
 }
@@ -524,6 +625,40 @@ mod tests {
         .unwrap();
         assert!(dest.is_file());
         std::env::remove_var(ARTIFACT_MANIFEST_ENV);
+    }
+
+    #[test]
+    fn local_store_push_then_pull_without_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let elf = check_static::fixture_static_elf64();
+        let cache = root.join("cache/clangd");
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::fs::write(&cache, &elf).unwrap();
+        push_cache_binary(
+            root,
+            "clangd",
+            "3623fe661ae35c6c80ac221f14d85be76aa870f1",
+            "x86_64-unknown-linux-musl",
+            "clangd",
+            &cache,
+            ArtifactFormat::TarGz,
+        )
+        .unwrap();
+        let dest = root.join("pack-cache/clangd");
+        std::env::remove_var(ARTIFACT_MANIFEST_ENV);
+        std::env::remove_var(ARTIFACT_BASE_ENV);
+        pull_cache_binary(
+            root,
+            "clangd",
+            "3623fe661ae35c6c80ac221f14d85be76aa870f1",
+            "x86_64-unknown-linux-musl",
+            "clangd",
+            &dest,
+            &NetworkFetcher,
+        )
+        .unwrap();
+        assert!(dest.is_file());
     }
 
     #[test]

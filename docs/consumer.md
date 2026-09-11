@@ -69,9 +69,11 @@ Engine blobs are **not** committed to git. Pins live in `xtask/pack-pins.toml` (
 | `url` | HTTPS (or `file://` in tests) fetch URL |
 | `format` | `tar.gz` \| `tar` \| `zip` \| `tar.bz2` |
 
-Example (URLs only, no blobs): [xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json).
+Schema reference: [xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json) (empty until you push).
 
-**URL layout** when `PROGRESSIVE_LSP_ARTIFACT_BASE` is set (no manifest row):
+**Local store (default; no remote host required):** gitignored `target/local-artifacts/engines/{pack}/{upstream_sha}/{triple}.tar.gz` plus `target/local-artifacts/manifest.json` (`file://` URLs). After `--cache-fill`, run `cargo xtask pack --pack clangd --cache push` to archive the cache ELF and update the local manifest. Upload to CDN/GitHub later by copying those files and repointing `url` to `https://…`.
+
+**Remote layout (optional later)** when `PROGRESSIVE_LSP_ARTIFACT_BASE` is set:
 
 ```text
 {base}/engines/{pack}/{upstream_sha}/{triple}.{format}
@@ -79,14 +81,15 @@ Example (URLs only, no blobs): [xtask/artifact-manifest.example.json](../xtask/a
 
 Default `format` is `tar.gz` (`PROGRESSIVE_LSP_ARTIFACT_FORMAT` overrides).
 
-**Operator pull** (populates `target/pack-cache/clangd/<sha>/<triple>/clangd`):
+**Pull** (populates `target/pack-cache/clangd/<sha>/<triple>/clangd` from local store first, then optional env overrides):
 
 ```text
-PROGRESSIVE_LSP_ARTIFACT_BASE=https://…   # or PROGRESSIVE_LSP_ARTIFACT_MANIFEST=/path/or/url
 cargo xtask pack --pack clangd --cache pull
 ```
 
-`./build lsp --flavor dogfood` tries cache pull for `kind = cached` (clangd) before fail-closing on a cache miss. Maintainers: `cargo xtask pack --pack clangd --cache push` prints a manifest row; optional upload when `PROGRESSIVE_LSP_ARTIFACT_PUSH=1`.
+Optional: `PROGRESSIVE_LSP_ARTIFACT_MANIFEST=…` or `PROGRESSIVE_LSP_ARTIFACT_BASE=https://…`.
+
+`./build lsp --flavor dogfood` tries cache pull for `kind = cached` (clangd) before fail-closing. Remote upload only when `PROGRESSIVE_LSP_ARTIFACT_PUSH=1` **and** `PROGRESSIVE_LSP_ARTIFACT_BASE` are set.
 
 **Fat release**: `cargo xtask dist --pack full` and `progressive-lsp-runtime:<tag>` are equivalent “everything under prefix” shapes for publishing one full tarball (+ optional OCI tag per ISA). See [testing.md](testing.md).
 
