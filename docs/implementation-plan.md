@@ -798,7 +798,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
 | HOST-C.1 | Slim `PackImageCopy` required on both triples (including superhtml × x86_64) | fix-superhtml-x8664 | **SIGNED OFF.** Fail closed if dest missing. HOST-4 omit path deleted. |
-| HOST-C.2 | clangd cache miss stays honest | HOST-C.1 | **SIGNED OFF.** Full packs remain optional. Default `xtask pack` never cmake. `--cache-fill` not this slice. Cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1` still absent. |
+| HOST-C.2 | clangd cache via `--cache-fill` | HOST-C.1 | **SUPERSEDED by REST.2.** Dogfood image requires clangd dest; fill cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1` on `t3-rest`. |
 | HOST-C.3 | Zig host-native platform locked for both host ISAs | HOST-C.1 | **SIGNED OFF.** `for_pin_on_host_arch` injects `x86_64` → `linux/amd64` (native CI, no qemu) and `aarch64` → `linux/arm64`. Rust/go/cached still follow the triple. Native linux/amd64 CI was not re-run in this Darwin session. |
 | HOST-C.4 | Docs + live amd64 image with superhtml | HOST-C.1 | **SIGNED OFF.** milestones HOST-CLEANUP; branching `host7 └── fix-superhtml-x8664 └── host-cleanup` (`operator-cli` merged). Live `xtask runtime-image` amd64 includes superhtml. `:local` left on native arm64. |
 
@@ -841,7 +841,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | **SIGNED OFF.** Rocky 9 minimal base; x86_64 scratch OK. |
 | IMG.3 | Image plan tests + live tag proof | IMG.2 | **SIGNED OFF.** Unit tests + orchestrator `:local` tag (milestones POC-IMG). |
 | REST.1 | Dogfood image includes tsgo, gopls, zls | POC-IMG | **SIGNED OFF** (POC-REST). Required in plan. |
-| REST.2 | clangd both ISAs or honest miss | REST.1 | **SIGNED OFF.** HOST-7 omit when cache miss. |
+| REST.2 | clangd static musl both ISAs in dogfood image | REST.1 | **IN PROGRESS** on `t3-rest`. `--cache-fill` then pack; `RuntimeImagePlan` requires clangd. |
 | REST.3 | Rust Linux sysroot honesty in container | REST.1 | **SIGNED OFF.** [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md). |
 | REST.4 | Live POC proof notes | REST.1 | **SIGNED OFF.** Not a cargo test. |
 

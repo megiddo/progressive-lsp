@@ -2,7 +2,7 @@
 
 Closing the static graph (`zlib`, `libxml2`, `ncurses`/`tinfo`, `libffi`, `zstd`, `libedit`, …) is expected whack-a-mole.
 
-**Fail closed:** first unclosable `.so`-only dependency is a documented miss. Do **not** ship a dynamic clangd.
+**Fail closed:** do **not** ship a dynamic clangd. If the static graph cannot close, stop and report the blocking `.so`-only dependency — do not omit from the dogfood image silently.
 
 Size: record stripped ELF size on CI when a candidate exists. A huge but static binary is acceptable; a small dynamic one is not.
 

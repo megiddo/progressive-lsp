@@ -35,7 +35,7 @@ C# T3 never. clangd T3 is the last, hardest remaining pack (LLVM).
 | T1 all languages | Landed (Tree-sitter in core). |
 | T2 | Landed for every v1 language (POC-T2 signed off on `t2-coverage`). |
 | T3 wiring | Supervisor + packs named. Catalog offers T3 except C#. |
-| T3 live in dogfood container | POC-tier stack signed off on `t3-rest`: Java both ISAs; slim + tsgo/gopls/zls in `RuntimeImagePlan`; **clangd** still HOST-7 cache miss (honest omit). C# T3 not supported. |
+| T3 live in dogfood container | `t3-rest`: Java both ISAs; slim + tsgo/gopls/zls + **clangd** required in `RuntimeImagePlan`. C# T3 not supported. |
 | URIs | Identity mount signed off (POC-URI). Native and container send the same `file:` URI via `file_uri` → core `path_to_file_uri`. No rewriter. |
 
 ## Stack (on current `main`; `host-cleanup` merged)
@@ -51,7 +51,7 @@ main               # host-cleanup + Java T3 wiring / freshness (PR #6 / #7)
 
 Do not start a branch until the parent milestone is signed off. Do not open `host8`. Do not stack `poc-uri` on the old `host-cleanup` ref (that ref lacks PR #7).
 
-**POC-tier stack:** signed off on branch `t3-rest` (URI → T2 → Java → image → REST). Remaining honest gap: **clangd** HOST-7 cache fill only.
+**POC-tier stack:** URI → T2 → Java → image → REST on `t3-rest`. **clangd** must be in the dogfood image (cache-fill + pack both triples) before POC-REST is signed off.
 
 ---
 
@@ -186,14 +186,14 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 | ID | Work |
 |---|---|
 | REST.1 | Dogfood image includes tsgo, gopls, zls (both ISAs). |
-| REST.2 | clangd both ISAs or documented HOST-7-class miss with a close plan (cache-fill). |
+| REST.2 | clangd static musl both ISAs in dogfood image (`--cache-fill` then pack; fail closed if dest missing). |
 | REST.3 | Rust: hover/progress still says so if no Linux sysroot; no Darwin sysroot pretend. |
 | REST.4 | POC proof notes: Java tree → T3; one other slim language; one full-pack language. Not a cargo test. |
 
 **Exit**
 
-- [x] Container T3 offered and spawnable for every v1 language except C# (`RuntimeImagePlan` + catalog; C/C++ degrade when clangd omitted).
-- [x] clangd either present or an honest remaining miss (static still required; no `.so`) — HOST-7 cache miss omit documented in [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md).
+- [ ] Container T3 offered and spawnable for every v1 language except C# (`RuntimeImagePlan` + catalog includes **clangd**).
+- [ ] REST.2 clangd static both ISAs in image ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)).
 - [x] C# T3 still `not supported` (`TierCellState::NotSupported`; no csharp-ls pack).
 
 ---
@@ -237,7 +237,7 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 ### POC-REST
 
 - [x] REST.1 tsgo/gopls/zls in dogfood image (`RuntimeImagePlan` required)
-- [x] REST.2 clangd or honest miss (cache miss omit)
+- [ ] REST.2 clangd static both ISAs in dogfood image
 - [x] REST.3 rustc sysroot honesty ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 - [x] REST.4 live POC notes ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 

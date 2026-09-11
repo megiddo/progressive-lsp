@@ -48,13 +48,31 @@ RUN set -eux; \
     git -C src checkout --detach "${UPSTREAM_SHA}"
 
 # cmake LLVM/clangd — cache-fill path only. Fail closed; do not COPY a dynamic ELF.
+# Host tblgen tools must not use musl/static (glibc libstdc++ + musl ld mix fails).
 WORKDIR /fetch/src
+RUN mkdir -p build-host && cd build-host \
+    && cmake -G Ninja ../llvm \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
+        -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
+        -DLLVM_ENABLE_ZLIB=OFF \
+        -DLLVM_ENABLE_ZSTD=OFF \
+        -DLLVM_ENABLE_LIBXML2=OFF \
+        -DLLVM_ENABLE_TERMINFO=OFF \
+        -DLLVM_ENABLE_LIBEDIT=OFF \
+        -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
+        -DLLVM_BUILD_LLVM_DYLIB=OFF \
+        -DLLVM_LINK_LLVM_DYLIB=OFF \
+    && ninja llvm-tblgen clang-tblgen llvm-min-tblgen
 RUN mkdir -p build && cd build \
     && cmake -G Ninja ../llvm \
         -DCMAKE_BUILD_TYPE=MinSizeRel \
         -DCMAKE_C_COMPILER=musl-gcc \
         -DCMAKE_CXX_COMPILER=g++ \
         -DCMAKE_EXE_LINKER_FLAGS="-static" \
+        -DLLVM_TABLEGEN=/fetch/src/build-host/bin/llvm-tblgen \
+        -DCLANG_TABLEGEN=/fetch/src/build-host/bin/clang-tblgen \
+        -DLLVM_MIN_TABLEGEN=/fetch/src/build-host/bin/llvm-min-tblgen \
         -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
         -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
         -DLLVM_ENABLE_ZLIB=OFF \

@@ -1206,7 +1206,7 @@ Stacked on `poc-tree-sort` (not IDE-6). Discover sqlite rows include `path`, `ur
 
 - Native `cargo test -- --test-threads=1` is the unit gate on macOS. Tests inject `RecordingDockerPort` and never start a Docker daemon.
 - HOST-7 proof is extracted musl ELFs (or honest misses), not Darwin `xtask dist` stubs. Dest is gitignored under `target/`. Do not commit musl ELFs.
-- clangd is content-addressed by llvm-project SHA + triple. Cache hit COPY; miss is an honest gap. `--cache-fill` cmake is not the default pack job and must not run on every PR.
+- clangd is content-addressed by llvm-project SHA + triple. Cache hit COPY; populate with `--cache-fill` before dogfood image. `--cache-fill` cmake is not the default pack job and must not run on every PR.
 - Live `check-static` on this Darwin host (Docker Desktop 29.2.0):
 
   | pack | binary | aarch64 | x86_64 |
@@ -1227,7 +1227,7 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 **Exit**
 
 - [x] Slim packs including superhtml required on both triples; missing dest fail closed (same as ty/RA/phpantom/biome).
-- [x] Full packs (clangd/tsgo/gopls/zls) remain optional. clangd cache miss unchanged.
+- [x] Full packs copy when present on runtime-image (historical HOST-7). POC dogfood now requires clangd via REST.2 on `t3-rest`.
 - [x] Zig `RecordingDockerPort` / `for_pin_on_host_arch` covers both host ISAs (`linux/amd64` native CI argv; never qemu amd64 when host is arm64). Rust/go/cached still follow the triple.
 - [x] Live `xtask runtime-image` for `x86_64-unknown-linux-musl` includes superhtml.
 
@@ -1368,22 +1368,22 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-REST — remaining T3 in the dogfood image
 
-**Status: SIGNED OFF.** Branch `t3-rest` on signed-off `t3-image`. Last slice of this stack. Do not open `host8`.
+**Status: IN PROGRESS.** Branch `t3-rest` on signed-off `t3-image`. Last slice of this stack. Do not open `host8`.
 
-**Scope:** POC container image includes every T3 except C#. clangd fully static or honest miss.
+**Scope:** POC container image includes every T3 except C#. **clangd** static musl both ISAs (required in `RuntimeImagePlan`).
 
 **Out:** C# T3; native macOS server host.
 
 **Exit**
 
 - [x] REST.1 tsgo, gopls, zls required in `RuntimeImagePlan` (both ISAs when dests exist)
-- [x] REST.2 clangd documented HOST-7/cache miss omit ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
+- [ ] REST.2 clangd static both ISAs in dogfood image ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 - [x] REST.3 Rust sysroot honesty (RA pack ≠ project sysroot; `rust_degrade_reason`)
 - [x] REST.4 live POC notes ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 
 **Sign-off checklist (POC-REST)**
 
-- [x] Exit criteria met
+- [ ] Exit criteria met (blocked on REST.2 clangd)
 - [x] Tests without daemon
 - [x] Live proof notes
 - [x] C# still `not supported`
