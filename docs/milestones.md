@@ -1404,7 +1404,7 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 
 - [x] POST-ART.1 — `StoreManifest` schema documented in [consumer.md](consumer.md); [xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json) (URLs only)
 - [x] POST-ART.2 — URL layout `{base}/engines/{pack}/{upstream_sha}/{triple}.{format}`
-- [x] POST-ART.3 — `xtask pack --pack clangd --cache pull|push`; env `PROGRESSIVE_LSP_ARTIFACT_BASE` / `PROGRESSIVE_LSP_ARTIFACT_MANIFEST`
+- [x] POST-ART.3 — `xtask pack --pack clangd --cache pull|push`; default store `target/local-artifacts/` (no env); optional remote via `PROGRESSIVE_LSP_ARTIFACT_*`
 - [x] POST-ART.4 — `./build lsp --flavor dogfood` tries cache pull for clangd before fail-closed miss
 - [x] POST-ART.5–6 — Fat dist/image + verify-only install documented in [consumer.md](consumer.md)
 
@@ -1416,7 +1416,7 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 - [x] PR CI does not run `--cache-fill`
 - [x] Patterns named in [design-patterns.md](design-patterns.md)
 
-**Blocker (live store):** example manifest URLs are placeholders until a maintainer publishes real clangd archives.
+**Day-to-day:** populate clangd via `--cache-fill` then `--cache push` into the gitignored local store; dogfood pull needs no remote host. CDN upload is optional later.
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 

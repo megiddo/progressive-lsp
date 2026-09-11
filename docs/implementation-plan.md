@@ -896,7 +896,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 |---|---|---|
 | Proof | POST-PROOF.* | Overnight cache-fill, `runtime-image --both`, rest-live-proof rows |
 | Build | POST-BUILD.* | `./build lsp --flavor dogfood`; full packs + image stamp |
-| Artifacts | POST-ART.* | **SIGNED OFF** on `post-artifacts`. SHA store manifest, URL layout, `xtask pack --cache pull`; dogfood tries pull; consumer.md fat dist + ArtifactTransport |
+| Artifacts | POST-ART.* | **SIGNED OFF** on `post-artifacts`. Local `target/local-artifacts/` store, manifest schema, `cache pull|push`; dogfood tries local pull; consumer.md fat dist + ArtifactTransport |
 | IDE | POST-IDE.* | Container-primary on non-Linux; real T3 preflight |
 
 Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stack new branches instead.

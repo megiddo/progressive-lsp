@@ -78,6 +78,7 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | Mux demux / `MuxFrame` | Adapter | Opaque LSP bytes (ch 0) vs proto control (ch 1) on one pipe; 16 MiB cap |
 | `DistManifest` / `DistArtifact` | Schema / DTO | Core semver ≠ engine SHA; Darwin `payload_kind=stub`; triples are musl CI targets |
 | `StoreManifest` / `StoreArtifact` / `ArtifactFormat` | Schema / DTO | POST-ART artifact store rows: pack + upstream_sha + triple + sha256 + url + format; URLs only in git |
+| `local_store_root` / `LOCAL_ARTIFACT_STORE_REL` | Value object | Gitignored `target/local-artifacts/` is canonical; remote CDN optional |
 | `artifact_url_from_base` | Value object | `{base}/engines/{pack}/{upstream_sha}/{triple}.{format}` matches pack-cache layout |
 | `ByteFetcher` / `NetworkFetcher` | Port / Adapter | Cache pull HTTP(S); tests use `file://` |
 | `CacheAction` | Value object | `None` \| `Fill` \| `Pull` \| `Push`; `--cache-fill` vs `--cache pull|push` |
