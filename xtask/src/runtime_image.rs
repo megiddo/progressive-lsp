@@ -22,7 +22,30 @@ pub const IMAGE_TAG: &str = "progressive-lsp-runtime:local";
 /// Prefix inside the image — not Mac `~/.progressivelsp`.
 pub const IMAGE_PREFIX: &str = "/opt/plsp";
 
-pub const DOCKERFILE_REL: &str = "docker/runtime.Dockerfile";
+pub const DOCKERFILE_X86_REL: &str = "docker/runtime.Dockerfile";
+pub const DOCKERFILE_AARCH64_REL: &str = "docker/runtime-aarch64.Dockerfile";
+
+/// x86_64 scratch dockerfile (legacy name for freshness stamps).
+pub const DOCKERFILE_REL: &str = DOCKERFILE_X86_REL;
+
+pub fn runtime_dockerfile_rel(triple: &str) -> Result<&'static str, String> {
+    match triple {
+        X86_64_MUSL => Ok(DOCKERFILE_X86_REL),
+        AARCH64_MUSL => Ok(DOCKERFILE_AARCH64_REL),
+        _ => Err(format!(
+            "unknown triple {triple}; expected {X86_64_MUSL} or {AARCH64_MUSL}"
+        )),
+    }
+}
+
+fn dockerfile_for_triple(root: &Path, triple: &str) -> Result<PathBuf, String> {
+    let rel = runtime_dockerfile_rel(triple)?;
+    let dockerfile = root.join(rel);
+    if !dockerfile.is_file() {
+        return Err(format!("missing {}", dockerfile.display()));
+    }
+    Ok(dockerfile)
+}
 
 const STAGING_KEEP: &str = ".keep";
 
@@ -93,10 +116,7 @@ impl RuntimeImagePlan {
                 ))
             }
         };
-        let dockerfile = root.join(DOCKERFILE_REL);
-        if !dockerfile.is_file() {
-            return Err(format!("missing {}", dockerfile.display()));
-        }
+        let dockerfile = dockerfile_for_triple(root, triple)?;
         let musl_root = root.join("target").join("musl").join(triple);
         let core_dest = musl_root.join(CORE_ELF_NAME);
         let pack_dests = full_pack_names()
@@ -326,6 +346,13 @@ mod tests {
              CMD [\"serve\", \"--prefix\", \"/opt/plsp\"]\n",
         )
         .unwrap();
+        fs::write(
+            docker.join("runtime-aarch64.Dockerfile"),
+            "FROM rockylinux:9-minimal\nCOPY prefix /opt/plsp\nCOPY tmp /tmp\n\
+             ENTRYPOINT [\"/opt/plsp/bin/progressive-lsp\"]\n\
+             CMD [\"serve\", \"--prefix\", \"/opt/plsp\"]\n",
+        )
+        .unwrap();
         dir
     }
 
@@ -412,6 +439,10 @@ mod tests {
 
         let arm = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
         assert_eq!(arm.docker_platform(), "linux/arm64");
+        assert_eq!(
+            arm.dockerfile(),
+            root.path().join("docker/runtime-aarch64.Dockerfile")
+        );
         let arm_superhtml = arm
             .pack_dests()
             .iter()
@@ -472,7 +503,7 @@ mod tests {
         assert!(!args.iter().any(|a| a.contains("--output")));
         assert!(!args.iter().any(|a| a.contains("RUST_TARGET")));
         assert_eq!(args.last().map(String::as_str), Some("."));
-        assert!(args.iter().any(|a| a.contains("runtime.Dockerfile")));
+        assert!(args.iter().any(|a| a.contains("runtime-aarch64.Dockerfile")));
     }
 
     #[test]
@@ -667,10 +698,8 @@ mod tests {
         assert!(parse_targets(&["--target".into(), "x86_64-unknown-linux-gnu".into()]).is_err());
     }
 
-    #[test]
-    fn dockerfile_is_scratch_copy_only() {
-        let text = fs::read_to_string(workspace_root().join(DOCKERFILE_REL)).unwrap();
-        assert!(text.contains("FROM scratch"), "{text}");
+    fn assert_runtime_dockerfile_copy_only(text: &str, base: &str) {
+        assert!(text.contains(base), "{text}");
         assert!(text.contains("COPY prefix /opt/plsp"), "{text}");
         assert!(text.contains("COPY tmp /tmp"), "{text}");
         assert!(
@@ -693,6 +722,21 @@ mod tests {
         }
         assert!(!active.to_ascii_lowercase().contains("from rust"));
         assert!(!active.contains("RUN "));
+    }
+
+    #[test]
+    fn dockerfile_x86_is_scratch_copy_only() {
+        let text = fs::read_to_string(workspace_root().join(DOCKERFILE_X86_REL)).unwrap();
+        assert!(text.contains("FROM scratch"), "{text}");
+        assert_runtime_dockerfile_copy_only(&text, "FROM scratch");
+    }
+
+    #[test]
+    fn dockerfile_aarch64_is_glibc_copy_only() {
+        let text =
+            fs::read_to_string(workspace_root().join(DOCKERFILE_AARCH64_REL)).unwrap();
+        assert!(text.contains("rockylinux"), "{text}");
+        assert_runtime_dockerfile_copy_only(&text, "rockylinux");
     }
 
     #[test]

@@ -1345,7 +1345,7 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-IMG — runtime image copies Java
 
-**Status: NOT STARTED.** Branch `t3-image` on signed-off `java-t3`.
+**Status: SIGNED OFF.** Branch `t3-image` on signed-off `java-t3`.
 
 **Scope:** `javacs` required both triples; aarch64 image glibc userspace for that process; x86_64 scratch OK.
 
@@ -1353,18 +1353,18 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 **Exit**
 
-- [ ] IMG.1 required copy
-- [ ] IMG.2 aarch64 libc userspace documented
-- [ ] IMG.3 tests + live `:local` proof
+- [x] IMG.1 required copy
+- [x] IMG.2 aarch64 libc userspace documented (`docker/runtime-aarch64.Dockerfile`, Rocky 9 minimal)
+- [x] IMG.3 tests + live `:local` proof (orchestrator; live `javacs` + fixture core/slim for other packs)
 
 **Sign-off checklist (POC-IMG)**
 
-- [ ] Exit criteria met
-- [ ] Tests without daemon
-- [ ] Live image proof (orchestrator)
-- [ ] No `sleep`
-- [ ] Docs agree (scratch vs glibc base)
-- [ ] Patterns named
+- [x] Exit criteria met
+- [x] Tests without daemon
+- [x] Live image proof (orchestrator): `progressive-lsp-runtime:local` tagged arm64 + amd64
+- [x] No `sleep`
+- [x] Docs agree (scratch vs glibc base)
+- [x] Patterns named
 
 ## POC-REST — remaining T3 in the dogfood image
 

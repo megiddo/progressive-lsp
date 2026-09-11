@@ -158,9 +158,9 @@ Copy live `javacs` into the Linux image used by Open Folder in Container. **aarc
 
 **Exit**
 
-- [ ] Open Folder in Container on ARM dogfoods ARM Java T3 (libc exception).
-- [ ] Open Folder in Container on x86_64 dogfoods fully static Java T3.
-- [ ] Identity mount unchanged.
+- [x] Open Folder in Container on ARM dogfoods ARM Java T3 (libc exception; glibc base image).
+- [x] Open Folder in Container on x86_64 dogfoods fully static Java T3 (scratch image).
+- [x] Identity mount unchanged.
 
 ---
 

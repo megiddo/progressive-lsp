@@ -18,7 +18,7 @@ use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
 use crate::pack::PINS_REL;
-use crate::runtime_image::{DOCKERFILE_REL, IMAGE_TAG};
+use crate::runtime_image::{runtime_dockerfile_rel, DOCKERFILE_REL, IMAGE_TAG};
 use crate::{musl, pack, runtime_image, workspace_root};
 
 /// SHA-256 hex of the inputs that produce one dest ELF / image. Value object.
@@ -252,7 +252,9 @@ impl LspArtifact {
                 }
             }
             Self::Image { triple } => {
-                push_if_file(root.join(DOCKERFILE_REL), &mut files);
+                if let Ok(rel) = runtime_dockerfile_rel(triple) {
+                    push_if_file(root.join(rel), &mut files);
+                }
                 files.push(
                     root.join("target")
                         .join("musl")
