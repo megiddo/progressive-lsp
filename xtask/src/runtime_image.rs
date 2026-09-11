@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use progressive_lsp_core::PrefixLayout;
-use progressive_lsp_engine::{binary_name_for_pack, full_pack_names, slim_pack_names, JAVA_PACK};
+use progressive_lsp_engine::{binary_name_for_pack, full_pack_names, slim_pack_names};
 
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
@@ -61,10 +61,7 @@ impl PackImageCopy {
     }
 }
 
-fn pack_required_on_triple(pack: &str, triple: &str) -> bool {
-    if pack == JAVA_PACK && triple == AARCH64_MUSL {
-        return false;
-    }
+fn pack_required_on_triple(pack: &str, _triple: &str) -> bool {
     slim_pack_names().contains(&pack)
 }
 
@@ -187,9 +184,9 @@ impl RuntimeImagePlan {
 
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
     /// Fail closed if the core ELF or a required slim pack is missing.
-    /// Slim packs (including superhtml) are required on both triples, except
-    /// `java` on aarch64 (JAVA-T3.2: Graal musl static is x64 only).
-    /// Full packs (clangd/tsgo/gopls/zls) are optional (HOST-7 miss / clangd cache miss).
+    /// Slim packs (including superhtml and javacs) are required on both triples.
+    /// aarch64 javacs may need libc (not a Miss). Full packs (clangd/tsgo/gopls/zls)
+    /// are optional (HOST-7 miss / clangd cache miss).
     pub fn stage(&self) -> Result<Vec<String>, String> {
         if !self.core_dest.is_file() {
             return Err(format!(
@@ -232,11 +229,7 @@ impl RuntimeImagePlan {
                         self.triple
                     ));
                 }
-                let why = if pack.pack == JAVA_PACK && self.triple == AARCH64_MUSL {
-                    "JAVA-T3.2 miss; Graal musl static is x64 only"
-                } else {
-                    "HOST-7 miss; not a Mach-O green"
-                };
+                let why = "HOST-7 miss; not a Mach-O green";
                 omitted.push(format!("{}:{} omitted ({why})", pack.pack, self.triple));
                 continue;
             }
@@ -320,7 +313,7 @@ fn parse_targets(args: &[String]) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use crate::musl::RecordingDockerPort;
-    use progressive_lsp_engine::{PYTHON_PACK, SUPERHTML_PACK};
+    use progressive_lsp_engine::{JAVA_PACK, PYTHON_PACK, SUPERHTML_PACK};
 
     fn fixture_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -431,8 +424,8 @@ mod tests {
             .find(|p| p.pack() == JAVA_PACK)
             .unwrap();
         assert!(
-            !arm_java.required(),
-            "java aarch64 is JAVA-T3.2 optional omit"
+            arm_java.required(),
+            "java aarch64 dest is required (libc exception, not a Miss)"
         );
         let amd_java = amd
             .pack_dests()
@@ -534,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_omits_aarch64_java_as_java_t3_2_miss() {
+    fn stage_fails_closed_when_aarch64_javacs_dest_missing() {
         let root = fixture_root();
         seed_required_elfs(root.path(), AARCH64_MUSL, true);
         let java = root
@@ -544,16 +537,10 @@ mod tests {
             .join("engines/java/javacs");
         fs::remove_file(&java).unwrap();
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
-        let omitted = plan.stage().unwrap();
-        assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains(JAVA_PACK) && n.contains("JAVA-T3.2")),
-            "{omitted:?}"
-        );
-        let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
-        assert!(!prefix.engines_dir().join("java/javacs").is_file());
-        assert!(prefix.engines_dir().join("phpantom/phpantom").is_file());
+        let err = plan.stage().unwrap_err();
+        assert!(err.contains("missing required slim pack"), "{err}");
+        assert!(err.contains(JAVA_PACK), "{err}");
+        assert!(err.contains(AARCH64_MUSL), "{err}");
     }
 
     #[test]

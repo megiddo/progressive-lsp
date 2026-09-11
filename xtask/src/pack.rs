@@ -9,7 +9,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use progressive_lsp_engine::{binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK};
+use progressive_lsp_engine::{
+    binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK, JAVA_PACK,
+};
 
 use crate::check_static;
 use crate::musl::{triples, CommandDockerPort, DockerPort, AARCH64_MUSL, X86_64_MUSL};
@@ -526,6 +528,13 @@ impl PackBuildPlan {
             args.push("--build-arg".into());
             args.push(format!("CACHE_KEY={}", self.cache_key()));
         }
+        if self.kind == PackKind::Graal {
+            let (tag, flags) = graal_native_image_args(&self.triple);
+            args.push("--build-arg".into());
+            args.push(format!("GRAAL_TAG={tag}"));
+            args.push("--build-arg".into());
+            args.push(format!("NATIVE_IMAGE_FLAGS={flags}"));
+        }
         args.push("-f".into());
         args.push(self.dockerfile.display().to_string());
         args.push("--output".into());
@@ -756,7 +765,21 @@ fn pack_kind_stamp_label(kind: &PackKind) -> &'static str {
     }
 }
 
-/// Graal muslib / `--static --libc=musl` is Linux x64 only. aarch64 is JAVA-T3.2.
+const GRAAL_TAG_X86_64: &str = "25.0.0-muslib-ol9";
+const GRAAL_TAG_AARCH64: &str = "25.0.0-ol9";
+const GRAAL_FLAGS_X86_64: &str = "--static --libc=musl";
+const GRAAL_FLAGS_AARCH64: &str = "-H:+StaticExecutableWithDynamicLibC";
+
+fn graal_native_image_args(triple: &str) -> (&'static str, &'static str) {
+    if triple == AARCH64_MUSL {
+        (GRAAL_TAG_AARCH64, GRAAL_FLAGS_AARCH64)
+    } else {
+        (GRAAL_TAG_X86_64, GRAAL_FLAGS_X86_64)
+    }
+}
+
+/// clangd cache miss is the only `PackOutcome::Miss`. aarch64 java is required
+/// (native-image may need libc; that is not a Miss).
 pub fn documented_miss_for_pack(
     root: &Path,
     name: &str,
@@ -769,16 +792,8 @@ pub fn documented_miss_for_pack(
     Ok(graal_aarch64_miss(&pin.kind, name, triple))
 }
 
-fn graal_aarch64_miss(kind: &PackKind, name: &str, triple: &str) -> Option<String> {
-    if *kind == PackKind::Graal && triple == AARCH64_MUSL {
-        Some(format!(
-            "{name}:{triple} JAVA-T3.2 miss: Graal muslib / native-image --static --libc=musl \
-             is Linux x64 only; aarch64 cannot produce a check-static ELF. See spike/java-t3.md. \
-             Not a JAR / jlink / JDT-LS / libjvm fallback, not a musl-triple CI gap."
-        ))
-    } else {
-        None
-    }
+fn graal_aarch64_miss(_kind: &PackKind, _name: &str, _triple: &str) -> Option<String> {
+    None
 }
 
 fn req_hex(v: &toml::Value, key: &str, len: usize) -> Result<String, String> {
@@ -877,9 +892,6 @@ fn extract_plan(plan: &PackBuildPlan, docker: &dyn DockerPort) -> Result<PackOut
         check_static_dest(plan)?;
         return Ok(PackOutcome::Pass);
     }
-    if let Some(note) = graal_aarch64_miss(plan.kind(), plan.pack(), plan.triple()) {
-        return Ok(PackOutcome::Miss(note));
-    }
     let backup = preserve_check_static_dest(plan)?;
     match docker.extract(plan.dest(), plan.context(), &plan.docker_build_args()) {
         Ok(()) => match check_static_dest(plan) {
@@ -899,12 +911,24 @@ fn extract_plan(plan: &PackBuildPlan, docker: &dyn DockerPort) -> Result<PackOut
     }
 }
 
+fn dest_uses_native_image_libc(plan: &PackBuildPlan) -> bool {
+    plan.triple() == AARCH64_MUSL && plan.pack() == JAVA_PACK
+}
+
+fn dest_passes_static_policy(plan: &PackBuildPlan) -> bool {
+    if dest_uses_native_image_libc(plan) {
+        check_static::check_native_image_libc(plan.dest()).is_ok()
+    } else {
+        check_static::check_path(plan.dest()).is_ok()
+    }
+}
+
 fn preserve_check_static_dest(plan: &PackBuildPlan) -> Result<Option<PathBuf>, String> {
     let dest = plan.dest();
     if !dest.is_file() {
         return Ok(None);
     }
-    if check_static::check_path(dest).is_err() {
+    if !dest_passes_static_policy(plan) {
         return Ok(None);
     }
     let engines = dest.parent().and_then(|p| p.parent()).ok_or_else(|| {
@@ -961,7 +985,12 @@ fn classify_pack_extract_error(err: &str, plan: &PackBuildPlan) -> String {
 }
 
 fn check_static_dest(plan: &PackBuildPlan) -> Result<(), String> {
-    check_static::check_path(plan.dest()).map_err(|e| {
+    let check = if dest_uses_native_image_libc(plan) {
+        check_static::check_native_image_libc(plan.dest())
+    } else {
+        check_static::check_path(plan.dest())
+    };
+    check.map_err(|e| {
         format!(
             "{}: {e} (refusing to pass a non-static extract; Mach-O is not a musl green; \
              unclosable clangd .so is a miss, do not ship dynamic)",
@@ -1724,9 +1753,11 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         let graal_df =
             fs::read_to_string(workspace_root().join("docker/engine-pack-graal.Dockerfile"))
                 .unwrap();
-        assert!(graal_df.contains("native-image --static --libc=musl"));
-        assert!(graal_df.contains("org.javacs.Main"));
+        assert!(graal_df.contains("ARG GRAAL_TAG"));
+        assert!(graal_df.contains("NATIVE_IMAGE_FLAGS"));
         assert!(graal_df.contains("25.0.0-muslib-ol9"));
+        assert!(graal_df.contains("25.0.0-ol9") || graal_df.contains("GRAAL_TAG"));
+        assert!(graal_df.contains("org.javacs.Main"));
         assert!(graal_df.contains("until git clone"));
         let graal_active: String = graal_df
             .lines()
@@ -1738,6 +1769,14 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         );
         assert!(!graal_active.to_ascii_lowercase().contains("jdt"));
         assert!(!graal_active.contains("jlink"));
+        assert!(
+            !graal_active.contains("JAVA-T3.2 miss"),
+            "aarch64 is required, not a Miss: {graal_active}"
+        );
+        assert!(
+            !graal_active.contains("TARGETARCH") || !graal_active.contains("exit 1"),
+            "must not exit 1 on arm64: {graal_active}"
+        );
         let rust_df =
             fs::read_to_string(workspace_root().join("docker/engine-pack.Dockerfile")).unwrap();
         assert!(rust_df.contains("until git clone"));
@@ -2018,6 +2057,29 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             .iter()
             .any(|a| a.to_ascii_lowercase().contains("jlink")));
         assert!(!args.iter().any(|a| a.to_ascii_lowercase().contains("jdt")));
+        assert!(args.iter().any(|a| a == "GRAAL_TAG=25.0.0-ol9"));
+        assert!(args
+            .iter()
+            .any(|a| a == "NATIVE_IMAGE_FLAGS=-H:+StaticExecutableWithDynamicLibC"));
+        assert!(!args.iter().any(|a| a.contains("muslib")));
+        assert!(!args.iter().any(|a| a.contains("--static --libc=musl")));
+
+        let x86 = PackBuildPlan::for_pin(
+            root.path(),
+            java,
+            X86_64_MUSL,
+            rust.as_ref(),
+            zig.as_ref(),
+            go.as_ref(),
+        )
+        .unwrap();
+        let x86_args = x86.docker_build_args();
+        assert!(x86_args
+            .iter()
+            .any(|a| a == "GRAAL_TAG=25.0.0-muslib-ol9"));
+        assert!(x86_args
+            .iter()
+            .any(|a| a == "NATIVE_IMAGE_FLAGS=--static --libc=musl"));
 
         let docker = RecordingDockerPort::new();
         run_at(
@@ -2027,24 +2089,36 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         )
         .unwrap();
         let dests = docker.recorded_dests();
-        assert_eq!(
-            dests.len(),
-            1,
-            "aarch64 java is JAVA-T3.2 miss (no docker): {dests:?}"
+        assert_eq!(dests.len(), 2, "both triples required: {dests:?}");
+        assert!(
+            dests.iter().any(|p| p.to_string_lossy().contains(X86_64_MUSL)),
+            "{dests:?}"
         );
-        assert!(dests[0].to_string_lossy().contains(X86_64_MUSL));
-        assert_eq!(dests[0].file_name().unwrap(), "javacs");
-        check_static::check_path(&dests[0]).unwrap();
+        assert!(
+            dests
+                .iter()
+                .any(|p| p.to_string_lossy().contains(AARCH64_MUSL)),
+            "{dests:?}"
+        );
+        for dest in &dests {
+            assert_eq!(dest.file_name().unwrap(), "javacs");
+            assert!(dest.is_file(), "{}", dest.display());
+        }
+        let x86_dest = dests
+            .iter()
+            .find(|p| p.to_string_lossy().contains(X86_64_MUSL))
+            .unwrap();
+        check_static::check_path(x86_dest).unwrap();
         let arm_dest = root
             .path()
             .join("target/musl")
             .join(AARCH64_MUSL)
             .join("engines/java/javacs");
-        assert!(!arm_dest.exists(), "must not ship a JAR or stub on aarch64");
+        assert!(arm_dest.is_file(), "aarch64 javacs dest is required");
     }
 
     #[test]
-    fn graal_aarch64_is_documented_miss_without_docker() {
+    fn aarch64_java_is_required_not_documented_miss() {
         let root = fixture_root();
         let docker = RecordingDockerPort::new();
         run_at(
@@ -2058,26 +2132,58 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
             &docker,
         )
         .unwrap();
-        assert!(
-            docker.recorded_dests().is_empty(),
-            "JAVA-T3.2 aarch64 must not pull muslib: {:?}",
-            docker.recorded_dests()
-        );
+        let dests = docker.recorded_dests();
+        assert_eq!(dests.len(), 1, "{dests:?}");
+        assert!(dests[0].to_string_lossy().contains(AARCH64_MUSL));
         let dest = root
             .path()
             .join("target/musl")
             .join(AARCH64_MUSL)
             .join("engines/java/javacs");
-        assert!(!dest.exists());
-        let note = documented_miss_for_pack(root.path(), JAVA_PACK, AARCH64_MUSL)
-            .unwrap()
-            .expect("aarch64 java miss");
-        assert!(note.contains("JAVA-T3.2"), "{note}");
+        assert!(dest.is_file(), "{}", dest.display());
+        assert_eq!(dests[0], dest);
+        assert!(
+            documented_miss_for_pack(root.path(), JAVA_PACK, AARCH64_MUSL)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             documented_miss_for_pack(root.path(), JAVA_PACK, X86_64_MUSL)
                 .unwrap()
                 .is_none()
         );
+        assert!(graal_aarch64_miss(&PackKind::Graal, JAVA_PACK, AARCH64_MUSL).is_none());
+    }
+
+    #[test]
+    fn failed_extract_keeps_aarch64_javacs_libc_dest() {
+        let root = fixture_root();
+        let dest = root
+            .path()
+            .join("target/musl")
+            .join(AARCH64_MUSL)
+            .join("engines/java/javacs");
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        let previous = check_static::fixture_libc_needed_elf64();
+        fs::write(&dest, &previous).unwrap();
+        assert!(check_static::check_path(&dest).is_err());
+        check_static::check_native_image_libc(&dest).unwrap();
+        let docker = RecordingDockerPort::failing();
+        let err = run_at(
+            root.path(),
+            &[
+                "--pack".into(),
+                "java".into(),
+                "--target".into(),
+                AARCH64_MUSL.into(),
+            ],
+            &docker,
+        )
+        .unwrap_err();
+        assert!(dest.is_file(), "failed rebuild must keep libc dest: {err}");
+        check_static::check_native_image_libc(&dest).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), previous);
+        assert_eq!(docker.recorded_dests().len(), 1);
     }
 
     #[test]

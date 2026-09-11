@@ -1320,7 +1320,7 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-JAVA — live Java T3 both Linux ISAs
 
-**Status: NOT STARTED.** Branch `java-t3` on signed-off `t2-coverage`. Wiring JAVA-T3.1/3 already landed.
+**Status: SIGNED OFF.** Branch `java-t3` on signed-off `t2-coverage`.
 
 **Scope:** live `javacs`: x86_64 fully static; aarch64 native-image may need libc. No JAR/JDT/`libjvm`.
 
@@ -1328,20 +1328,20 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 **Exit**
 
-- [ ] JAVA-T3.2a x86_64 `check-static` pass (live proof)
-- [ ] JAVA-T3.2b aarch64 native-image; libc OK; no `libjvm`
-- [ ] JAVA-T3.2c no aarch64 Miss/omit
+- [x] JAVA-T3.2a x86_64 `check-static` pass (live proof)
+- [x] JAVA-T3.2b aarch64 native-image; libc OK; no `libjvm`
+- [x] JAVA-T3.2c no aarch64 Miss/omit
 
 **Sign-off checklist (POC-JAVA)**
 
-- [ ] Exit criteria met
-- [ ] Unit tests: `RecordingDockerPort`; no daemon
-- [ ] Live pack proof recorded (not a cargo test); dests gitignored
-- [ ] 95% / 80% as applicable (xtask often N/A mutants)
-- [ ] No `sleep`
-- [ ] `check-static` on x86_64 `javacs` only for the static bar
-- [ ] Docs: [t3-linux-hosts.md](t3-linux-hosts.md), spike, host-deps
-- [ ] Patterns named
+- [x] Exit criteria met
+- [x] Unit tests: `RecordingDockerPort`; no daemon
+- [x] Live pack proof recorded (not a cargo test); dests gitignored — [spike/java-t3.md](../spike/java-t3.md)
+- [x] 95% / 80% as applicable (xtask often N/A mutants)
+- [x] No `sleep`
+- [x] `check-static` on x86_64 `javacs` only for the static bar
+- [x] Docs: [t3-linux-hosts.md](t3-linux-hosts.md), spike, host-deps
+- [x] Patterns named (`StaticCheckPolicy`, `PackBuildPlan`, `PackImageCopy`)
 
 ## POC-IMG — runtime image copies Java
 

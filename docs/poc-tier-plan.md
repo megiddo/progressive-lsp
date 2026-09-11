@@ -135,10 +135,10 @@ Priority T3. Wiring (JAVA-T3.1 / JAVA-T3.3) is landed. This milestone produces *
 
 **Exit**
 
-- [ ] Both dests exist after a live pack (orchestrator proof, not a cargo test).
-- [ ] x86_64 `javacs` passes `check-static`.
-- [ ] aarch64 `javacs` is native-image, not a JAR; may need libc; no `libjvm`.
-- [ ] Missing dest still degrades to T2, never panic.
+- [x] Both dests exist after a live pack (orchestrator proof, not a cargo test).
+- [x] x86_64 `javacs` passes `check-static`.
+- [x] aarch64 `javacs` is native-image, not a JAR; may need libc; no `libjvm`.
+- [x] Missing dest still degrades to T2, never panic.
 
 ---
 
@@ -202,9 +202,9 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 - [x] One serve
 - [x] No URI rewriter
-- [ ] No JVM/JDT as Java T3
+- [x] No JVM/JDT as Java T3 (native-image `javacs` only)
 - [ ] C# T1/T2 only
-- [ ] aarch64 Java libc is the only static exception
+- [x] aarch64 Java libc is the only static exception
 
 ### POC-URI
 
@@ -222,9 +222,9 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### POC-JAVA
 
-- [ ] JAVA-T3.2a x86_64 static
-- [ ] JAVA-T3.2b aarch64 native-image + libc
-- [ ] JAVA-T3.2c xtask no Miss omit
+- [x] JAVA-T3.2a x86_64 static
+- [x] JAVA-T3.2b aarch64 native-image + libc
+- [x] JAVA-T3.2c xtask no Miss omit
 
 ### POC-IMG
 

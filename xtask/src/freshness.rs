@@ -891,7 +891,7 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
     }
 
     #[test]
-    fn aarch64_java_documented_miss_does_not_call_docker() {
+    fn missing_aarch64_java_dest_rebuilds_via_recording_docker() {
         let dir = fixture_root();
         let root = dir.path();
         seed_dests(root, AARCH64_MUSL);
@@ -903,11 +903,11 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
             docker
                 .recorded_dests()
                 .iter()
-                .all(|p| !p.to_string_lossy().contains("/engines/java/")),
-            "JAVA-T3.2 aarch64 must not pull muslib: {:?}",
+                .any(|p| p.to_string_lossy().contains("/engines/java/")),
+            "missing aarch64 java dest must rebuild: {:?}",
             docker.recorded_dests()
         );
-        assert!(!LspArtifact::pack("java", AARCH64_MUSL).dest_exists(root));
+        assert!(LspArtifact::pack("java", AARCH64_MUSL).dest_exists(root));
     }
 
     #[test]

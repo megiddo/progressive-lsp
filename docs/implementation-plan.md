@@ -821,9 +821,9 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 |---|---|---|---|
 | JAVA-T3.1 | `PackKind` + pin + Graal dockerfile; slim pack name `java`; Darwin stub | host-cleanup | **LANDED.** |
 | JAVA-T3.3 | Census + factory `EngineResolver` + poc-ide catalog | JAVA-T3.1 | **LANDED.** |
-| JAVA-T3.2a | Live x86_64 fully static `javacs` | JAVA-T3.1 | POC-JAVA. `check-static` pass. |
-| JAVA-T3.2b | Live aarch64 native-image `javacs` (libc allowed) | JAVA-T3.1 | POC-JAVA. No `libjvm`. |
-| JAVA-T3.2c | xtask: no aarch64 Java Miss/omit | JAVA-T3.2a, JAVA-T3.2b | Dest required both triples. |
+| JAVA-T3.2a | Live x86_64 fully static `javacs` | JAVA-T3.1 | **SIGNED OFF** (POC-JAVA). `check-static` pass. |
+| JAVA-T3.2b | Live aarch64 native-image `javacs` (libc allowed) | JAVA-T3.1 | **SIGNED OFF** (POC-JAVA). No `libjvm`. |
+| JAVA-T3.2c | xtask: no aarch64 Java Miss/omit | JAVA-T3.2a, JAVA-T3.2b | **SIGNED OFF** (POC-JAVA). Dest required both triples. |
 
 ## POC tier stack
 
