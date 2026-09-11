@@ -837,9 +837,9 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | T2-COV.1 | C / C++ heuristic T2 | POC-URI signed off | **SIGNED OFF.** `#include`, name/arity. |
 | T2-COV.2 | Rust / Python heuristic T2 | T2-COV.1 | **SIGNED OFF.** TSG opt-in. |
 | T2-COV.3 | CSS / HTML heuristic T2 | T2-COV.2 | **SIGNED OFF.** Conformance T2 leaves N/A. |
-| IMG.1 | `javacs` required on both runtime-image triples | JAVA-T3.2c | |
-| IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | x86_64 scratch OK. |
-| IMG.3 | Image plan tests + live tag proof | IMG.2 | |
+| IMG.1 | `javacs` required on both runtime-image triples | JAVA-T3.2c | **SIGNED OFF** (POC-IMG on `t3-image`). |
+| IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | **SIGNED OFF.** Rocky 9 minimal base; x86_64 scratch OK. |
+| IMG.3 | Image plan tests + live tag proof | IMG.2 | **SIGNED OFF.** Unit tests + orchestrator `:local` tag (milestones POC-IMG). |
 | REST.1 | Dogfood image includes tsgo, gopls, zls | POC-IMG | **SIGNED OFF** (POC-REST). Required in plan. |
 | REST.2 | clangd both ISAs or honest miss | REST.1 | **SIGNED OFF.** HOST-7 omit when cache miss. |
 | REST.3 | Rust Linux sysroot honesty in container | REST.1 | **SIGNED OFF.** [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md). |

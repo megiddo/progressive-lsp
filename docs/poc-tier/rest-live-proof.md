@@ -2,6 +2,14 @@
 
 Not a `cargo test`. Records what was run on the dogfood image path after POC-JAVA / POC-IMG.
 
+## t3-rest sign-off session (2026-09-10)
+
+| Gate | Result |
+|---|---|
+| `cargo test -- --test-threads=1` (worktree `t3-rest`) | **PASS** (full workspace) |
+| `cargo test -p xtask -- --test-threads=1` | **PASS** (113 tests) |
+| Live `docker` / pack rebuild this session | **Skipped** — Docker daemon unavailable (`unix:///Users/inoahsmi/.docker/run/docker.sock` permission denied in sandbox). REST.1/IMG.3 live image proof remains the prior orchestrator rows below + [milestones.md](../milestones.md) POC-IMG. |
+
 ## REST.4 scenarios
 
 | Scenario | Bar | Proof |

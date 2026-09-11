@@ -33,9 +33,9 @@ C# T3 never. clangd T3 is the last, hardest remaining pack (LLVM).
 | Area | Now |
 |---|---|
 | T1 all languages | Landed (Tree-sitter in core). |
-| T2 | Landed for Java, C#, JS, TS, PHP, Go, Zig. Missing C, C++, Rust, Python, CSS, HTML. |
+| T2 | Landed for every v1 language (POC-T2 signed off on `t2-coverage`). |
 | T3 wiring | Supervisor + packs named. Catalog offers T3 except C#. |
-| T3 live in default container | Some engines already static-build; Java not live; C/C++ clangd cache miss; JS/TS/Go/Zig not in the default slim image. |
+| T3 live in dogfood container | POC-tier stack signed off on `t3-rest`: Java both ISAs; slim + tsgo/gopls/zls in `RuntimeImagePlan`; **clangd** still HOST-7 cache miss (honest omit). C# T3 not supported. |
 | URIs | Identity mount signed off (POC-URI). Native and container send the same `file:` URI via `file_uri` → core `path_to_file_uri`. No rewriter. |
 
 ## Stack (on current `main`; `host-cleanup` merged)
@@ -50,6 +50,8 @@ main               # host-cleanup + Java T3 wiring / freshness (PR #6 / #7)
 ```
 
 Do not start a branch until the parent milestone is signed off. Do not open `host8`. Do not stack `poc-uri` on the old `host-cleanup` ref (that ref lacks PR #7).
+
+**POC-tier stack:** signed off on branch `t3-rest` (URI → T2 → Java → image → REST). Remaining honest gap: **clangd** HOST-7 cache fill only.
 
 ---
 
@@ -190,9 +192,9 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 **Exit**
 
-- [ ] Container T3 offered and spawnable for every v1 language except C#.
-- [ ] clangd either present or an honest remaining miss (static still required; no `.so`).
-- [ ] C# T3 still `not supported`.
+- [x] Container T3 offered and spawnable for every v1 language except C# (`RuntimeImagePlan` + catalog; C/C++ degrade when clangd omitted).
+- [x] clangd either present or an honest remaining miss (static still required; no `.so`) — HOST-7 cache miss omit documented in [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md).
+- [x] C# T3 still `not supported` (`TierCellState::NotSupported`; no csharp-ls pack).
 
 ---
 
@@ -203,7 +205,7 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 - [x] One serve
 - [x] No URI rewriter
 - [x] No JVM/JDT as Java T3 (native-image `javacs` only)
-- [ ] C# T1/T2 only
+- [x] C# T1/T2 only
 - [x] aarch64 Java libc is the only static exception
 
 ### POC-URI
@@ -228,9 +230,9 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### POC-IMG
 
-- [ ] IMG.1 javacs required both triples
-- [ ] IMG.2 aarch64 glibc userspace
-- [ ] IMG.3 tests + live image proof
+- [x] IMG.1 javacs required both triples
+- [x] IMG.2 aarch64 glibc userspace (`docker/runtime-aarch64.Dockerfile`, Rocky 9 minimal)
+- [x] IMG.3 tests + live image proof (orchestrator; see [milestones.md](milestones.md) POC-IMG)
 
 ### POC-REST
 
@@ -241,9 +243,9 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### Hygiene (every milestone)
 
-- [ ] `cargo test` scoped; `--test-threads=1`; no `thread::sleep`
-- [ ] Patterns named in [design-patterns.md](design-patterns.md)
-- [ ] Docs agree (vision, requirements, matrix, host-deps, poc-ide architecture)
-- [ ] `check-static` on new fully static dests; aarch64 `javacs` skipped by design
-- [ ] Do not commit engine binaries
-- [ ] Do not start the next branch from the implementer agent
+- [x] `cargo test` scoped; `--test-threads=1`; no `thread::sleep` (t3-rest: full workspace + `cargo test -p xtask` green)
+- [x] Patterns named in [design-patterns.md](design-patterns.md)
+- [x] Docs agree (vision, requirements, matrix, host-deps, poc-ide architecture)
+- [x] `check-static` on new fully static dests; aarch64 `javacs` skipped by design (no new static dests on t3-rest)
+- [x] Do not commit engine binaries
+- [x] Do not start the next branch from the implementer agent (POC-tier stack complete on `t3-rest`; no `host8`)
