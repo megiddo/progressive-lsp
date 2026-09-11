@@ -1368,7 +1368,7 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-REST — remaining T3 in the dogfood image
 
-**Status: NOT STARTED.** Branch `t3-rest` on signed-off `t3-image`. Last slice of this stack. Do not open `host8`.
+**Status: SIGNED OFF.** Branch `t3-rest` on signed-off `t3-image`. Last slice of this stack. Do not open `host8`.
 
 **Scope:** POC container image includes every T3 except C#. clangd fully static or honest miss.
 
@@ -1376,20 +1376,20 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 **Exit**
 
-- [ ] REST.1 tsgo, gopls, zls both ISAs
-- [ ] REST.2 clangd or documented miss (no `.so`)
-- [ ] REST.3 Rust sysroot honesty
-- [ ] REST.4 live POC notes (Java + one slim + one full-pack language)
+- [x] REST.1 tsgo, gopls, zls required in `RuntimeImagePlan` (both ISAs when dests exist)
+- [x] REST.2 clangd documented HOST-7/cache miss omit ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
+- [x] REST.3 Rust sysroot honesty (RA pack ≠ project sysroot; `rust_degrade_reason`)
+- [x] REST.4 live POC notes ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 
 **Sign-off checklist (POC-REST)**
 
-- [ ] Exit criteria met
-- [ ] Tests without daemon
-- [ ] Live proof notes
-- [ ] C# still `not supported`
-- [ ] No `sleep`
-- [ ] Docs + matrix updated
-- [ ] Patterns named
+- [x] Exit criteria met
+- [x] Tests without daemon
+- [x] Live proof notes
+- [x] C# still `not supported`
+- [x] No `sleep`
+- [x] Docs + matrix updated
+- [x] Patterns named
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 

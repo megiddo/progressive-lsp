@@ -234,10 +234,10 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### POC-REST
 
-- [ ] REST.1 tsgo/gopls/zls in dogfood image
-- [ ] REST.2 clangd or honest miss
-- [ ] REST.3 rustc sysroot honesty
-- [ ] REST.4 live POC notes
+- [x] REST.1 tsgo/gopls/zls in dogfood image (`RuntimeImagePlan` required)
+- [x] REST.2 clangd or honest miss (cache miss omit)
+- [x] REST.3 rustc sysroot honesty ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
+- [x] REST.4 live POC notes ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 
 ### Hygiene (every milestone)
 

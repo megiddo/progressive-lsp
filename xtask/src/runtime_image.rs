@@ -1,4 +1,4 @@
-//! Runtime image: copy prebuilt core + slim + optional full packs into `/opt/plsp`.
+//! Runtime image: copy prebuilt core + slim + dogfood full packs into `/opt/plsp`.
 //!
 //! Context is a staging dir of already-extracted ELFs under
 //! `target/runtime-image/<triple>/` — not the git tree, and never a
@@ -9,7 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use progressive_lsp_core::PrefixLayout;
-use progressive_lsp_engine::{binary_name_for_pack, full_pack_names, slim_pack_names};
+use progressive_lsp_engine::{
+    binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK, GOPLS_PACK, TSGO_PACK,
+    ZLS_PACK,
+};
 
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
@@ -49,7 +52,7 @@ fn dockerfile_for_triple(root: &Path, triple: &str) -> Result<PathBuf, String> {
 
 const STAGING_KEEP: &str = ".keep";
 
-/// One pack ELF to copy (slim required, full optional). Value object (field of [`RuntimeImagePlan`]).
+/// One pack ELF to copy (slim + dogfood Go/TS/Zig required; clangd optional). Value object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackImageCopy {
     pack: String,
@@ -85,7 +88,11 @@ impl PackImageCopy {
 }
 
 fn pack_required_on_triple(pack: &str, _triple: &str) -> bool {
+    if pack == CLANGD_PACK {
+        return false;
+    }
     slim_pack_names().contains(&pack)
+        || matches!(pack, GOPLS_PACK | TSGO_PACK | ZLS_PACK)
 }
 
 /// Value object. Platform, triple, dockerfile, core dest, pack dests, image tag.
@@ -205,8 +212,8 @@ impl RuntimeImagePlan {
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
     /// Fail closed if the core ELF or a required slim pack is missing.
     /// Slim packs (including superhtml and javacs) are required on both triples.
-    /// aarch64 javacs may need libc (not a Miss). Full packs (clangd/tsgo/gopls/zls)
-    /// are optional (HOST-7 miss / clangd cache miss).
+    /// aarch64 javacs may need libc (not a Miss). tsgo/gopls/zls are required in the
+    /// POC dogfood image. clangd is optional (HOST-7 / cache miss).
     pub fn stage(&self) -> Result<Vec<String>, String> {
         if !self.core_dest.is_file() {
             return Err(format!(
@@ -373,6 +380,10 @@ mod tests {
             let binary = binary_name_for_pack(pack).unwrap();
             write_elf(&musl.join("engines").join(pack).join(binary));
         }
+        for pack in [GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
+            let binary = binary_name_for_pack(pack).unwrap();
+            write_elf(&musl.join("engines").join(pack).join(binary));
+        }
     }
 
     #[test]
@@ -408,7 +419,13 @@ mod tests {
             .iter()
             .find(|p| p.pack() == progressive_lsp_engine::CLANGD_PACK)
             .unwrap();
-        assert!(!clangd.required(), "full packs are optional HOST-7 copies");
+        assert!(!clangd.required(), "clangd is optional (cache miss)");
+        let gopls = amd
+            .pack_dests()
+            .iter()
+            .find(|p| p.pack() == GOPLS_PACK)
+            .unwrap();
+        assert!(gopls.required(), "dogfood image requires gopls");
         let superhtml = amd
             .pack_dests()
             .iter()
@@ -626,17 +643,28 @@ mod tests {
                 .any(|n| n.contains("clangd") && n.contains("HOST-7 miss")),
             "{omitted:?}"
         );
-        assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains("gopls") && n.contains("HOST-7 miss")),
-            "{omitted:?}"
-        );
         let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
         assert!(prefix.engines_dir().join("superhtml/superhtml").is_file());
         assert!(prefix.engines_dir().join("python/ty").is_file());
         assert!(prefix.engines_dir().join("biome/biome").is_file());
+        assert!(prefix.engines_dir().join("gopls/gopls").is_file());
         assert!(!prefix.engines_dir().join("clangd/clangd").exists());
+    }
+
+    #[test]
+    fn stage_fails_closed_when_dogfood_gopls_dest_missing() {
+        let root = fixture_root();
+        seed_required_elfs(root.path(), AARCH64_MUSL, true);
+        fs::remove_file(
+            root.path()
+                .join("target/musl")
+                .join(AARCH64_MUSL)
+                .join("engines/gopls/gopls"),
+        )
+        .unwrap();
+        let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
+        let err = plan.stage().unwrap_err();
+        assert!(err.contains("missing required slim pack") || err.contains("gopls"), "{err}");
     }
 
     #[test]
