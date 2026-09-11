@@ -19,6 +19,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 progressive-lsp-control.workspace = true
+progressive-lsp-core.workspace = true
 progressive-lsp-protocol.workspace = true
 lsp-types = "0.97.0"
 eframe = "=0.36.1"

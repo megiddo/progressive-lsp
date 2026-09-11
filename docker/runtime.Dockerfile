@@ -1,4 +1,5 @@
-# Runtime image: COPY prebuilt HOST-2 core + HOST-3 slim ELFs only.
+# Runtime image (x86_64): COPY prebuilt HOST-2 core + HOST-3 slim ELFs only.
+# aarch64 uses docker/runtime-aarch64.Dockerfile (glibc base for javacs).
 # No rustc, cargo, clang, LLVM, zig, or go. Context is a staging dir
 # of already-extracted files — not the git tree.
 #

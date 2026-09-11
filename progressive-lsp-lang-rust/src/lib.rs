@@ -1,4 +1,4 @@
-//! Rust T1 (Tree-sitter) without pack. No dedicated T2.
+//! Rust T1 + heuristic T2 (Tree-sitter) without pack.
 //! rust-analyzer T3 only when pack is ready **and** a project sysroot exists.
 
 use std::path::{Path, PathBuf};
@@ -9,8 +9,9 @@ use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
 use progressive_lsp_index::LanguageIndexer;
 use progressive_lsp_plugin::LanguageFactory;
 use progressive_lsp_resolve::{
-    GraphIndex, Hover, IndexedSymbol, Position, QueryKind, Range, ResolveOutcome, ResolveQuery,
-    Resolver, ResolverChain, SymbolKind, TreeSitterResolver,
+    CallSite, GraphFacts, GraphIndex, Hover, ImportDecl, IndexedSymbol, Position, QueryKind, Range,
+    ResolveOutcome, ResolveQuery, Resolver, ResolverChain, SymbolKind, T2Strategy,
+    TreeSitterResolver,
 };
 use tree_sitter::{Node, Tree};
 
@@ -36,9 +37,9 @@ pub fn detect_sysroot(root: &Path) -> Option<PathBuf> {
 pub fn rust_degrade_reason(has_pack: bool, has_sysroot: bool) -> Option<&'static str> {
     match (has_pack, has_sysroot) {
         (true, true) => None,
-        (false, false) => Some("no rust-analyzer pack and no rustc sysroot; T1 only"),
-        (false, true) => Some("no rust-analyzer pack; T1 only"),
-        (true, false) => Some("no rustc sysroot; T1 only"),
+        (false, false) => Some("no rust-analyzer pack and no rustc sysroot; T2 then T1"),
+        (false, true) => Some("no rust-analyzer pack; T2 then T1"),
+        (true, false) => Some("no rustc sysroot; T2 then T1"),
     }
 }
 
@@ -57,12 +58,22 @@ impl LanguageIndexer for RustIndexer {
     }
     fn extract(&self, file: &FileId, uri: &str, source: &str, tree: &Tree) -> Vec<IndexedSymbol> {
         let mut out = Vec::new();
-        walk(tree.root_node(), source.as_bytes(), file, uri, &mut out);
+        walk(
+            tree.root_node(),
+            source.as_bytes(),
+            file,
+            uri,
+            None,
+            &mut out,
+        );
         out
+    }
+    fn extract_graph(&self, file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+        extract_graph_facts(file, source, tree)
     }
 }
 
-/// T1 hover annotates missing sysroot. Never a dedicated Rust T2.
+/// T1 hover annotates missing sysroot after T2.
 pub struct RustT1Resolver {
     inner: TreeSitterResolver,
     note: Option<String>,
@@ -173,7 +184,7 @@ impl LanguageFactory for RustLanguageFactory {
                 let note = self.degrade_note().map(str::to_string);
                 ResolverChain::with_tiers(
                     t3,
-                    None,
+                    Some(T2Strategy::default_heuristic().build(g.clone())),
                     Box::new(RustT1Resolver::new(
                         TreeSitterResolver::new(g.clone()),
                         note,
@@ -185,33 +196,184 @@ impl LanguageFactory for RustLanguageFactory {
     }
 }
 
-fn walk(node: Node, src: &[u8], file: &FileId, uri: &str, out: &mut Vec<IndexedSymbol>) {
+fn walk(
+    node: Node,
+    src: &[u8],
+    file: &FileId,
+    uri: &str,
+    container: Option<&str>,
+    out: &mut Vec<IndexedSymbol>,
+) {
     match node.kind() {
-        "function_item" | "struct_item" | "enum_item" | "impl_item" => {
+        "mod_item" => {
             if let Some(name_n) = node.child_by_field_name("name") {
+                let name = name_n.utf8_text(src).unwrap_or("").to_string();
+                out.push(make(
+                    file,
+                    uri,
+                    &name,
+                    name_n,
+                    SymbolKind::Class,
+                    None,
+                    container,
+                ));
+                let next = Some(name);
+                let mut c = node.walk();
+                for child in node.children(&mut c) {
+                    walk(child, src, file, uri, next.as_deref(), out);
+                }
+                return;
+            }
+        }
+        "function_item" | "struct_item" | "enum_item" | "impl_item" => {
+            if let Some(name_n) = node
+                .child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("type"))
+            {
                 let name = name_n.utf8_text(src).unwrap_or("").to_string();
                 let kind = match node.kind() {
                     "struct_item" | "enum_item" | "impl_item" => SymbolKind::Class,
                     _ => SymbolKind::Method,
                 };
-                out.push(make(file, uri, &name, name_n, kind));
+                let arity = if kind == SymbolKind::Method {
+                    Some(rust_arity(node))
+                } else {
+                    None
+                };
+                out.push(make(file, uri, &name, name_n, kind, arity, container));
+                if matches!(node.kind(), "impl_item" | "struct_item" | "enum_item") {
+                    let next = Some(name);
+                    let mut c = node.walk();
+                    for child in node.children(&mut c) {
+                        walk(child, src, file, uri, next.as_deref(), out);
+                    }
+                    return;
+                }
             }
         }
         "identifier" | "type_identifier" | "field_identifier" => {
             let name = node.utf8_text(src).unwrap_or("").to_string();
             if !name.is_empty() {
-                out.push(make(file, uri, &name, node, SymbolKind::Variable));
+                out.push(make(
+                    file,
+                    uri,
+                    &name,
+                    node,
+                    SymbolKind::Variable,
+                    None,
+                    container,
+                ));
             }
         }
         _ => {}
     }
     let mut c = node.walk();
     for child in node.children(&mut c) {
-        walk(child, src, file, uri, out);
+        walk(child, src, file, uri, container, out);
     }
 }
 
-fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> IndexedSymbol {
+fn extract_graph_facts(file: &FileId, source: &str, tree: &Tree) -> GraphFacts {
+    let mut facts = GraphFacts::default();
+    walk_graph(tree.root_node(), source.as_bytes(), file, &mut facts);
+    facts
+}
+
+fn walk_graph(node: Node, src: &[u8], file: &FileId, facts: &mut GraphFacts) {
+    match node.kind() {
+        "use_declaration" => {
+            let raw = node.utf8_text(src).unwrap_or("").to_string();
+            let path = raw
+                .trim()
+                .trim_start_matches("use")
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .replace("::", ".");
+            if !path.is_empty() {
+                if path.ends_with('*') {
+                    facts.imports.push(ImportDecl::wildcard(
+                        file.clone(),
+                        path.trim_end_matches('*').trim_end_matches('.').to_string(),
+                    ));
+                } else {
+                    facts.imports.push(ImportDecl::new(file.clone(), path));
+                }
+            }
+        }
+        "mod_item" => {
+            if let Some(name_n) = node.child_by_field_name("name") {
+                let name = name_n.utf8_text(src).unwrap_or("").to_string();
+                if !name.is_empty() {
+                    facts.package = Some(name);
+                }
+            }
+        }
+        "call_expression" => {
+            if let Some(fn_n) = node.child_by_field_name("function") {
+                let name = fn_n.utf8_text(src).unwrap_or("").to_string();
+                let simple = name.rsplit("::").next().unwrap_or(&name).to_string();
+                if !simple.is_empty() {
+                    let arity = node
+                        .child_by_field_name("arguments")
+                        .map(named_arg_count)
+                        .unwrap_or(0);
+                    let start = fn_n.start_position();
+                    facts.calls.push(CallSite::new(
+                        file.clone(),
+                        simple,
+                        arity,
+                        start.row as u32,
+                        start.column as u32,
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        walk_graph(child, src, file, facts);
+    }
+}
+
+fn rust_arity(node: Node) -> u32 {
+    let Some(params) = node.child_by_field_name("parameters") else {
+        return 0;
+    };
+    let mut n = 0u32;
+    let mut c = params.walk();
+    for child in params.children(&mut c) {
+        if child.kind() == "parameter" || child.kind() == "self_parameter" {
+            if child.kind() == "self_parameter" {
+                continue;
+            }
+            n += 1;
+        }
+    }
+    n
+}
+
+fn named_arg_count(args: Node) -> u32 {
+    let mut n = 0u32;
+    let mut c = args.walk();
+    for child in args.children(&mut c) {
+        if child.is_named() {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn make(
+    file: &FileId,
+    uri: &str,
+    name: &str,
+    node: Node,
+    kind: SymbolKind,
+    arity: Option<u32>,
+    container: Option<&str>,
+) -> IndexedSymbol {
     let range = Range::new(
         Position::new(
             node.start_position().row as u32,
@@ -229,9 +391,12 @@ fn make(file: &FileId, uri: &str, name: &str, node: Node, kind: SymbolKind) -> I
         kind,
         range,
         selection_range: range,
-        arity: None,
-        fqn: name.to_string(),
-        container: None,
+        arity,
+        fqn: match container {
+            Some(c) => format!("{c}::{name}"),
+            None => name.to_string(),
+        },
+        container: container.map(str::to_string),
     }
 }
 
@@ -290,6 +455,23 @@ mod tests {
     use progressive_lsp_resolve::Resolver;
     use progressive_lsp_workspace::{CargoTomlAdapter, WorkspaceSource};
 
+    fn fixture_dir(name: &str, marker: &str) -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = vec![
+            manifest.join(format!("../fixtures/{name}")),
+            PathBuf::from(format!("fixtures/{name}")),
+        ];
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join(format!("fixtures/{name}")));
+        }
+        for c in &candidates {
+            if c.join(marker).is_file() {
+                return c.clone();
+            }
+        }
+        panic!("missing fixtures/{name}/{marker}; tried {candidates:?}");
+    }
+
     fn line_col(src: &str, needle: &str) -> Position {
         let byte = src.find(needle).expect(needle);
         let mut line = 0u32;
@@ -319,15 +501,15 @@ mod tests {
         assert!(RustLanguageFactory::default().resolver_chain().is_empty());
         assert_eq!(
             rust_degrade_reason(false, false),
-            Some("no rust-analyzer pack and no rustc sysroot; T1 only")
+            Some("no rust-analyzer pack and no rustc sysroot; T2 then T1")
         );
         assert_eq!(
             rust_degrade_reason(false, true),
-            Some("no rust-analyzer pack; T1 only")
+            Some("no rust-analyzer pack; T2 then T1")
         );
         assert_eq!(
             rust_degrade_reason(true, false),
-            Some("no rustc sysroot; T1 only")
+            Some("no rustc sysroot; T2 then T1")
         );
         assert!(rust_degrade_reason(true, true).is_none());
         let dir = tempfile::tempdir().unwrap();
@@ -387,7 +569,7 @@ mod tests {
             QueryKind::Definition,
         )) {
             ResolveOutcome::Ready(r) => {
-                assert_eq!(r.tier, Tier::Syntax);
+                assert_eq!(r.tier, Tier::Graph);
                 assert!(r.locations.iter().any(|l| l.uri.contains("greet.rs")));
                 assert!(
                     r.hover.is_none(),
@@ -403,7 +585,13 @@ mod tests {
         )) {
             ResolveOutcome::Ready(r) => {
                 let h = r.hover.unwrap();
-                assert!(h.name.contains("sysroot") || h.name.contains("T1"), "{h:?}");
+                assert!(
+                    h.name.contains("greet")
+                        || h.name.contains("sysroot")
+                        || h.name.contains("T1")
+                        || h.name.contains("T2"),
+                    "{h:?}"
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -503,7 +691,141 @@ mod tests {
             line_col("fn greet() {}\n", "greet"),
             QueryKind::Definition,
         )) {
-            ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Syntax),
+            ResolveOutcome::Ready(r) => assert_eq!(r.tier, Tier::Graph),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn rust_t1_hover_note_when_t2_index_empty() {
+        let factory =
+            RustLanguageFactory::with_graph(Arc::new(progressive_lsp_resolve::EmptyIndex));
+        assert_eq!(factory.resolver_chain().len(), 2);
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new("main.rs"),
+            Position::default(),
+            QueryKind::Hover,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Syntax);
+                let h = r.hover.unwrap();
+                assert!(h.name.contains("T2") || h.name.contains("sysroot"), "{h:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "missing fixtures")]
+    fn fixture_dir_missing_panics() {
+        let _ = fixture_dir("no-such-heuristic", "nope.rs");
+    }
+
+    #[test]
+    fn rust_extract_enum_bare_fn_and_empty_use() {
+        let src = "use ;\nenum Color { Red }\nfn bare() {}\nfn call() { bare(); }\n";
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let tree = p.parse(src, None).unwrap();
+        let file = FileId::new("t.rs");
+        let facts = RustIndexer.extract_graph(&file, src, &tree);
+        assert!(facts.calls.iter().any(|c| c.name == "bare"));
+        let syms = RustIndexer.extract(&file, "file:///t.rs", src, &tree);
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Color" && s.kind == SymbolKind::Class));
+        assert!(syms.iter().any(|s| s.name == "bare" && s.arity == Some(0)));
+    }
+
+    #[test]
+    fn rust_extract_graph_use_mod_impl_and_call() {
+        let src = r#"
+use crate::greet::*;
+use crate::lib::Point;
+mod greet {
+    pub fn greet(name: &str) -> &str { name }
+}
+struct Point { x: i32 }
+impl Point {
+    fn id(&self) -> i32 { self.x }
+}
+fn run() { greet("x"); }
+"#;
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let tree = p.parse(src, None).unwrap();
+        let file = FileId::new("t.rs");
+        let facts = RustIndexer.extract_graph(&file, src, &tree);
+        assert!(facts
+            .imports
+            .iter()
+            .any(|i| i.wildcard || i.path.contains("Point")));
+        assert_eq!(facts.package.as_deref(), Some("greet"));
+        assert!(facts.calls.iter().any(|c| c.name == "greet"));
+        let syms = RustIndexer.extract(&file, "file:///t.rs", src, &tree);
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
+        let _ = rust_arity(tree.root_node());
+        let _ = named_arg_count(tree.root_node());
+    }
+
+    #[test]
+    fn rust_heuristic_fixture_definition_and_references() {
+        let root = fixture_dir("rust-heuristic", "src/main.rs");
+        let greet = root.join("src/greet.rs");
+        let main = root.join("src/main.rs");
+        let mut svc = IndexService::new();
+        svc.ingest_package(
+            &PackageIngest::new("heuristic", "rust")
+                .with_file(&greet)
+                .with_file(&main),
+            &RustIndexer,
+        );
+        let greet_src = std::fs::read_to_string(&greet).unwrap();
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_language()).unwrap();
+        let greet_tree = p.parse(&greet_src, None).unwrap();
+        let facts = RustIndexer.extract_graph(
+            &FileId::new(greet.to_string_lossy().as_ref()),
+            &greet_src,
+            &greet_tree,
+        );
+        assert!(facts.package.as_deref() == Some("greet") || facts.package.is_none());
+        let greet_syms = RustIndexer.extract(
+            &FileId::new(greet.to_string_lossy().as_ref()),
+            "file:///greet.rs",
+            &greet_src,
+            &greet_tree,
+        );
+        assert!(greet_syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Method && s.arity == Some(1)));
+        let factory = RustLanguageFactory::with_graph(Arc::new(SharedIndex::new(svc)));
+        let src = std::fs::read_to_string(&main).unwrap();
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(main.to_string_lossy().as_ref()),
+            line_col(&src, "greet"),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(r.locations.iter().any(|l| l.uri.contains("greet.rs")));
+            }
+            other => panic!("{other:?}"),
+        }
+        match factory.resolver_chain().resolve(&ResolveQuery::new(
+            FileId::new(main.to_string_lossy().as_ref()),
+            line_col(&src, "greet"),
+            QueryKind::References,
+        )) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert!(!r.locations.is_empty());
+            }
             other => panic!("{other:?}"),
         }
     }

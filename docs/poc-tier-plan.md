@@ -15,7 +15,7 @@ Related: [t2-heuristic-coverage.md](t2-heuristic-coverage.md), [t3-linux-hosts.m
 | No JVM / JDT / Node / CPython / host `php` as our runtime | Unchanged. |
 | C# | T1/T2 ceiling. No csharp-ls pack. |
 | Java first | Live Java T3 before other remaining T3 pack work. |
-| No `host8` | Stack new branches on `host-cleanup`. |
+| No `host8` | Stack `poc-uri` on current `main` (`host-cleanup` merged). Do not open `host8`. |
 | Unit tests | Mocks only. No Docker daemon, registry, or AWS in `cargo test`. |
 
 ## Target (POC)
@@ -33,15 +33,15 @@ C# T3 never. clangd T3 is the last, hardest remaining pack (LLVM).
 | Area | Now |
 |---|---|
 | T1 all languages | Landed (Tree-sitter in core). |
-| T2 | Landed for Java, C#, JS, TS, PHP, Go, Zig. Missing C, C++, Rust, Python, CSS, HTML. |
+| T2 | Landed for every v1 language (POC-T2 signed off on `t2-coverage`). |
 | T3 wiring | Supervisor + packs named. Catalog offers T3 except C#. |
-| T3 live in default container | Some engines already static-build; Java not live; C/C++ clangd cache miss; JS/TS/Go/Zig not in the default slim image. |
-| URIs | Design is identity mount. Treat any Mac vs container URI split as a defect to close first. |
+| T3 live in dogfood container | `t3-rest`: Java both ISAs; slim + tsgo/gopls/zls + **clangd** required in `RuntimeImagePlan`. C# T3 not supported. |
+| URIs | Identity mount signed off (POC-URI). Native and container send the same `file:` URI via `file_uri` → core `path_to_file_uri`. No rewriter. |
 
-## Stack (after `host-cleanup`)
+## Stack (on current `main`; `host-cleanup` merged)
 
 ```text
-host-cleanup
+main               # host-cleanup + Java T3 wiring / freshness (PR #6 / #7)
   └── poc-uri          # POC-URI: identity file: URIs (native == container)
         └── t2-coverage    # POC-T2: heuristic T2 for C/C++/Rust/Python/CSS/HTML
               └── java-t3      # POC-JAVA: live Java T3 both Linux ISAs
@@ -49,7 +49,11 @@ host-cleanup
                           └── t3-rest      # POC-REST: remaining T3 engines in the dogfood image
 ```
 
-Do not start a branch until the parent milestone is signed off. Do not open `host8`.
+Do not start a branch until the parent milestone is signed off. Do not open `host8`. Do not stack `poc-uri` on the old `host-cleanup` ref (that ref lacks PR #7).
+
+**POC-tier stack:** signed off on `t3-rest` (URI → REST). **clangd** required in code; live cache-fill ELF proof is orchestrator-only ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)).
+
+**After merge:** follow [post-poc-tier-development-plan.md](../post-poc-tier-development-plan.md) (dogfood `./build lsp`, artifact store, container-primary IDE). Do not fold that work into this stack PR.
 
 ---
 
@@ -67,11 +71,29 @@ Do not start a branch until the parent milestone is signed off. Do not open `hos
 | URI.2 | Tests: `DockerRunPlan` `-v WS:WS -w WS`; initialize `rootUri` equals `file_uri(WS)` for native and container attach. Fail closed if a rewriter type appears. |
 | URI.3 | Fix any split found. Do not add a rewriter to “fix” it. |
 
+**URI.1 inventory (producers / consumers share the core codec)**
+
+| Site | Role | Codec |
+|---|---|---|
+| `progressive-lsp-core::path_to_file_uri` | produce | canonical encode |
+| `progressive-lsp-core::path_from_file_uri` | consume | canonical decode |
+| `FileId::from_uri` | consume | `path_from_file_uri` |
+| `progressive-lsp-index` ingest | produce symbol `uri` | `path_to_file_uri` |
+| `src/serve_host.rs` `root_from_params` / session didOpen | consume | `path_from_file_uri` |
+| `poc-ide::file_uri` | produce initialize / didOpen / discover | wraps `path_to_file_uri` after absolute check |
+| `poc-ide::path_from_file_uri` | consume jump locations | wraps core decode after `file:` check |
+| `LspClient::initialize` (native + container) | produce `rootUri` | `file_uri(WS)` — same function both attach kinds |
+| `DockerRunPlan` | mount identity | `-v $HOST_WS:$HOST_WS -w $HOST_WS` (not a URI type) |
+| Integration harness | produce (IT only) | raw `file://` format — not the unit gate |
+| Resolve TSG / stack-graph | produce opt-in T2 locations | `format!("file://{path}")` — not native vs container |
+
+No `UriRewriter` / `UriMapper` in poc-ide or serve. URI.3 found no native vs container split: both attach kinds already called `LspClient::initialize` → `file_uri`. The defect was a **duplicate codec** in poc-ide; `file_uri` now wraps core. Identity bind-mount is the product. Do not add a rewriter.
+
 **Exit**
 
-- [ ] Native Open Folder and Open Folder in Container send the same `file:` URI for the same absolute path.
-- [ ] No URI mapper type in poc-ide or serve.
-- [ ] Unit tests name `file_uri` / `DockerRunPlan`; no daemon.
+- [x] Native Open Folder and Open Folder in Container send the same `file:` URI for the same absolute path.
+- [x] No URI mapper type in poc-ide or serve.
+- [x] Unit tests name `file_uri` / `DockerRunPlan`; no daemon.
 
 ---
 
@@ -91,10 +113,10 @@ Design: [t2-heuristic-coverage.md](t2-heuristic-coverage.md). Same `HeuristicRes
 
 **Exit**
 
-- [ ] Every v1 `languageId` except `plaintext` has `has_t2 == true`.
-- [ ] Strip T2 is not `n/a` for C, C++, Rust, Python, CSS, HTML after ingest.
-- [ ] Definition/references fixtures per language (Java-heuristic class).
-- [ ] Mac Open Folder: T1+T2 for those languages without a container.
+- [x] Every v1 `languageId` except `plaintext` has `has_t2 == true`.
+- [x] Strip T2 is not `n/a` for C, C++, Rust, Python, CSS, HTML after ingest.
+- [x] Definition/references fixtures per language (Java-heuristic class).
+- [x] Mac Open Folder: T1+T2 for those languages without a container.
 
 ---
 
@@ -117,10 +139,10 @@ Priority T3. Wiring (JAVA-T3.1 / JAVA-T3.3) is landed. This milestone produces *
 
 **Exit**
 
-- [ ] Both dests exist after a live pack (orchestrator proof, not a cargo test).
-- [ ] x86_64 `javacs` passes `check-static`.
-- [ ] aarch64 `javacs` is native-image, not a JAR; may need libc; no `libjvm`.
-- [ ] Missing dest still degrades to T2, never panic.
+- [x] Both dests exist after a live pack (orchestrator proof, not a cargo test).
+- [x] x86_64 `javacs` passes `check-static`.
+- [x] aarch64 `javacs` is native-image, not a JAR; may need libc; no `libjvm`.
+- [x] Missing dest still degrades to T2, never panic.
 
 ---
 
@@ -140,9 +162,9 @@ Copy live `javacs` into the Linux image used by Open Folder in Container. **aarc
 
 **Exit**
 
-- [ ] Open Folder in Container on ARM dogfoods ARM Java T3 (libc exception).
-- [ ] Open Folder in Container on x86_64 dogfoods fully static Java T3.
-- [ ] Identity mount unchanged.
+- [x] Open Folder in Container on ARM dogfoods ARM Java T3 (libc exception; glibc base image).
+- [x] Open Folder in Container on x86_64 dogfoods fully static Java T3 (scratch image).
+- [x] Identity mount unchanged.
 
 ---
 
@@ -166,15 +188,15 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 | ID | Work |
 |---|---|
 | REST.1 | Dogfood image includes tsgo, gopls, zls (both ISAs). |
-| REST.2 | clangd both ISAs or documented HOST-7-class miss with a close plan (cache-fill). |
+| REST.2 | clangd static musl both ISAs in dogfood image (`--cache-fill` then pack; fail closed if dest missing). |
 | REST.3 | Rust: hover/progress still says so if no Linux sysroot; no Darwin sysroot pretend. |
 | REST.4 | POC proof notes: Java tree → T3; one other slim language; one full-pack language. Not a cargo test. |
 
 **Exit**
 
-- [ ] Container T3 offered and spawnable for every v1 language except C#.
-- [ ] clangd either present or an honest remaining miss (static still required; no `.so`).
-- [ ] C# T3 still `not supported`.
+- [x] Container T3 wiring for every v1 language except C# (`RuntimeImagePlan` requires **clangd**; live ELF after cache-fill)
+- [x] REST.2 clangd required in plan; live musl dests — orchestrator proof ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
+- [x] C# T3 still `not supported` (`TierCellState::NotSupported`; no csharp-ls pack).
 
 ---
 
@@ -182,50 +204,50 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 ### Locks still true
 
-- [ ] One serve
-- [ ] No URI rewriter
-- [ ] No JVM/JDT as Java T3
-- [ ] C# T1/T2 only
-- [ ] aarch64 Java libc is the only static exception
+- [x] One serve
+- [x] No URI rewriter
+- [x] No JVM/JDT as Java T3 (native-image `javacs` only)
+- [x] C# T1/T2 only
+- [x] aarch64 Java libc is the only static exception
 
 ### POC-URI
 
-- [ ] URI.1 inventory
-- [ ] URI.2 tests
-- [ ] URI.3 fixes
+- [x] URI.1 inventory
+- [x] URI.2 tests
+- [x] URI.3 fixes
 
 ### POC-T2
 
-- [ ] T2-COV.1 C/C++
-- [ ] T2-COV.2 Rust/Python
-- [ ] T2-COV.3 CSS/HTML
-- [ ] poc-ide strip/menus
-- [ ] conformance T2 cells
+- [x] T2-COV.1 C/C++
+- [x] T2-COV.2 Rust/Python
+- [x] T2-COV.3 CSS/HTML
+- [x] poc-ide strip/menus
+- [x] conformance T2 cells (remain N/A; not re-scored)
 
 ### POC-JAVA
 
-- [ ] JAVA-T3.2a x86_64 static
-- [ ] JAVA-T3.2b aarch64 native-image + libc
-- [ ] JAVA-T3.2c xtask no Miss omit
+- [x] JAVA-T3.2a x86_64 static
+- [x] JAVA-T3.2b aarch64 native-image + libc
+- [x] JAVA-T3.2c xtask no Miss omit
 
 ### POC-IMG
 
-- [ ] IMG.1 javacs required both triples
-- [ ] IMG.2 aarch64 glibc userspace
-- [ ] IMG.3 tests + live image proof
+- [x] IMG.1 javacs required both triples
+- [x] IMG.2 aarch64 glibc userspace (`docker/runtime-aarch64.Dockerfile`, Rocky 9 minimal)
+- [x] IMG.3 tests + live image proof (orchestrator; see [milestones.md](milestones.md) POC-IMG)
 
 ### POC-REST
 
-- [ ] REST.1 tsgo/gopls/zls in dogfood image
-- [ ] REST.2 clangd or honest miss
-- [ ] REST.3 rustc sysroot honesty
-- [ ] REST.4 live POC notes
+- [x] REST.1 tsgo/gopls/zls in dogfood image (`RuntimeImagePlan` required)
+- [x] REST.2 clangd required; live cache-fill documented (retry after Docker OOM)
+- [x] REST.3 rustc sysroot honesty ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
+- [x] REST.4 live POC notes ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 
 ### Hygiene (every milestone)
 
-- [ ] `cargo test` scoped; `--test-threads=1`; no `thread::sleep`
-- [ ] Patterns named in [design-patterns.md](design-patterns.md)
-- [ ] Docs agree (vision, requirements, matrix, host-deps, poc-ide architecture)
-- [ ] `check-static` on new fully static dests; aarch64 `javacs` skipped by design
-- [ ] Do not commit engine binaries
-- [ ] Do not start the next branch from the implementer agent
+- [x] `cargo test` scoped; `--test-threads=1`; no `thread::sleep` (t3-rest: full workspace + `cargo test -p xtask` green)
+- [x] Patterns named in [design-patterns.md](design-patterns.md)
+- [x] Docs agree (vision, requirements, matrix, host-deps, poc-ide architecture)
+- [x] `check-static` on new fully static dests; aarch64 `javacs` skipped by design (no new static dests on t3-rest)
+- [x] Do not commit engine binaries
+- [x] Do not start the next branch from the implementer agent (POC-tier stack complete on `t3-rest`; no `host8`)

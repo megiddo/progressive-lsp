@@ -1,4 +1,4 @@
-//! Runtime image: copy prebuilt core + slim + optional full packs into `/opt/plsp`.
+//! Runtime image: copy prebuilt core + slim + dogfood full packs into `/opt/plsp`.
 //!
 //! Context is a staging dir of already-extracted ELFs under
 //! `target/runtime-image/<triple>/` — not the git tree, and never a
@@ -9,7 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use progressive_lsp_core::PrefixLayout;
-use progressive_lsp_engine::{binary_name_for_pack, full_pack_names, slim_pack_names, JAVA_PACK};
+use progressive_lsp_engine::{
+    binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK, GOPLS_PACK, TSGO_PACK,
+    ZLS_PACK,
+};
 
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
@@ -22,11 +25,34 @@ pub const IMAGE_TAG: &str = "progressive-lsp-runtime:local";
 /// Prefix inside the image — not Mac `~/.progressivelsp`.
 pub const IMAGE_PREFIX: &str = "/opt/plsp";
 
-pub const DOCKERFILE_REL: &str = "docker/runtime.Dockerfile";
+pub const DOCKERFILE_X86_REL: &str = "docker/runtime.Dockerfile";
+pub const DOCKERFILE_AARCH64_REL: &str = "docker/runtime-aarch64.Dockerfile";
+
+/// x86_64 scratch dockerfile (legacy name for freshness stamps).
+pub const DOCKERFILE_REL: &str = DOCKERFILE_X86_REL;
+
+pub fn runtime_dockerfile_rel(triple: &str) -> Result<&'static str, String> {
+    match triple {
+        X86_64_MUSL => Ok(DOCKERFILE_X86_REL),
+        AARCH64_MUSL => Ok(DOCKERFILE_AARCH64_REL),
+        _ => Err(format!(
+            "unknown triple {triple}; expected {X86_64_MUSL} or {AARCH64_MUSL}"
+        )),
+    }
+}
+
+fn dockerfile_for_triple(root: &Path, triple: &str) -> Result<PathBuf, String> {
+    let rel = runtime_dockerfile_rel(triple)?;
+    let dockerfile = root.join(rel);
+    if !dockerfile.is_file() {
+        return Err(format!("missing {}", dockerfile.display()));
+    }
+    Ok(dockerfile)
+}
 
 const STAGING_KEEP: &str = ".keep";
 
-/// One pack ELF to copy (slim required, full optional). Value object (field of [`RuntimeImagePlan`]).
+/// One pack ELF to copy (slim + dogfood Go/TS/Zig/clangd required). Value object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackImageCopy {
     pack: String,
@@ -61,11 +87,9 @@ impl PackImageCopy {
     }
 }
 
-fn pack_required_on_triple(pack: &str, triple: &str) -> bool {
-    if pack == JAVA_PACK && triple == AARCH64_MUSL {
-        return false;
-    }
+fn pack_required_on_triple(pack: &str, _triple: &str) -> bool {
     slim_pack_names().contains(&pack)
+        || matches!(pack, CLANGD_PACK | GOPLS_PACK | TSGO_PACK | ZLS_PACK)
 }
 
 /// Value object. Platform, triple, dockerfile, core dest, pack dests, image tag.
@@ -96,10 +120,7 @@ impl RuntimeImagePlan {
                 ))
             }
         };
-        let dockerfile = root.join(DOCKERFILE_REL);
-        if !dockerfile.is_file() {
-            return Err(format!("missing {}", dockerfile.display()));
-        }
+        let dockerfile = dockerfile_for_triple(root, triple)?;
         let musl_root = root.join("target").join("musl").join(triple);
         let core_dest = musl_root.join(CORE_ELF_NAME);
         let pack_dests = full_pack_names()
@@ -187,9 +208,9 @@ impl RuntimeImagePlan {
 
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
     /// Fail closed if the core ELF or a required slim pack is missing.
-    /// Slim packs (including superhtml) are required on both triples, except
-    /// `java` on aarch64 (JAVA-T3.2: Graal musl static is x64 only).
-    /// Full packs (clangd/tsgo/gopls/zls) are optional (HOST-7 miss / clangd cache miss).
+    /// Slim packs (including superhtml and javacs) are required on both triples.
+    /// aarch64 javacs may need libc (not a Miss). tsgo/gopls/zls are required in the
+    /// POC dogfood image requires clangd (REST.2); fail closed if dest missing.
     pub fn stage(&self) -> Result<Vec<String>, String> {
         if !self.core_dest.is_file() {
             return Err(format!(
@@ -232,11 +253,7 @@ impl RuntimeImagePlan {
                         self.triple
                     ));
                 }
-                let why = if pack.pack == JAVA_PACK && self.triple == AARCH64_MUSL {
-                    "JAVA-T3.2 miss; Graal musl static is x64 only"
-                } else {
-                    "HOST-7 miss; not a Mach-O green"
-                };
+                let why = "HOST-7 miss; not a Mach-O green";
                 omitted.push(format!("{}:{} omitted ({why})", pack.pack, self.triple));
                 continue;
             }
@@ -320,7 +337,7 @@ fn parse_targets(args: &[String]) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use crate::musl::RecordingDockerPort;
-    use progressive_lsp_engine::{PYTHON_PACK, SUPERHTML_PACK};
+    use progressive_lsp_engine::{JAVA_PACK, PYTHON_PACK, SUPERHTML_PACK};
 
     fn fixture_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -329,6 +346,13 @@ mod tests {
         fs::write(
             docker.join("runtime.Dockerfile"),
             "FROM scratch\nCOPY prefix /opt/plsp\nCOPY tmp /tmp\n\
+             ENTRYPOINT [\"/opt/plsp/bin/progressive-lsp\"]\n\
+             CMD [\"serve\", \"--prefix\", \"/opt/plsp\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            docker.join("runtime-aarch64.Dockerfile"),
+            "FROM rockylinux:9-minimal\nCOPY prefix /opt/plsp\nCOPY tmp /tmp\n\
              ENTRYPOINT [\"/opt/plsp/bin/progressive-lsp\"]\n\
              CMD [\"serve\", \"--prefix\", \"/opt/plsp\"]\n",
         )
@@ -350,6 +374,10 @@ mod tests {
             if *pack == SUPERHTML_PACK && !include_superhtml {
                 continue;
             }
+            let binary = binary_name_for_pack(pack).unwrap();
+            write_elf(&musl.join("engines").join(pack).join(binary));
+        }
+        for pack in [CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
             let binary = binary_name_for_pack(pack).unwrap();
             write_elf(&musl.join("engines").join(pack).join(binary));
         }
@@ -388,7 +416,13 @@ mod tests {
             .iter()
             .find(|p| p.pack() == progressive_lsp_engine::CLANGD_PACK)
             .unwrap();
-        assert!(!clangd.required(), "full packs are optional HOST-7 copies");
+        assert!(clangd.required(), "dogfood image requires clangd (REST.2)");
+        let gopls = amd
+            .pack_dests()
+            .iter()
+            .find(|p| p.pack() == GOPLS_PACK)
+            .unwrap();
+        assert!(gopls.required(), "dogfood image requires gopls");
         let superhtml = amd
             .pack_dests()
             .iter()
@@ -419,6 +453,10 @@ mod tests {
 
         let arm = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
         assert_eq!(arm.docker_platform(), "linux/arm64");
+        assert_eq!(
+            arm.dockerfile(),
+            root.path().join("docker/runtime-aarch64.Dockerfile")
+        );
         let arm_superhtml = arm
             .pack_dests()
             .iter()
@@ -431,8 +469,8 @@ mod tests {
             .find(|p| p.pack() == JAVA_PACK)
             .unwrap();
         assert!(
-            !arm_java.required(),
-            "java aarch64 is JAVA-T3.2 optional omit"
+            arm_java.required(),
+            "java aarch64 dest is required (libc exception, not a Miss)"
         );
         let amd_java = amd
             .pack_dests()
@@ -479,7 +517,7 @@ mod tests {
         assert!(!args.iter().any(|a| a.contains("--output")));
         assert!(!args.iter().any(|a| a.contains("RUST_TARGET")));
         assert_eq!(args.last().map(String::as_str), Some("."));
-        assert!(args.iter().any(|a| a.contains("runtime.Dockerfile")));
+        assert!(args.iter().any(|a| a.contains("runtime-aarch64.Dockerfile")));
     }
 
     #[test]
@@ -488,10 +526,7 @@ mod tests {
         seed_required_elfs(root.path(), AARCH64_MUSL, true);
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
         let omitted = plan.stage().unwrap();
-        assert!(
-            omitted.iter().all(|n| n.contains("HOST-7 miss")),
-            "{omitted:?}"
-        );
+        assert!(omitted.is_empty(), "{omitted:?}");
         let docker = RecordingDockerPort::new();
         docker
             .tag_image(plan.context(), &plan.docker_build_args())
@@ -534,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_omits_aarch64_java_as_java_t3_2_miss() {
+    fn stage_fails_closed_when_aarch64_javacs_dest_missing() {
         let root = fixture_root();
         seed_required_elfs(root.path(), AARCH64_MUSL, true);
         let java = root
@@ -544,16 +579,10 @@ mod tests {
             .join("engines/java/javacs");
         fs::remove_file(&java).unwrap();
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
-        let omitted = plan.stage().unwrap();
-        assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains(JAVA_PACK) && n.contains("JAVA-T3.2")),
-            "{omitted:?}"
-        );
-        let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
-        assert!(!prefix.engines_dir().join("java/javacs").is_file());
-        assert!(prefix.engines_dir().join("phpantom/phpantom").is_file());
+        let err = plan.stage().unwrap_err();
+        assert!(err.contains("missing required slim pack"), "{err}");
+        assert!(err.contains(JAVA_PACK), "{err}");
+        assert!(err.contains(AARCH64_MUSL), "{err}");
     }
 
     #[test]
@@ -602,48 +631,48 @@ mod tests {
             !omitted.iter().any(|n| n.contains("superhtml")),
             "{omitted:?}"
         );
-        assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains("clangd") && n.contains("HOST-7 miss")),
-            "{omitted:?}"
-        );
-        assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains("gopls") && n.contains("HOST-7 miss")),
-            "{omitted:?}"
-        );
+        assert!(omitted.is_empty(), "{omitted:?}");
         let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
         assert!(prefix.engines_dir().join("superhtml/superhtml").is_file());
         assert!(prefix.engines_dir().join("python/ty").is_file());
         assert!(prefix.engines_dir().join("biome/biome").is_file());
-        assert!(!prefix.engines_dir().join("clangd/clangd").exists());
+        assert!(prefix.engines_dir().join("gopls/gopls").is_file());
+        assert!(prefix.engines_dir().join("clangd/clangd").is_file());
     }
 
     #[test]
-    fn stage_copies_optional_full_pack_when_present() {
+    fn stage_fails_closed_when_dogfood_gopls_dest_missing() {
         let root = fixture_root();
         seed_required_elfs(root.path(), AARCH64_MUSL, true);
-        write_elf(
-            &root
-                .path()
+        fs::remove_file(
+            root.path()
                 .join("target/musl")
                 .join(AARCH64_MUSL)
                 .join("engines/gopls/gopls"),
-        );
+        )
+        .unwrap();
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
-        let omitted = plan.stage().unwrap();
+        let err = plan.stage().unwrap_err();
+        assert!(err.contains("missing required slim pack") || err.contains("gopls"), "{err}");
+    }
+
+    #[test]
+    fn stage_fails_closed_when_dogfood_clangd_dest_missing() {
+        let root = fixture_root();
+        seed_required_elfs(root.path(), AARCH64_MUSL, true);
+        fs::remove_file(
+            root.path()
+                .join("target/musl")
+                .join(AARCH64_MUSL)
+                .join("engines/clangd/clangd"),
+        )
+        .unwrap();
+        let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
+        let err = plan.stage().unwrap_err();
         assert!(
-            omitted
-                .iter()
-                .any(|n| n.contains("clangd") && n.contains("HOST-7 miss")),
-            "{omitted:?}"
+            err.contains("missing required slim pack") || err.contains("clangd"),
+            "{err}"
         );
-        assert!(!omitted.iter().any(|n| n.contains("gopls")), "{omitted:?}");
-        let prefix = PrefixLayout::from_path(plan.staging().join("prefix"));
-        assert!(prefix.engines_dir().join("gopls/gopls").is_file());
-        assert!(!prefix.engines_dir().join("clangd/clangd").exists());
     }
 
     #[test]
@@ -680,10 +709,8 @@ mod tests {
         assert!(parse_targets(&["--target".into(), "x86_64-unknown-linux-gnu".into()]).is_err());
     }
 
-    #[test]
-    fn dockerfile_is_scratch_copy_only() {
-        let text = fs::read_to_string(workspace_root().join(DOCKERFILE_REL)).unwrap();
-        assert!(text.contains("FROM scratch"), "{text}");
+    fn assert_runtime_dockerfile_copy_only(text: &str, base: &str) {
+        assert!(text.contains(base), "{text}");
         assert!(text.contains("COPY prefix /opt/plsp"), "{text}");
         assert!(text.contains("COPY tmp /tmp"), "{text}");
         assert!(
@@ -706,6 +733,21 @@ mod tests {
         }
         assert!(!active.to_ascii_lowercase().contains("from rust"));
         assert!(!active.contains("RUN "));
+    }
+
+    #[test]
+    fn dockerfile_x86_is_scratch_copy_only() {
+        let text = fs::read_to_string(workspace_root().join(DOCKERFILE_X86_REL)).unwrap();
+        assert!(text.contains("FROM scratch"), "{text}");
+        assert_runtime_dockerfile_copy_only(&text, "FROM scratch");
+    }
+
+    #[test]
+    fn dockerfile_aarch64_is_glibc_copy_only() {
+        let text =
+            fs::read_to_string(workspace_root().join(DOCKERFILE_AARCH64_REL)).unwrap();
+        assert!(text.contains("rockylinux"), "{text}");
+        assert_runtime_dockerfile_copy_only(&text, "rockylinux");
     }
 
     #[test]

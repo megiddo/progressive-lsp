@@ -313,4 +313,65 @@ mod tests {
         assert!(IdeError::log("x").is_log());
         assert!(IdeError::runtime("x").is_runtime());
     }
+
+    #[test]
+    fn no_uri_rewriter_type_in_poc_ide_or_serve() {
+        let kinds = ["struct", "enum", "type"];
+        let names = [
+            "UriRewriter",
+            "UriMapper",
+            "FileUriRewriter",
+            "FileUriMapper",
+            "WorkspaceUriMap",
+            "UriRemap",
+        ];
+        let fns = ["rewrite_uri", "remap_uri"];
+        let ide = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let serve = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .join("src");
+        for root in [ide, serve] {
+            for entry in walkdir_rs(&root) {
+                let text = std::fs::read_to_string(&entry).unwrap_or_default();
+                for name in names {
+                    for kind in kinds {
+                        let token = format!("{kind} {name}");
+                        assert!(
+                            !text.contains(&token),
+                            "{} must not define {token} (identity mount; no URI rewriter)",
+                            entry.display()
+                        );
+                    }
+                }
+                for name in fns {
+                    let token = format!("fn {name}");
+                    assert!(
+                        !text.contains(&token),
+                        "{} must not define {token} (identity mount; no URI rewriter)",
+                        entry.display()
+                    );
+                }
+            }
+        }
+    }
+
+    fn walkdir_rs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
 }

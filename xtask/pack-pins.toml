@@ -1,6 +1,6 @@
 # Engine pack pins (slim + full). Content-addressed by upstream git SHA.
 # Not core crate semver (workspace 0.1.0). Fetch inside Docker, not on the Mac host.
-# clangd is cache-only (`kind = "cached"`). Missing cache is a documented miss —
+# clangd is cache-only (`kind = "cached"`). Populate with `xtask pack --pack clangd --cache-fill`.
 # do not cmake LLVM in the default `xtask pack` job.
 
 [toolchain.rust]

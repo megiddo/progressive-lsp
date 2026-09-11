@@ -65,7 +65,7 @@ progressive-lsp/                 bin: serve + install, register_builtins
 
 `progressive-lsp-core` stays sqlite-free. The bin is the only place that constructs `SqliteLogRepository`. Product logs are one WAL file per `serve`/`install` process under `$PREFIX/log/` ([logging.md](logging.md)). If that file cannot open, LOG-9 retries `serve-fallback-<unix_ms>-<pid>.sqlite` then a temp-dir WAL. poc-ide `RunLog` is a **separate** schema.
 
-**Dependency rule:** stock editors depend on nothing from this repo. Progressive consumers may depend on `progressive-lsp-install` and `progressive-lsp-control`. `progressive-lsp-plugin` is for people compiling *this* binary.
+**Dependency rule:** stock editors depend on nothing from this repo. Progressive consumers may depend on `progressive-lsp-install` and `progressive-lsp-control`. `poc-ide` may also depend on `progressive-lsp-core` for the shared `path_to_file_uri` / `path_from_file_uri` codec (identity `file:` URIs; no rewriter). `progressive-lsp-plugin` is for people compiling *this* binary.
 
 ## On-disk surface (`.progressivelsp`)
 

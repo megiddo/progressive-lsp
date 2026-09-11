@@ -72,11 +72,14 @@ main   # after log11 merge
                                                                     └── host7  # full flavor packs (last numbered host slice)
                                                                           └── fix-superhtml-x8664  # zig qemu faccessat
                                                                                 └── host-cleanup  # require superhtml; operator-cli merged; not host8
-                                                                                      └── poc-uri  # identity file: URIs
-                                                                                            └── t2-coverage
-                                                                                                  └── java-t3
-                                                                                                        └── t3-image
-                                                                                                              └── t3-rest
+                                                                                      # merged to main (PR #6 / #7)
+
+main   # after host-cleanup + Java T3 wiring merge
+  └── poc-uri  # identity file: URIs
+        └── t2-coverage
+              └── java-t3
+                    └── t3-image
+                          └── t3-rest
 ```
 
 A branch’s scope is that milestone’s WPs only. No “while we’re here” language packs on `m1`. Tests for the milestone are written **on that branch**.
@@ -795,7 +798,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
 | HOST-C.1 | Slim `PackImageCopy` required on both triples (including superhtml × x86_64) | fix-superhtml-x8664 | **SIGNED OFF.** Fail closed if dest missing. HOST-4 omit path deleted. |
-| HOST-C.2 | clangd cache miss stays honest | HOST-C.1 | **SIGNED OFF.** Full packs remain optional. Default `xtask pack` never cmake. `--cache-fill` not this slice. Cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1` still absent. |
+| HOST-C.2 | clangd cache via `--cache-fill` | HOST-C.1 | **SUPERSEDED by REST.2.** Dogfood image requires clangd dest; fill cache key `3623fe661ae35c6c80ac221f14d85be76aa870f1` on `t3-rest`. |
 | HOST-C.3 | Zig host-native platform locked for both host ISAs | HOST-C.1 | **SIGNED OFF.** `for_pin_on_host_arch` injects `x86_64` → `linux/amd64` (native CI, no qemu) and `aarch64` → `linux/arm64`. Rust/go/cached still follow the triple. Native linux/amd64 CI was not re-run in this Darwin session. |
 | HOST-C.4 | Docs + live amd64 image with superhtml | HOST-C.1 | **SIGNED OFF.** milestones HOST-CLEANUP; branching `host7 └── fix-superhtml-x8664 └── host-cleanup` (`operator-cli` merged). Live `xtask runtime-image` amd64 includes superhtml. `:local` left on native arm64. |
 
@@ -818,33 +821,33 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 |---|---|---|---|
 | JAVA-T3.1 | `PackKind` + pin + Graal dockerfile; slim pack name `java`; Darwin stub | host-cleanup | **LANDED.** |
 | JAVA-T3.3 | Census + factory `EngineResolver` + poc-ide catalog | JAVA-T3.1 | **LANDED.** |
-| JAVA-T3.2a | Live x86_64 fully static `javacs` | JAVA-T3.1 | POC-JAVA. `check-static` pass. |
-| JAVA-T3.2b | Live aarch64 native-image `javacs` (libc allowed) | JAVA-T3.1 | POC-JAVA. No `libjvm`. |
-| JAVA-T3.2c | xtask: no aarch64 Java Miss/omit | JAVA-T3.2a, JAVA-T3.2b | Dest required both triples. |
+| JAVA-T3.2a | Live x86_64 fully static `javacs` | JAVA-T3.1 | **SIGNED OFF** (POC-JAVA). `check-static` pass. |
+| JAVA-T3.2b | Live aarch64 native-image `javacs` (libc allowed) | JAVA-T3.1 | **SIGNED OFF** (POC-JAVA). No `libjvm`. |
+| JAVA-T3.2c | xtask: no aarch64 Java Miss/omit | JAVA-T3.2a, JAVA-T3.2b | **SIGNED OFF** (POC-JAVA). Dest required both triples. |
 
 ## POC tier stack
 
-**Status: DESIGNED.** Master: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md). Parent `host-cleanup`.
+**Status: POC-URI SIGNED OFF.** Master: [poc-tier-plan.md](poc-tier-plan.md). Agent: [poc-tier/agent-context.md](poc-tier/agent-context.md). Parent of `poc-uri` is current `main` (`host-cleanup` merged).
 
 | ID | Work package | Depends-on | Notes |
 |---|---|---|---|
-| URI.1 | Inventory `file:` URI producers/consumers | host-cleanup | Share `file_uri` / `path_to_file_uri`. |
-| URI.2 | Tests: identity mount + same `rootUri` native vs container | URI.1 | No daemon. |
-| URI.3 | Remove any rewriter/split | URI.2 | Do not add a mapper. |
-| T2-COV.1 | C / C++ heuristic T2 | POC-URI signed off | `#include`, name/arity. |
-| T2-COV.2 | Rust / Python heuristic T2 | T2-COV.1 | TSG opt-in. |
-| T2-COV.3 | CSS / HTML heuristic T2 | T2-COV.2 | Conformance T2 leaves N/A. |
-| IMG.1 | `javacs` required on both runtime-image triples | JAVA-T3.2c | |
-| IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | x86_64 scratch OK. |
-| IMG.3 | Image plan tests + live tag proof | IMG.2 | |
-| REST.1 | Dogfood image includes tsgo, gopls, zls | POC-IMG | Both ISAs. |
-| REST.2 | clangd both ISAs or honest miss | REST.1 | No `.so`; no default-PR cmake. |
-| REST.3 | Rust Linux sysroot honesty in container | REST.1 | |
-| REST.4 | Live POC proof notes | REST.1 | Not a cargo test. |
+| URI.1 | Inventory `file:` URI producers/consumers | current `main` | **SIGNED OFF.** Share `file_uri` / `path_to_file_uri`. Table in [poc-tier-plan.md](poc-tier-plan.md). |
+| URI.2 | Tests: identity mount + same `rootUri` native vs container | URI.1 | **SIGNED OFF.** No daemon. Rewriter type fail-closed. |
+| URI.3 | Remove any rewriter/split | URI.2 | **SIGNED OFF.** No mapper. Duplicate poc-ide codec now wraps core. |
+| T2-COV.1 | C / C++ heuristic T2 | POC-URI signed off | **SIGNED OFF.** `#include`, name/arity. |
+| T2-COV.2 | Rust / Python heuristic T2 | T2-COV.1 | **SIGNED OFF.** TSG opt-in. |
+| T2-COV.3 | CSS / HTML heuristic T2 | T2-COV.2 | **SIGNED OFF.** Conformance T2 leaves N/A. |
+| IMG.1 | `javacs` required on both runtime-image triples | JAVA-T3.2c | **SIGNED OFF** (POC-IMG on `t3-image`). |
+| IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | **SIGNED OFF.** Rocky 9 minimal base; x86_64 scratch OK. |
+| IMG.3 | Image plan tests + live tag proof | IMG.2 | **SIGNED OFF.** Unit tests + orchestrator `:local` tag (milestones POC-IMG). |
+| REST.1 | Dogfood image includes tsgo, gopls, zls | POC-IMG | **SIGNED OFF** (POC-REST). Required in plan. |
+| REST.2 | clangd static musl both ISAs in dogfood image | REST.1 | **SIGNED OFF (code).** Plan requires clangd; cache-fill Dockerfile + freshness tests; live ELF orchestrator proof ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)). |
+| REST.3 | Rust Linux sysroot honesty in container | REST.1 | **SIGNED OFF.** [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md). |
+| REST.4 | Live POC proof notes | REST.1 | **SIGNED OFF.** Not a cargo test. |
 
 ## T2 heuristic coverage (every v1 language)
 
-**Status: DESIGNED, NOT LANDED.** [t2-heuristic-coverage.md](t2-heuristic-coverage.md). Branch `t2-coverage` after `poc-uri`. WPs T2-COV.* in the table above.
+**Status: SIGNED OFF** on `t2-coverage`. [t2-heuristic-coverage.md](t2-heuristic-coverage.md). Parent is `poc-uri`. Do not open `java-t3` until this table stays signed off.
 
 ## T3 Linux hosts
 
@@ -885,6 +888,19 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 - [x] Docs in this tree updated
 - [x] [design-patterns.md](design-patterns.md) — `MuslBuildPlan`, `DockerPort`, `CommandDockerPort`, `RecordingDockerPort`
 
+## Post–POC-tier (after `t3-rest` → `main` PR)
+
+**Status: PLANNED.** Master: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md). Branches: `post-build` → `post-artifacts` → `post-ide`. Orchestrator proof for live clangd (POST-PROOF) may run on `main` without waiting for POST-BUILD if only blobs + image proof are needed.
+
+| Track | IDs | Summary |
+|---|---|---|
+| Proof | POST-PROOF.* | Overnight cache-fill, `runtime-image --both`, rest-live-proof rows |
+| Build | POST-BUILD.* | `./build lsp --flavor dogfood`; full packs + image stamp |
+| Artifacts | POST-ART.* | SHA manifest, URLs, cache pull; fat dist/image release |
+| IDE | POST-IDE.* | Container-primary on non-Linux; real T3 preflight |
+
+Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stack new branches instead.
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -906,4 +922,4 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 7. LOG orchestrators: pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. Stack `log0` on current `main`, not `poc-no-console`. Parent of `log5` is `log4`. Do not reopen LOG-0–LOG-5.
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
 9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged. `host7` is the last numbered host slice — do not open `host8`.
-10. POC-tier orchestrators: pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on `host-cleanup`. Do not start `t2-coverage` until POC-URI is signed off. Order: `poc-uri` → `t2-coverage` → `java-t3` → `t3-image` → `t3-rest`. Plan: [poc-tier-plan.md](poc-tier-plan.md).
+10. POC-tier orchestrators: pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on current `main` (`host-cleanup` merged). POC-T2 is signed off on `t2-coverage`. Do not start `java-t3` until that stays signed off. Order: `poc-uri` → `t2-coverage` → `java-t3` → `t3-image` → `t3-rest`. Plan: [poc-tier-plan.md](poc-tier-plan.md).

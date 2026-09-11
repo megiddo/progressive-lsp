@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "HTML LanguageFactory T1 + superhtml T3"
+description = "HTML LanguageFactory T1 + heuristic T2 + superhtml T3"
 
 [dependencies]
 progressive-lsp-core.workspace = true

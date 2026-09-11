@@ -32,7 +32,7 @@ Default bar: fully static (no interpreter, no shared libraries). “Works” may
 |---|---|---|
 | Python, PHP, HTML, CSS, JS, TS, Go, Zig, Rust | **Works** (may require a build) | **Works** (may require a build). Rust types still need a Linux rustc sysroot on that host. |
 | C, C++ (clangd) | **Requires investigation and implementation** | **Requires investigation and implementation** |
-| Java | **Requires implementation** — fully static | **Exception** — native-image that still needs the host C library, until Graal fully-static ARM exists. No JVM / JDT. |
+| Java | **Works** — fully static `javacs` (live pack) | **Works** — native-image + host libc exception until Graal fully-static ARM exists. No JVM / JDT. |
 | C# | **This just can’t work** (Native AOT failed-closed; T1/T2 ceiling) | same |
 
 ## Java aarch64 exception

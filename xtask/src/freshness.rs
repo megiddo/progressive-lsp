@@ -18,7 +18,7 @@ use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
 use crate::pack::PINS_REL;
-use crate::runtime_image::{DOCKERFILE_REL, IMAGE_TAG};
+use crate::runtime_image::{runtime_dockerfile_rel, DOCKERFILE_REL, IMAGE_TAG};
 use crate::{musl, pack, runtime_image, workspace_root};
 
 /// SHA-256 hex of the inputs that produce one dest ELF / image. Value object.
@@ -252,7 +252,9 @@ impl LspArtifact {
                 }
             }
             Self::Image { triple } => {
-                push_if_file(root.join(DOCKERFILE_REL), &mut files);
+                if let Ok(rel) = runtime_dockerfile_rel(triple) {
+                    push_if_file(root.join(rel), &mut files);
+                }
                 files.push(
                     root.join("target")
                         .join("musl")
@@ -499,6 +501,7 @@ mod tests {
     use super::*;
     use crate::check_static::fixture_static_elf64;
     use crate::musl::RecordingDockerPort;
+    use progressive_lsp_engine::{CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK};
 
     const SAMPLE_PINS: &str = r#"
 [toolchain.rust]
@@ -560,6 +563,42 @@ kind = "zig"
 dockerfile = "docker/engine-pack-zig.Dockerfile"
 
 [[pack]]
+name = "gopls"
+binary = "gopls"
+repo = "https://github.com/golang/tools.git"
+sha = "014f87ff5c01915bc90f4f11a6bb8aea3e0edbd7"
+kind = "go"
+source_subdir = "gopls"
+go_package = "."
+dockerfile = "docker/engine-pack-go.Dockerfile"
+
+[[pack]]
+name = "tsgo"
+binary = "tsgo"
+repo = "https://github.com/microsoft/typescript-go.git"
+sha = "2bd066d87f5bafd315be9f40889d0a60b9e58e0b"
+kind = "go"
+go_package = "./cmd/tsgo"
+dockerfile = "docker/engine-pack-go.Dockerfile"
+
+[[pack]]
+name = "zls"
+binary = "zls"
+repo = "https://github.com/zigtools/zls.git"
+sha = "f91b2e1e305e5d5bd3725aea90f9f9bfb3dce055"
+kind = "zig"
+dockerfile = "docker/engine-pack-zig.Dockerfile"
+
+[[pack]]
+name = "clangd"
+binary = "clangd"
+repo = "https://github.com/llvm/llvm-project.git"
+sha = "3623fe661ae35c6c80ac221f14d85be76aa870f1"
+kind = "cached"
+tag = "llvmorg-21.1.0"
+dockerfile = "docker/engine-pack-clangd.Dockerfile"
+
+[[pack]]
 name = "java"
 binary = "javacs"
 repo = "https://example.test/java-language-server.git"
@@ -580,6 +619,11 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
         fs::write(
             root.join("docker/runtime.Dockerfile"),
             "FROM scratch\nCOPY prefix /opt/plsp\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docker/runtime-aarch64.Dockerfile"),
+            "FROM rockylinux:9-minimal\nCOPY prefix /opt/plsp\n",
         )
         .unwrap();
         fs::write(
@@ -626,12 +670,20 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
             fs::create_dir_all(pack.dest(root).parent().unwrap()).unwrap();
             fs::write(pack.dest(root), &elf).unwrap();
         }
+        for name in [CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
+            let pack = LspArtifact::pack(name, triple);
+            fs::create_dir_all(pack.dest(root).parent().unwrap()).unwrap();
+            fs::write(pack.dest(root), &elf).unwrap();
+        }
     }
 
     fn write_matching_stamps(root: &Path, triple: &str) {
         LspArtifact::core(triple).write_stamp(root).unwrap();
         for name in slim_pack_names() {
             LspArtifact::pack(*name, triple).write_stamp(root).unwrap();
+        }
+        for name in [CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
+            LspArtifact::pack(name, triple).write_stamp(root).unwrap();
         }
         LspArtifact::image(triple).write_stamp(root).unwrap();
     }
@@ -891,7 +943,7 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
     }
 
     #[test]
-    fn aarch64_java_documented_miss_does_not_call_docker() {
+    fn missing_aarch64_java_dest_rebuilds_via_recording_docker() {
         let dir = fixture_root();
         let root = dir.path();
         seed_dests(root, AARCH64_MUSL);
@@ -903,11 +955,11 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
             docker
                 .recorded_dests()
                 .iter()
-                .all(|p| !p.to_string_lossy().contains("/engines/java/")),
-            "JAVA-T3.2 aarch64 must not pull muslib: {:?}",
+                .any(|p| p.to_string_lossy().contains("/engines/java/")),
+            "missing aarch64 java dest must rebuild: {:?}",
             docker.recorded_dests()
         );
-        assert!(!LspArtifact::pack("java", AARCH64_MUSL).dest_exists(root));
+        assert!(LspArtifact::pack("java", AARCH64_MUSL).dest_exists(root));
     }
 
     #[test]

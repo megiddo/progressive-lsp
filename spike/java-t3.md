@@ -65,11 +65,13 @@ What landed so a later x86_64 ELF drops in:
 |---|---|
 | Pack name / binary | `java` / `javacs` (slim) |
 | Pin | `xtask/pack-pins.toml` kind `graal` |
-| Dockerfile | `docker/engine-pack-graal.Dockerfile` (`25.0.0-muslib-ol9`, `native-image --static --libc=musl`, `org.javacs.Main`, no jlink / JDT) |
+| Dockerfile | `docker/engine-pack-graal.Dockerfile` (`ARG GRAAL_TAG` / `NATIVE_IMAGE_FLAGS`: x86_64 muslib + `--static --libc=musl`, aarch64 `25.0.0-ol9` + `-H:+StaticExecutableWithDynamicLibC`; `org.javacs.Main`; no jlink / JDT) |
 | Dest | `target/musl/<triple>/engines/java/javacs` (aarch64 dest is a native-image that may need libc; not a Miss) |
 | Darwin `xtask dist` | stub bytes + `DARWIN_CI_GAP.txt` |
 
 **Do not** treat Darwin stubs or `RecordingDockerPort` fixture bytes as a `check-static` green. **Do not** ship a JAR, jlink image, `libjvm`, or host `java`. When a real x86_64 ELF exists, run `xtask check-static` on that dest file only.
+
+**Live proof (POC-JAVA, Darwin arm64 + Docker):** `cargo xtask pack --pack java --target x86_64-unknown-linux-musl` → `check-static` pass on `target/musl/x86_64-unknown-linux-musl/engines/java/javacs`. Same for `aarch64-unknown-linux-musl` → native-image with `libc.so.6` + `ld-linux-aarch64.so.1` only (`check_native_image_libc`, not CLI `check-static`). Upstream pin `@ 58daaa29a0e2fe22764283607da6801cf8b493b9`. Dests gitignored.
 
 ## Fail closed
 
