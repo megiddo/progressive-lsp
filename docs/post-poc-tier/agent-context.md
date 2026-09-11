@@ -93,14 +93,14 @@ POST-DOC runs inside each track (milestones + implementation-plan rows when sign
 | Branch | In | Out |
 |---|---|---|
 | `post-build` | `./build lsp --flavor dogfood`; full pack rebuild; image stamp includes full dests | HTTP pull; poc-ide UX |
-| `post-artifacts` | Manifest schema, example manifest, cache pull/push, wire dogfood pull for `cached` | IDE default container |
+| `post-artifacts` | Manifest schema, **local** `target/local-artifacts/` store, cache pull/push, wire dogfood pull for `cached`; remote CDN optional later | IDE default container |
 | `post-ide` | Container-primary open; preflight_t3; `./build run ide` defaults | Changing pack pins; cmake CI |
 
 ---
 
 ## Locks (all tracks)
 
-- SHA-pegged pins in `xtask/pack-pins.toml`; no binaries in git.
+- SHA-pegged pins in `xtask/pack-pins.toml`; no binaries in git. **Local artifact store first** (`target/local-artifacts/`); no remote artifact host required until upload.
 - PR CI: no `--cache-fill` / cmake LLVM on every PR.
 - Sandbox: do not use `required_permissions: ["all"]` for `cargo` / `cargo xtask` / routine `docker` in this repo.
 - One serve; identity URIs; hash-gated install unchanged.

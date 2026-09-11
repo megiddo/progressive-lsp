@@ -54,6 +54,47 @@ Workspace/core crate version is **0.1.0** (first published v1; 1.0.0 waits for n
 
 Default `serve` is stock stdio LSP with control **off** (`experimental.progressiveLsp.socket` is null, `mux` is false). `--control-socket PATH` / `--control-fd N` advertise a side channel. `--mux` uses one stdio stream: channel `0` = opaque JSON-RPC, channel `1` = length-prefixed protobuf.
 
+## SHA-pegged artifact store (POST-ART)
+
+Engine blobs are **not** committed to git. Pins live in `xtask/pack-pins.toml` (`upstream_sha` per pack). Published bytes are addressed by SHA + triple + content hash.
+
+**Manifest schema** (`StoreManifest`, one row per blob):
+
+| Field | Meaning |
+|---|---|
+| `pack` | Pack name (`clangd`, …) |
+| `upstream_sha` | 40-hex git SHA from `pack-pins.toml` |
+| `triple` | Musl triple (`x86_64-unknown-linux-musl`, …) |
+| `sha256` | Lowercase hex of the **downloaded archive** (or raw blob) |
+| `url` | HTTPS (or `file://` in tests) fetch URL |
+| `format` | `tar.gz` \| `tar` \| `zip` \| `tar.bz2` |
+
+Schema reference: [xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json) (empty until you push).
+
+**Local store (default; no remote host required):** gitignored `target/local-artifacts/engines/{pack}/{upstream_sha}/{triple}.tar.gz` plus `target/local-artifacts/manifest.json` (`file://` URLs). After `--cache-fill`, run `cargo xtask pack --pack clangd --cache push` to archive the cache ELF and update the local manifest. Upload to CDN/GitHub later by copying those files and repointing `url` to `https://…`.
+
+**Remote layout (optional later)** when `PROGRESSIVE_LSP_ARTIFACT_BASE` is set:
+
+```text
+{base}/engines/{pack}/{upstream_sha}/{triple}.{format}
+```
+
+Default `format` is `tar.gz` (`PROGRESSIVE_LSP_ARTIFACT_FORMAT` overrides).
+
+**Pull** (populates `target/pack-cache/clangd/<sha>/<triple>/clangd` from local store first, then optional env overrides):
+
+```text
+cargo xtask pack --pack clangd --cache pull
+```
+
+Optional: `PROGRESSIVE_LSP_ARTIFACT_MANIFEST=…` or `PROGRESSIVE_LSP_ARTIFACT_BASE=https://…`.
+
+`./build lsp --flavor dogfood` tries cache pull for `kind = cached` (clangd) before fail-closing. Remote upload only when `PROGRESSIVE_LSP_ARTIFACT_PUSH=1` **and** `PROGRESSIVE_LSP_ARTIFACT_BASE` are set.
+
+**Fat release**: `cargo xtask dist --pack full` and `progressive-lsp-runtime:<tag>` are equivalent “everything under prefix” shapes for publishing one full tarball (+ optional OCI tag per ISA). See [testing.md](testing.md).
+
+**Install / consumers**: in-tree `progressive-lsp install` stays verify-only (no silent network). Remote hosts depend on `progressive-lsp-install` and implement `ArtifactTransport` to fetch manifest URLs, verify sha256, then call `Installer::apply_manifest`. SSH/scp stays in the consumer (e.g. zeds-dead), not in this repo.
+
 ## What not to do
 
 - Do not vendor this server inside an IDE agent as a fork of resolvers.

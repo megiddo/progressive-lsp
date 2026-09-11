@@ -1,6 +1,7 @@
 //! cargo xtask: build / run help, plus musl, check-static, bench-alloc, poc.
 
 mod allocator;
+mod artifact_store;
 mod check_static;
 mod cli;
 mod dist;

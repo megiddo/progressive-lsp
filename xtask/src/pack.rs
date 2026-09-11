@@ -13,11 +13,25 @@ use progressive_lsp_engine::{
     binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK, JAVA_PACK,
 };
 
+use crate::artifact_store::{
+    self, pull_cache_binary, push_cache_binary, ArtifactFormat, NetworkFetcher,
+    ARTIFACT_DEFAULT_FORMAT,
+};
 use crate::check_static;
 use crate::musl::{triples, CommandDockerPort, DockerPort, AARCH64_MUSL, X86_64_MUSL};
 use crate::workspace_root;
 
 pub const PINS_REL: &str = "xtask/pack-pins.toml";
+
+/// `--cache-fill` vs `--cache pull|push` (mutually exclusive).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CacheAction {
+    #[default]
+    None,
+    Fill,
+    Pull,
+    Push,
+}
 
 /// Value object. rust / zig / go / graal / cached / cmake (toolchain lives in the container).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,7 +401,6 @@ impl PackBuildPlan {
         &self.pack
     }
 
-    #[cfg(test)]
     pub fn binary(&self) -> &str {
         &self.binary
     }
@@ -415,7 +428,6 @@ impl PackBuildPlan {
         &self.rust_target
     }
 
-    #[cfg(test)]
     pub fn pinned_sha(&self) -> &str {
         &self.pinned_sha
     }
@@ -818,7 +830,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
 }
 
 pub fn run_at(root: &Path, args: &[String], docker: &dyn DockerPort) -> Result<(), String> {
-    let (want_packs, targets, cache_fill) = parse_pack_args(args)?;
+    let (want_packs, targets, cache_action) = parse_pack_args(args)?;
+    if matches!(cache_action, CacheAction::Pull | CacheAction::Push) {
+        return run_cache_action(root, &want_packs, &targets, cache_action);
+    }
+    let cache_fill = cache_action == CacheAction::Fill;
     let (pins, rust, zig, go) = load_pins(root)?;
     let mut failures = Vec::new();
     for pack in &want_packs {
@@ -878,11 +894,17 @@ fn extract_plan(plan: &PackBuildPlan, docker: &dyn DockerPort) -> Result<PackOut
     if plan.kind() == &PackKind::Cached {
         let cache = plan.cache_src();
         if !cache.is_file() {
+            let _ = try_cache_pull_for_plan(plan);
+        }
+        let cache = plan.cache_src();
+        if !cache.is_file() {
             return Ok(PackOutcome::Miss(format!(
-                "{}:{} cache miss (key {}); documented gap, not cmake / not a Mach-O green",
+                "{}:{} cache miss (key {}); documented gap, not cmake / not a Mach-O green \
+                 (xtask pack --pack {} --cache pull)",
                 plan.pack(),
                 plan.triple(),
-                plan.cache_key()
+                plan.cache_key(),
+                plan.pack()
             )));
         }
         if let Some(parent) = plan.dest().parent() {
@@ -1015,10 +1037,10 @@ fn refuse_unknown(pack: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_pack_args(args: &[String]) -> Result<(Vec<String>, Vec<String>, bool), String> {
+fn parse_pack_args(args: &[String]) -> Result<(Vec<String>, Vec<String>, CacheAction), String> {
     let mut packs = Vec::new();
     let mut targets = Vec::new();
-    let mut cache_fill = false;
+    let mut cache_action = CacheAction::None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1049,23 +1071,47 @@ fn parse_pack_args(args: &[String]) -> Result<(Vec<String>, Vec<String>, bool), 
                 packs = full_pack_names().iter().map(|s| (*s).to_string()).collect();
             }
             "--cache-fill" => {
-                cache_fill = true;
+                if cache_action != CacheAction::None {
+                    return Err("--cache-fill cannot combine with --cache".into());
+                }
+                cache_action = CacheAction::Fill;
+            }
+            "--cache" => {
+                if cache_action != CacheAction::None {
+                    return Err("duplicate --cache / --cache-fill".into());
+                }
+                i += 1;
+                let sub = args.get(i).ok_or("--cache requires pull or push")?;
+                cache_action = match sub.as_str() {
+                    "pull" => CacheAction::Pull,
+                    "push" => CacheAction::Push,
+                    other => return Err(format!("--cache {other}: expected pull or push")),
+                };
             }
             other => return Err(format!("unknown pack flag: {other}")),
         }
         i += 1;
     }
     if packs.is_empty() {
-        packs = if cache_fill {
+        packs = if cache_action == CacheAction::Fill || cache_action == CacheAction::Pull {
+            vec![CLANGD_PACK.to_string()]
+        } else if cache_action == CacheAction::Push {
             vec![CLANGD_PACK.to_string()]
         } else {
             slim_pack_names().iter().map(|s| (*s).to_string()).collect()
         };
     }
-    if cache_fill {
+    if cache_action == CacheAction::Fill {
         for p in &packs {
             if p != CLANGD_PACK {
                 return Err(format!("cache-fill is clangd only; refusing {p}"));
+            }
+        }
+    }
+    if matches!(cache_action, CacheAction::Pull | CacheAction::Push) {
+        for p in &packs {
+            if p != CLANGD_PACK {
+                return Err(format!("cache pull/push is clangd only for now; refusing {p}"));
             }
         }
     }
@@ -1074,7 +1120,100 @@ fn parse_pack_args(args: &[String]) -> Result<(Vec<String>, Vec<String>, bool), 
     }
     targets.sort();
     targets.dedup();
-    Ok((packs, targets, cache_fill))
+    Ok((packs, targets, cache_action))
+}
+
+fn run_cache_action(
+    root: &Path,
+    want_packs: &[String],
+    targets: &[String],
+    action: CacheAction,
+) -> Result<(), String> {
+    let (pins, rust, zig, go) = load_pins(root)?;
+    let fetcher = NetworkFetcher;
+    let format = ArtifactFormat::parse(
+        std::env::var("PROGRESSIVE_LSP_ARTIFACT_FORMAT")
+            .as_deref()
+            .unwrap_or(ARTIFACT_DEFAULT_FORMAT),
+    )?;
+    let mut failures = Vec::new();
+    for pack in want_packs {
+        let pin = pins
+            .iter()
+            .find(|p| p.name == *pack)
+            .ok_or_else(|| format!("pack {pack} is not pinned in {PINS_REL}"))?;
+        if pin.kind != PackKind::Cached {
+            return Err(format!("cache {action:?} requires kind=cached; {pack} is not"));
+        }
+        for triple in targets {
+            let plan = PackBuildPlan::for_pin(root, pin, triple, rust.as_ref(), zig.as_ref(), go.as_ref())?;
+            let r = match action {
+                CacheAction::Pull => pull_cache_binary(
+                    root,
+                    &pin.name,
+                    &pin.sha,
+                    triple,
+                    &pin.binary,
+                    &plan.cache_src(),
+                    &fetcher,
+                )
+                .map(|_| ()),
+                CacheAction::Push => push_cache_binary(
+                    root,
+                    &pin.name,
+                    &pin.sha,
+                    triple,
+                    &pin.binary,
+                    &plan.cache_src(),
+                    format,
+                ),
+                _ => unreachable!(),
+            };
+            if let Err(e) = r {
+                eprintln!("xtask pack: cache {action:?} FAIL {pack} {triple}: {e}");
+                failures.push(format!("{pack} {triple}: {e}"));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+/// Best-effort cache populate from local store or optional remote (POST-ART.4).
+pub fn try_cache_pull_for_pack(root: &Path, pack: &str, triple: &str) -> Result<bool, String> {
+    let (pins, rust, zig, go) = load_pins(root)?;
+    let pin = pins
+        .iter()
+        .find(|p| p.name == pack)
+        .ok_or_else(|| format!("pack {pack} is not pinned"))?;
+    if pin.kind != PackKind::Cached {
+        return Ok(false);
+    }
+    let plan = PackBuildPlan::for_pin(root, pin, triple, rust.as_ref(), zig.as_ref(), go.as_ref())?;
+    try_cache_pull_for_plan(&plan)
+}
+
+fn try_cache_pull_for_plan(plan: &PackBuildPlan) -> Result<bool, String> {
+    if plan.cache_src().is_file() {
+        return Ok(true);
+    }
+    let fetcher = NetworkFetcher;
+    pull_cache_binary(
+        plan.context(),
+        plan.pack(),
+        plan.pinned_sha(),
+        plan.triple(),
+        plan.binary(),
+        &plan.cache_src(),
+        &fetcher,
+    )
+    .or_else(|e| {
+        eprintln!("xtask pack: cache pull skipped ({}): {e}", plan.cache_key());
+        Ok(false)
+    })
 }
 
 fn expand_pack_list(raw: &str) -> Result<Vec<String>, String> {
@@ -1705,10 +1844,10 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
 
     #[test]
     fn default_is_slim_both_triples_and_workspace_pins_exist() {
-        let (packs, targets, cache_fill) = parse_pack_args(&[]).unwrap();
+        let (packs, targets, cache_action) = parse_pack_args(&[]).unwrap();
         assert_eq!(packs, slim_pack_names());
         assert_eq!(targets.len(), 2);
-        assert!(!cache_fill);
+        assert_eq!(cache_action, CacheAction::None);
         let slim = parse_pack_args(&["--slim".into(), "--both".into()]).unwrap();
         assert_eq!(slim.0.len(), 6);
         let full = parse_pack_args(&["--full".into()]).unwrap();
@@ -2000,10 +2139,13 @@ dockerfile = "docker/engine-pack-clangd.Dockerfile"
         assert!(err.contains("clangd only"), "{err}");
         let parsed = parse_pack_args(&["--cache-fill".into()]).unwrap();
         assert_eq!(parsed.0, vec![CLANGD_PACK]);
-        assert!(parsed.2);
+        assert_eq!(parsed.2, CacheAction::Fill);
         assert!(
             parse_pack_args(&["--cache-fill".into(), "--pack".into(), "gopls".into()]).is_err()
         );
+        let pull = parse_pack_args(&["--cache".into(), "pull".into()]).unwrap();
+        assert_eq!(pull.0, vec![CLANGD_PACK]);
+        assert_eq!(pull.2, CacheAction::Pull);
     }
 
     #[test]
