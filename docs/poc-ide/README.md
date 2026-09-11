@@ -8,7 +8,7 @@ Related: [architecture.md](architecture.md), [third-party.md](third-party.md), [
 
 | Capability | How |
 |---|---|
-| Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog`. Non-Linux: **Open Folder…** is native T1/T2; **Open Folder in Container…** is one Linux serve (T1/T2/T3) with identity bind-mount (same `file:` URIs; no rewriter). Linux: Open Folder is the full host. |
+| Open folder or open file | `DialogPort` → native `rfd` in the bin; tests inject `FakeDialog`. **Non-Linux default (POST-IDE):** **Open Folder in Container…** — one Linux `serve --mux` (progressive T1→T2→T3; missing packs gate T3 per language only). **Optional:** native **Open Folder…** for T1/T2 without Docker (not the product path). Same `file:` URIs with identity bind-mount; no rewriter. Linux: native open is full host; container optional for parity. |
 | T1/T2/T3 strip | Buttons. Click opens `StatusModal` + `LaunchJournal`. Native non-Linux T3 is `skipped` (`open folder in container`). C# T3 is `not supported` (T1/T2 ceiling). After T2-COV every v1 language has T2. Java T3 follows the static pack on Linux. Stub refuse is `skipped`, not `done`. |
 | Tree, tabs, editor, resizable left panel | Domain `FileTree` + `CompactChain` + `TabStrip` + `LayoutState`; eframe `SidePanel` in the bin. Single-child dir chains render as `a/b/c`. |
 | Syntax highlighting | `Highlighter` Adapter + `HighlightCache` over **syntect** (egui layouter in the bin; keyed by path + rope generation) |

@@ -6,13 +6,16 @@ Related: [host-deps.md](host-deps.md), [language-matrix.md](language-matrix.md),
 
 ## Modes
 
-| Client | Intelligence host | Tiers |
-|---|---|---|
-| POC Open Folder on Mac | Darwin `progressive-lsp` | T1 + T2 only |
-| POC Open Folder in Container | one Linux container `serve` | T1 + T2 + T3 |
-| Native Linux / production | Linux `progressive-lsp` | T1 + T2 + T3 |
+| Client | Intelligence host | Tiers | Product? |
+|---|---|---|---|
+| POC default (non-Linux) | one Linux container `serve --mux` | T1 + T2 always; T3 per pack (progressive) | **Yes** |
+| POC optional native open (non-Linux) | Darwin `progressive-lsp` | T1 + T2 only; T3 not offered | Dev/legacy; must not drive design |
+| POC / Linux dev (container parity) | same as default | same as default | **Yes** |
+| Native Linux / production | Linux `progressive-lsp` | T1 + T2 + T3 (per pack) | **Yes** |
 
-Never two serves. Native **or** container.
+Never two serves per workspace. One host: container **or** native.
+
+Missing dogfood packs (e.g. clangd before POST-PROOF) **gate T3 for affected languages only** inside the container; T1/T2 in that serve continue.
 
 We ship T3 backends for **both** Linux architectures we claim in dist (`x86_64` and `aarch64`). The container ISA is whichever Linux we are pretending to be.
 
