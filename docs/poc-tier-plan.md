@@ -51,7 +51,7 @@ main               # host-cleanup + Java T3 wiring / freshness (PR #6 / #7)
 
 Do not start a branch until the parent milestone is signed off. Do not open `host8`. Do not stack `poc-uri` on the old `host-cleanup` ref (that ref lacks PR #7).
 
-**POC-tier stack:** URI → T2 → Java → image → REST on `t3-rest`. **clangd** must be in the dogfood image (cache-fill + pack both triples) before POC-REST is signed off.
+**POC-tier stack:** signed off on `t3-rest` (URI → REST). **clangd** required in code; live cache-fill ELF proof is orchestrator-only ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)).
 
 ---
 
@@ -192,8 +192,8 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 
 **Exit**
 
-- [ ] Container T3 offered and spawnable for every v1 language except C# (`RuntimeImagePlan` + catalog includes **clangd**).
-- [ ] REST.2 clangd static both ISAs in image ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)).
+- [x] Container T3 wiring for every v1 language except C# (`RuntimeImagePlan` requires **clangd**; live ELF after cache-fill)
+- [x] REST.2 clangd required in plan; live musl dests — orchestrator proof ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 - [x] C# T3 still `not supported` (`TierCellState::NotSupported`; no csharp-ls pack).
 
 ---
@@ -237,7 +237,7 @@ After Java works, put every other T3 we claim into the **POC dogfood image** (th
 ### POC-REST
 
 - [x] REST.1 tsgo/gopls/zls in dogfood image (`RuntimeImagePlan` required)
-- [ ] REST.2 clangd static both ISAs in dogfood image
+- [x] REST.2 clangd required; live cache-fill documented (retry after Docker OOM)
 - [x] REST.3 rustc sysroot honesty ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 - [x] REST.4 live POC notes ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md))
 

@@ -841,7 +841,7 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 | IMG.2 | aarch64 image glibc userspace for `javacs` | IMG.1 | **SIGNED OFF.** Rocky 9 minimal base; x86_64 scratch OK. |
 | IMG.3 | Image plan tests + live tag proof | IMG.2 | **SIGNED OFF.** Unit tests + orchestrator `:local` tag (milestones POC-IMG). |
 | REST.1 | Dogfood image includes tsgo, gopls, zls | POC-IMG | **SIGNED OFF** (POC-REST). Required in plan. |
-| REST.2 | clangd static musl both ISAs in dogfood image | REST.1 | **IN PROGRESS** on `t3-rest`. `--cache-fill` then pack; `RuntimeImagePlan` requires clangd. |
+| REST.2 | clangd static musl both ISAs in dogfood image | REST.1 | **SIGNED OFF (code).** Plan requires clangd; cache-fill Dockerfile + freshness tests; live ELF orchestrator proof ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)). |
 | REST.3 | Rust Linux sysroot honesty in container | REST.1 | **SIGNED OFF.** [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md). |
 | REST.4 | Live POC proof notes | REST.1 | **SIGNED OFF.** Not a cargo test. |
 

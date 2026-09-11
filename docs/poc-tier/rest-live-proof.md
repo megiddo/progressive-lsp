@@ -1,17 +1,34 @@
 # POC-REST live proof notes (orchestrator)
 
-Not a `cargo test`. Records what was run on the dogfood image path after POC-JAVA / POC-IMG.
+Not a `cargo test`. Records dogfood image / pack proof after POC-JAVA / POC-IMG.
 
-## REST.2 clangd
+## REST.2 clangd (required)
 
-**Required** in the POC dogfood image on both Linux ISAs. Build flow:
+**Code (signed off on `t3-rest`):** `RuntimeImagePlan` / `PackImageCopy` require `clangd` on both triples; `freshness` seeds full dogfood dests in unit tests.
 
-1. `cargo xtask pack --pack clangd --cache-fill --target <triple>` (LLVM cache; not default PR cmake)
-2. `cargo xtask pack --pack clangd --target <triple>` → `target/musl/<triple>/engines/clangd/clangd`
-3. `cargo xtask check-static` on x86_64 `clangd` (fully static bar)
-4. `cargo xtask runtime-image --both` — staging must copy clangd (no omit)
+**Live ELF (pending):** populate cache then extract:
 
-Proof rows are filled when the clangd orchestrator completes.
+```sh
+export CARGO_TARGET_DIR="$PWD/target"
+cargo xtask pack --pack clangd --cache-fill --target x86_64-unknown-linux-musl
+cargo xtask pack --pack clangd --cache-fill --target aarch64-unknown-linux-musl
+cargo xtask pack --pack clangd --target x86_64-unknown-linux-musl
+cargo xtask pack --pack clangd --target aarch64-unknown-linux-musl
+cargo xtask check-static target/musl/x86_64-unknown-linux-musl/engines/clangd/clangd
+cargo xtask runtime-image --both
+```
+
+**2026-09-11 session:** x86_64 `--cache-fill` ran in Docker; host-stage `ninja` hit **OOM** (`g++: fatal error: Killed`) around object ~1650/2962 with default parallelism. `docker/engine-pack-clangd-cache-fill.Dockerfile` now sets `NINJAFLAGS=-j2`. Re-run cache-fill locally (or raise Docker Desktop memory) before claiming REST.2 live proof.
+
+Dest paths stay gitignored under `target/musl/<triple>/engines/` and `target/pack-cache/clangd/<sha>/<triple>/`.
+
+## Hygiene / environment notes
+
+| Gate | Result |
+|---|---|
+| `cargo test -p xtask -- --test-threads=1` | **PASS** (113 tests; `CARGO_TARGET_DIR=$PWD/target`) |
+| Full workspace `cargo test -- --test-threads=1` | **Cursor sandbox:** `serve_host::tests::initialize_merges_overlay_and_excludes_without_editing_gitignore` fails (` .git/hooks/: Operation not permitted` in temp repo). Run the full suite on the host outside the agent sandbox for a green. |
+| `cargo llvm-cov` / `cargo mutants` on `xtask/` | **N/A** per [testing.md](../testing.md) (xtask excluded from 95% / mutants denominator). |
 
 ## REST.3 Rust sysroot
 
@@ -21,21 +38,7 @@ Container ships **rust-analyzer** only. A Darwin rustc sysroot does **not** sati
 
 | Scenario | Bar | Proof |
 |---|---|---|
-| Java tree → T3 | `javacs` in image; aarch64 glibc base | POC-JAVA live pack + POC-IMG `progressive-lsp-runtime:local` (see [../../spike/java-t3.md](../../spike/java-t3.md)) |
-| One other slim language | static slim ELF in image | `python`/`ty` staged with image (same as other slim packs) |
-| One full-pack language | tsgo / gopls / zls required dest | `xtask pack` extract both triples when Docker available; `RuntimeImagePlan` fail-closed if missing |
-| C/C++ T3 | static `clangd` in image | REST.2 above |
-
-## Commands (reference)
-
-```sh
-cargo xtask pack --pack clangd --cache-fill --target x86_64-unknown-linux-musl
-cargo xtask pack --pack clangd --cache-fill --target aarch64-unknown-linux-musl
-cargo xtask pack --pack clangd --target x86_64-unknown-linux-musl
-cargo xtask pack --pack clangd --target aarch64-unknown-linux-musl
-cargo xtask pack --pack gopls --pack tsgo --pack zls --target aarch64-unknown-linux-musl
-cargo xtask pack --pack gopls --pack tsgo --pack zls --target x86_64-unknown-linux-musl
-cargo xtask runtime-image --both
-```
-
-Dest paths stay gitignored under `target/musl/<triple>/engines/`.
+| Java tree → T3 | `javacs` in image; aarch64 glibc base | POC-JAVA live pack + POC-IMG `progressive-lsp-runtime:local` ([spike/java-t3.md](../../spike/java-t3.md)) |
+| One other slim language | static slim ELF in image | `python`/`ty` staged with image |
+| One full-pack language | tsgo / gopls / zls required dest | `RuntimeImagePlan` fail-closed if missing |
+| C/C++ T3 | static `clangd` in image | REST.2 above (live pending cache-fill) |

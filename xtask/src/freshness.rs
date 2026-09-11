@@ -501,7 +501,7 @@ mod tests {
     use super::*;
     use crate::check_static::fixture_static_elf64;
     use crate::musl::RecordingDockerPort;
-    use progressive_lsp_engine::{GOPLS_PACK, TSGO_PACK, ZLS_PACK};
+    use progressive_lsp_engine::{CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK};
 
     const SAMPLE_PINS: &str = r#"
 [toolchain.rust]
@@ -590,6 +590,15 @@ kind = "zig"
 dockerfile = "docker/engine-pack-zig.Dockerfile"
 
 [[pack]]
+name = "clangd"
+binary = "clangd"
+repo = "https://github.com/llvm/llvm-project.git"
+sha = "3623fe661ae35c6c80ac221f14d85be76aa870f1"
+kind = "cached"
+tag = "llvmorg-21.1.0"
+dockerfile = "docker/engine-pack-clangd.Dockerfile"
+
+[[pack]]
 name = "java"
 binary = "javacs"
 repo = "https://example.test/java-language-server.git"
@@ -661,7 +670,7 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
             fs::create_dir_all(pack.dest(root).parent().unwrap()).unwrap();
             fs::write(pack.dest(root), &elf).unwrap();
         }
-        for name in [GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
+        for name in [CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
             let pack = LspArtifact::pack(name, triple);
             fs::create_dir_all(pack.dest(root).parent().unwrap()).unwrap();
             fs::write(pack.dest(root), &elf).unwrap();
@@ -673,7 +682,7 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
         for name in slim_pack_names() {
             LspArtifact::pack(*name, triple).write_stamp(root).unwrap();
         }
-        for name in [GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
+        for name in [CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
             LspArtifact::pack(name, triple).write_stamp(root).unwrap();
         }
         LspArtifact::image(triple).write_stamp(root).unwrap();

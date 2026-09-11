@@ -49,6 +49,9 @@ RUN set -eux; \
 
 # cmake LLVM/clangd — cache-fill path only. Fail closed; do not COPY a dynamic ELF.
 # Host tblgen tools must not use musl/static (glibc libstdc++ + musl ld mix fails).
+# Limit ninja parallelism — full `-j` OOM-kills g++ inside default Docker Desktop RAM.
+ENV NINJAFLAGS="-j2"
+
 WORKDIR /fetch/src
 RUN mkdir -p build-host && cd build-host \
     && cmake -G Ninja ../llvm \
