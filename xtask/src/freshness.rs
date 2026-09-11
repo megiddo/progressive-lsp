@@ -10,10 +10,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use progressive_lsp_engine::{binary_name_for_pack, slim_pack_names};
+use progressive_lsp_engine::{binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK};
 use progressive_lsp_install::{hex_encode, sha256};
 
-use crate::cli::{LspArch, LspFlags};
+use crate::cli::{LspArch, LspFlags, LspFlavor};
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
@@ -104,7 +104,10 @@ impl Freshness {
 pub enum LspArtifact {
     Core { triple: String },
     Pack { name: String, triple: String },
-    Image { triple: String },
+    Image {
+        triple: String,
+        flavor: LspFlavor,
+    },
 }
 
 impl LspArtifact {
@@ -121,9 +124,10 @@ impl LspArtifact {
         }
     }
 
-    pub fn image(triple: impl Into<String>) -> Self {
+    pub fn image(triple: impl Into<String>, flavor: LspFlavor) -> Self {
         Self::Image {
             triple: triple.into(),
+            flavor,
         }
     }
 
@@ -143,7 +147,7 @@ impl LspArtifact {
                     .join(name)
                     .join(binary)
             }
-            Self::Image { triple } => root
+            Self::Image { triple, .. } => root
                 .join("target")
                 .join("runtime-image")
                 .join(triple)
@@ -209,9 +213,11 @@ impl LspArtifact {
                 buf.push(0);
                 buf.extend(pack::pack_stamp_payload(root, name)?);
             }
-            Self::Image { triple } => {
+            Self::Image { triple, flavor } => {
                 buf.extend(b"image\0");
                 buf.extend(triple.as_bytes());
+                buf.push(0);
+                buf.extend(flavor.as_str().as_bytes());
             }
         }
         buf.push(0);
@@ -251,7 +257,10 @@ impl LspArtifact {
                     push_if_file(df, &mut files);
                 }
             }
-            Self::Image { triple } => {
+            Self::Image {
+                triple,
+                flavor,
+            } => {
                 if let Ok(rel) = runtime_dockerfile_rel(triple) {
                     push_if_file(root.join(rel), &mut files);
                 }
@@ -261,7 +270,7 @@ impl LspArtifact {
                         .join(triple)
                         .join(CORE_ELF_NAME),
                 );
-                for pack in slim_pack_names() {
+                for pack in pack_names_for_flavor(*flavor) {
                     let binary = binary_name_for_pack(pack).unwrap_or(pack);
                     files.push(
                         root.join("target")
@@ -362,6 +371,13 @@ fn docker_target_args(want: &[&str]) -> Vec<String> {
     out
 }
 
+pub fn pack_names_for_flavor(flavor: LspFlavor) -> &'static [&'static str] {
+    match flavor {
+        LspFlavor::Slim => slim_pack_names(),
+        LspFlavor::Dogfood => full_pack_names(),
+    }
+}
+
 pub fn execute_lsp(arch: LspArch, flags: LspFlags) -> Result<(), String> {
     execute_lsp_at(&workspace_root(), arch, flags, &CommandDockerPort)
 }
@@ -375,8 +391,37 @@ pub fn execute_lsp_at(
     let triples = triples_for(arch);
     rebuild_cores(root, arch, &flags, &triples, docker)?;
     rebuild_packs(root, arch, &flags, &triples, docker)?;
+    if flags.flavor == LspFlavor::Dogfood {
+        verify_dogfood_pack_dests(root, &triples)?;
+    }
     rebuild_images(root, arch, &flags, &triples, docker)?;
     Ok(())
+}
+
+fn verify_dogfood_pack_dests(root: &Path, triples: &[&str]) -> Result<(), String> {
+    let mut missing = Vec::new();
+    for triple in triples {
+        for name in full_pack_names() {
+            let artifact = LspArtifact::pack(*name, *triple);
+            if !artifact.dest_exists(root) {
+                missing.push(format!("{} ({})", *name, *triple));
+            }
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut msg = format!(
+        "dogfood flavor: missing pack dest(s): {}",
+        missing.join(", ")
+    );
+    if missing.iter().any(|m| m.starts_with(CLANGD_PACK)) {
+        msg.push_str(
+            "; clangd needs target/pack-cache/clangd/<sha>/<triple>/clangd \
+             (xtask pack --pack clangd --cache-fill or POST-ART cache pull)",
+        );
+    }
+    Err(msg)
 }
 
 fn rebuild_cores(
@@ -420,7 +465,7 @@ fn rebuild_packs(
 ) -> Result<(), String> {
     for triple in triples {
         let mut stale = Vec::new();
-        for name in slim_pack_names() {
+        for name in pack_names_for_flavor(flags.flavor) {
             if let Some(note) = pack::documented_miss_for_pack(root, name, triple)? {
                 eprintln!(
                     "./build lsp {}: backends {} ({}) {note}",
@@ -470,13 +515,14 @@ fn rebuild_images(
 ) -> Result<(), String> {
     let mut stale = Vec::new();
     for triple in triples {
-        let artifact = LspArtifact::image(*triple);
+        let artifact = LspArtifact::image(*triple, flags.flavor);
         let freshness = artifact.freshness(root, flags)?;
         if freshness.skip() {
             eprintln!(
-                "./build lsp {}: runtime image {IMAGE_TAG} ({}) is fresh",
+                "./build lsp {}: runtime image {IMAGE_TAG} ({}, flavor {}) is fresh",
                 arch.as_str(),
-                triple
+                triple,
+                flags.flavor.as_str()
             );
         } else {
             stale.push(*triple);
@@ -486,12 +532,13 @@ fn rebuild_images(
         return Ok(());
     }
     eprintln!(
-        "./build lsp {}: (3/3) runtime image {IMAGE_TAG}",
-        arch.as_str()
+        "./build lsp {}: (3/3) runtime image {IMAGE_TAG} (flavor {})",
+        arch.as_str(),
+        flags.flavor.as_str()
     );
     runtime_image::run_at(root, &docker_target_args(&stale), docker)?;
     for triple in stale {
-        LspArtifact::image(triple).write_stamp(root)?;
+        LspArtifact::image(triple, flags.flavor).write_stamp(root)?;
     }
     Ok(())
 }
@@ -685,7 +732,9 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
         for name in [CLANGD_PACK, GOPLS_PACK, TSGO_PACK, ZLS_PACK] {
             LspArtifact::pack(name, triple).write_stamp(root).unwrap();
         }
-        LspArtifact::image(triple).write_stamp(root).unwrap();
+        LspArtifact::image(triple, LspFlavor::Slim)
+            .write_stamp(root)
+            .unwrap();
     }
 
     #[test]
@@ -766,11 +815,51 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
     }
 
     #[test]
+    fn dogfood_image_stamp_includes_full_pack_dest_bytes() {
+        let dir = fixture_root();
+        let root = dir.path();
+        seed_dests(root, X86_64_MUSL);
+        let slim = LspArtifact::image(X86_64_MUSL, LspFlavor::Slim);
+        let dogfood = LspArtifact::image(X86_64_MUSL, LspFlavor::Dogfood);
+        assert_ne!(slim.current_stamp(root).unwrap(), dogfood.current_stamp(root).unwrap());
+        let slim_before = slim.current_stamp(root).unwrap();
+        let dogfood_before = dogfood.current_stamp(root).unwrap();
+        fs::write(
+            LspArtifact::pack(CLANGD_PACK, X86_64_MUSL).dest(root),
+            b"clangd-revised",
+        )
+        .unwrap();
+        assert_eq!(slim.current_stamp(root).unwrap(), slim_before);
+        assert_ne!(dogfood.current_stamp(root).unwrap(), dogfood_before);
+    }
+
+    #[test]
+    fn execute_lsp_dogfood_fails_closed_when_clangd_dest_missing() {
+        let dir = fixture_root();
+        let root = dir.path();
+        seed_dests(root, X86_64_MUSL);
+        fs::remove_file(LspArtifact::pack(CLANGD_PACK, X86_64_MUSL).dest(root)).unwrap();
+        let docker = RecordingDockerPort::new();
+        let err = execute_lsp_at(
+            root,
+            LspArch::X86_64,
+            LspFlags {
+                flavor: LspFlavor::Dogfood,
+                ..LspFlags::default()
+            },
+            &docker,
+        )
+        .unwrap_err();
+        assert!(err.contains("clangd"), "{err}");
+        assert!(err.contains("pack-cache"), "{err}");
+    }
+
+    #[test]
     fn image_stamp_changes_when_copy_inputs_change() {
         let dir = fixture_root();
         let root = dir.path();
         seed_dests(root, X86_64_MUSL);
-        let image = LspArtifact::image(X86_64_MUSL);
+        let image = LspArtifact::image(X86_64_MUSL, LspFlavor::Dogfood);
         let before = image.current_stamp(root).unwrap();
         fs::write(
             LspArtifact::core(X86_64_MUSL).dest(root),
@@ -920,7 +1009,16 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
         seed_dests(root, X86_64_MUSL);
         write_matching_stamps(root, X86_64_MUSL);
         let docker = RecordingDockerPort::new();
-        execute_lsp_at(root, LspArch::X86_64, LspFlags { force: true }, &docker).unwrap();
+        execute_lsp_at(
+            root,
+            LspArch::X86_64,
+            LspFlags {
+                force: true,
+                ..LspFlags::default()
+            },
+            &docker,
+        )
+        .unwrap();
         let dests = docker.recorded_dests();
         assert!(
             dests.iter().any(|p| p.ends_with(CORE_ELF_NAME)),

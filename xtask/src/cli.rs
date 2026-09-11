@@ -79,11 +79,39 @@ impl LspArch {
     }
 }
 
+/// Which engine packs `./build lsp` rebuilds before the runtime image.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LspFlavor {
+    /// Slim packs only (default). Runtime image step still requires dogfood dests if you tag `:local` manually.
+    #[default]
+    Slim,
+    /// Slim + full packs (clangd, tsgo, gopls, zls) — matches dogfood `RuntimeImagePlan`.
+    Dogfood,
+}
+
+impl LspFlavor {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "slim" => Some(Self::Slim),
+            "dogfood" => Some(Self::Dogfood),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Slim => "slim",
+            Self::Dogfood => "dogfood",
+        }
+    }
+}
+
 /// Flags for `./build lsp {arch}`. Value object.
 /// `--force` treats every artifact as stale (make: rebuild everything).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LspFlags {
     pub force: bool,
+    pub flavor: LspFlavor,
 }
 
 /// What `xtask build` produces. Value object.
@@ -344,8 +372,9 @@ fn parse_lsp(args: &[String]) -> Result<XtaskCommand, String> {
 
 fn parse_lsp_flags(args: &[String]) -> Result<LspFlags, String> {
     let mut flags = LspFlags::default();
-    for arg in args {
-        match arg.as_str() {
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
             "--force" => {
                 if flags.force {
                     return Err(
@@ -355,12 +384,27 @@ fn parse_lsp_flags(args: &[String]) -> Result<LspFlags, String> {
                 }
                 flags.force = true;
             }
+            "--flavor" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --flavor\nTry: ./build help lsp".to_string())?;
+                flags.flavor = LspFlavor::parse(raw).ok_or_else(|| {
+                    format!("unknown --flavor {raw} (expected slim or dogfood)\nTry: ./build help lsp")
+                })?;
+            }
+            other if let Some(raw) = other.strip_prefix("--flavor=") => {
+                flags.flavor = LspFlavor::parse(raw).ok_or_else(|| {
+                    format!("unknown --flavor {raw} (expected slim or dogfood)\nTry: ./build help lsp")
+                })?;
+            }
             other => {
                 return Err(format!(
                     "unexpected argument after architecture: {other}\nTry: ./build help lsp"
                 ));
             }
         }
+        i += 1;
     }
     Ok(flags)
 }
@@ -514,7 +558,7 @@ pub fn print_help(topic: HelpTopic) {
 
 const ROOT_HELP: &str = "\
 Usage:
-  ./build lsp {all|x86_64|aarch64} [--force]
+  ./build lsp {all|x86_64|aarch64} [--force] [--flavor slim|dogfood]
   ./build ide
   ./build run ide
   ./build run ide --folder DIR
@@ -538,7 +582,7 @@ run ide Start the POC editor (rebuilds native progressive-lsp first).
 ";
 
 pub const LSP_ARCHES: &str = "\
-usage: ./build lsp {all|x86_64|aarch64} [--force]
+usage: ./build lsp {all|x86_64|aarch64} [--force] [--flavor slim|dogfood]
 
 Valid architectures:
   all       both Linux musl triples
@@ -547,6 +591,9 @@ Valid architectures:
 
   --force   rebuild controller, backends, and runtime image even when
             dest ELFs / image stamp are fresh
+  --flavor  slim (default): slim engine packs only. dogfood: slim + full
+            packs (clangd, tsgo, gopls, zls) required by the runtime image.
+            clangd needs pack-cache or --cache-fill (see rest-live-proof).
 ";
 
 const IDE_HELP: &str = "\
@@ -769,6 +816,28 @@ mod tests {
                 flags: LspFlags::default(),
             }
         );
+        assert_eq!(
+            parse_line(&["lsp", "x86_64", "--flavor", "dogfood"]).unwrap(),
+            XtaskCommand::Lsp {
+                arch: LspArch::X86_64,
+                flags: LspFlags {
+                    flavor: LspFlavor::Dogfood,
+                    ..LspFlags::default()
+                },
+            }
+        );
+        assert_eq!(
+            parse_line(&["lsp", "all", "--flavor=dogfood", "--force"]).unwrap(),
+            XtaskCommand::Lsp {
+                arch: LspArch::All,
+                flags: LspFlags {
+                    force: true,
+                    flavor: LspFlavor::Dogfood,
+                },
+            }
+        );
+        let err = parse_line(&["lsp", "x86_64", "--flavor", "fat"]).unwrap_err();
+        assert!(err.contains("unknown --flavor"), "{err}");
         let err = parse_line(&["lsp", "riscv64"]).unwrap_err();
         assert!(err.contains("unknown architecture: riscv64"), "{err}");
         assert!(err.contains("Valid architectures"), "{err}");
@@ -786,18 +855,28 @@ mod tests {
             parse_line(&["lsp", "all", "--force"]).unwrap(),
             XtaskCommand::Lsp {
                 arch: LspArch::All,
-                flags: LspFlags { force: true },
+                flags: LspFlags {
+                    force: true,
+                    ..LspFlags::default()
+                },
             }
         );
         assert_eq!(
             parse_line(&["lsp", "aarch64", "--force"]).unwrap(),
             XtaskCommand::Lsp {
                 arch: LspArch::Aarch64,
-                flags: LspFlags { force: true },
+                flags: LspFlags {
+                    force: true,
+                    ..LspFlags::default()
+                },
             }
         );
-        assert_eq!(LspFlags { force: true }, LspFlags { force: true }.clone());
-        assert_ne!(LspFlags::default(), LspFlags { force: true });
+        let forced = LspFlags {
+            force: true,
+            ..LspFlags::default()
+        };
+        assert_eq!(forced, forced.clone());
+        assert_ne!(LspFlags::default(), forced);
         let err = parse_line(&["lsp", "all", "--wat"]).unwrap_err();
         assert!(
             err.contains("unexpected argument after architecture: --wat"),
