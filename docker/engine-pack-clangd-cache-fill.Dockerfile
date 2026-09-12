@@ -60,6 +60,8 @@ WORKDIR /fetch/src
 RUN mkdir -p build-host && cd build-host \
     && cmake -G Ninja ../llvm \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
         -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
         -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
         -DLLVM_ENABLE_ZLIB=OFF \

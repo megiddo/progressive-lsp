@@ -20,6 +20,8 @@ cargo xtask runtime-image --both
 
 **2026-09-11 session:** x86_64 `--cache-fill` failed in Docker (**OOM** / `ResourceExhausted: cannot allocate memory` on musl `ninja clangd`). Dockerfile caps **`NINJAFLAGS=-j2`** (override build-arg `-j1` if still OOM).
 
+**2026-09-12 build-host:** host tblgen cmake must use **`clang`/`clang++`** — Debian `cc` rejects LLVM’s `-Wcovered-switch-default` / `-Wstring-conversion` on `regcomp.c` (see `docker-20260911-225432.log`).
+
 **2026-09-11 musl link fix (`fix-clangd-musl-link`):** musl stage no longer uses `musl-gcc` + `g++` + `-static` (glibc **libstdc++.a** vs musl **ld** → `__libc_single_threaded` / `_dl_find_object` on `clang-tidy-confusable-chars-gen`). **build-host** also builds `clang-tidy-confusable-chars-gen`; musl cmake pins **`CLANG_TIDY_CONFUSABLE_CHARS_GEN`** and links with **`clang++ --target=*-linux-musl -static`**.
 
 ### Overnight run (when Docker is resourced)
