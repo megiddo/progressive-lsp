@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Overnight REST.2: LLVM cache-fill + musl pack extract for clangd (both triples).
-# Run from repo root on branch t3-rest. Requires Docker Desktop with enough RAM.
+# Run from repo root (main or fix branch). Requires Docker Desktop with enough RAM.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
