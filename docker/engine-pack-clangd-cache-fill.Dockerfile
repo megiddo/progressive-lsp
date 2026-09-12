@@ -31,7 +31,7 @@ RUN test -n "${PACK}" && test -n "${UPSTREAM_REPO}" && test -n "${UPSTREAM_SHA}"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git cmake ninja-build python3 ca-certificates \
-        musl-tools musl-dev g++ \
+        musl-dev clang lld \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /fetch
@@ -48,8 +48,10 @@ RUN set -eux; \
     git -C src checkout --detach "${UPSTREAM_SHA}"
 
 # cmake LLVM/clangd — cache-fill path only. Fail closed; do not COPY a dynamic ELF.
-# Host tblgen tools must not use musl/static (glibc libstdc++ + musl ld mix fails).
-# Limit ninja parallelism — full `-j` OOM-kills g++ inside default Docker Desktop RAM.
+# Host tblgen + clang-tidy sourcegen tools must not use musl/static (glibc libstdc++
+# + musl ld fails: __libc_single_threaded, _dl_find_object).
+# Musl stage uses clang --target=*-linux-musl -static (not debian g++ -static libstdc++).
+# Limit ninja parallelism — full `-j` OOM-kills link inside default Docker Desktop RAM.
 # Override overnight: docker build --build-arg NINJAFLAGS=-j1 (slowest, lowest RAM).
 ARG NINJAFLAGS=-j2
 ENV NINJAFLAGS=${NINJAFLAGS}
@@ -58,6 +60,8 @@ WORKDIR /fetch/src
 RUN mkdir -p build-host && cd build-host \
     && cmake -G Ninja ../llvm \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
         -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
         -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
         -DLLVM_ENABLE_ZLIB=OFF \
@@ -68,16 +72,26 @@ RUN mkdir -p build-host && cd build-host \
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
         -DLLVM_BUILD_LLVM_DYLIB=OFF \
         -DLLVM_LINK_LLVM_DYLIB=OFF \
-    && ninja llvm-tblgen clang-tblgen llvm-min-tblgen
-RUN mkdir -p build && cd build \
+    && ninja llvm-tblgen clang-tblgen llvm-min-tblgen clang-tidy-confusable-chars-gen
+RUN set -eux; \
+    case "${RUST_TARGET}" in \
+      x86_64-unknown-linux-musl) CLANG_TARGET=x86_64-linux-musl ;; \
+      aarch64-unknown-linux-musl) CLANG_TARGET=aarch64-linux-musl ;; \
+      *) echo "unsupported RUST_TARGET=${RUST_TARGET}" >&2; exit 1 ;; \
+    esac; \
+    export CLANG_TARGET; \
+    mkdir -p build && cd build \
     && cmake -G Ninja ../llvm \
         -DCMAKE_BUILD_TYPE=MinSizeRel \
-        -DCMAKE_C_COMPILER=musl-gcc \
-        -DCMAKE_CXX_COMPILER=g++ \
-        -DCMAKE_EXE_LINKER_FLAGS="-static" \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_FLAGS="--target=${CLANG_TARGET} -static" \
+        -DCMAKE_CXX_FLAGS="--target=${CLANG_TARGET} -static" \
+        -DCMAKE_EXE_LINKER_FLAGS="--target=${CLANG_TARGET} -static -fuse-ld=lld" \
         -DLLVM_TABLEGEN=/fetch/src/build-host/bin/llvm-tblgen \
         -DCLANG_TABLEGEN=/fetch/src/build-host/bin/clang-tblgen \
         -DLLVM_MIN_TABLEGEN=/fetch/src/build-host/bin/llvm-min-tblgen \
+        -DCLANG_TIDY_CONFUSABLE_CHARS_GEN=/fetch/src/build-host/bin/clang-tidy-confusable-chars-gen \
         -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
         -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
         -DLLVM_ENABLE_ZLIB=OFF \

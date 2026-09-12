@@ -20,11 +20,15 @@ cargo xtask runtime-image --both
 
 **2026-09-11 session:** x86_64 `--cache-fill` failed in Docker (**OOM** / `ResourceExhausted: cannot allocate memory` on musl `ninja clangd`). Dockerfile caps **`NINJAFLAGS=-j2`** (override build-arg `-j1` if still OOM).
 
+**2026-09-12 build-host:** host tblgen cmake must use **`clang`/`clang++`** — Debian `cc` rejects LLVM’s `-Wcovered-switch-default` / `-Wstring-conversion` on `regcomp.c` (see `docker-20260911-225432.log`).
+
+**2026-09-11 musl link fix (`fix-clangd-musl-link`):** musl stage no longer uses `musl-gcc` + `g++` + `-static` (glibc **libstdc++.a** vs musl **ld** → `__libc_single_threaded` / `_dl_find_object` on `clang-tidy-confusable-chars-gen`). **build-host** also builds `clang-tidy-confusable-chars-gen`; musl cmake pins **`CLANG_TIDY_CONFUSABLE_CHARS_GEN`** and links with **`clang++ --target=*-linux-musl -static`**.
+
 ### Overnight run (when Docker is resourced)
 
 1. **Docker Desktop → Settings → Resources:** give the VM **≥ 12 GiB RAM** (16 GiB safer for musl LLVM link). **≥ 80 GiB disk** free on the data disk. Quit other heavy containers.
 2. **Branch:** `t3-rest`, repo root = Google Drive checkout.
-3. **Kick off** (logs under `target/clangd-overnight-logs/`). If musl `ninja` still OOMs, `export NINJAFLAGS=-j1` before the script (xtask forwards it to the cache-fill image build):
+3. **Kick off** (logs under `target/clangd-overnight-logs/`; `scripts/clangd-overnight.sh` tees stdout/stderr there). For a manual cache-fill, save the Docker build log the same way, e.g. `cargo xtask pack --pack clangd --cache-fill --target x86_64-unknown-linux-musl 2>&1 | tee target/clangd-overnight-logs/cache-fill-x86_64-$(date +%Y%m%d-%H%M%S).log`. If musl `ninja` still OOMs, `export NINJAFLAGS=-j1` before the script (xtask forwards it to the cache-fill image build):
 
 ```sh
 chmod +x scripts/clangd-overnight.sh
