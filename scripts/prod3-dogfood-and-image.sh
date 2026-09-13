@@ -15,7 +15,8 @@ echo "=== PROD-3 dogfood + runtime image ==="
 echo "log=$LOG"
 date
 
-./build lsp all --flavor dogfood
+ARCH="$(uname -m | sed 's/arm64/aarch64/; s/x86_64/x86_64/')"
+./build lsp "$ARCH" --flavor dogfood
 cargo xtask runtime-image --both
 docker images progressive-lsp-runtime:local
 

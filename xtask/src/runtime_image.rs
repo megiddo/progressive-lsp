@@ -17,10 +17,24 @@ use progressive_lsp_engine::{
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
+use crate::pack::host_native_docker_platform;
 use crate::workspace_root;
 
-/// Locked in poc-ide `RUNTIME_IMAGE`. Do not invent a second name.
+/// Locked in poc-ide `RUNTIME_IMAGE`. Tagged for the **host Docker platform** when building both triples.
 pub const IMAGE_TAG: &str = "progressive-lsp-runtime:local";
+
+pub const IMAGE_TAG_AARCH64: &str = "progressive-lsp-runtime:local-aarch64";
+pub const IMAGE_TAG_X86_64: &str = "progressive-lsp-runtime:local-x86_64";
+
+pub fn image_tag_for_triple(triple: &str) -> Result<&'static str, String> {
+    match triple {
+        X86_64_MUSL => Ok(IMAGE_TAG_X86_64),
+        AARCH64_MUSL => Ok(IMAGE_TAG_AARCH64),
+        _ => Err(format!(
+            "unknown triple {triple}; expected {X86_64_MUSL} or {AARCH64_MUSL}"
+        )),
+    }
+}
 
 /// Prefix inside the image — not Mac `~/.progressivelsp`.
 pub const IMAGE_PREFIX: &str = "/opt/plsp";
@@ -192,18 +206,24 @@ impl RuntimeImagePlan {
         &self.staging
     }
 
-    /// `docker` argv (without the program name). Tests assert `-t` and platform.
-    pub fn docker_build_args(&self) -> Vec<String> {
-        vec![
+    /// `docker build` argv (without the program name). Always tags per-triple; also `:local` on host platform.
+    pub fn docker_build_args(&self) -> Result<Vec<String>, String> {
+        let triple_tag = image_tag_for_triple(&self.triple)?;
+        let mut args = vec![
             "build".into(),
             "--platform".into(),
             self.docker_platform.clone(),
             "-f".into(),
             self.dockerfile.display().to_string(),
             "-t".into(),
-            self.image_tag.clone(),
-            ".".into(),
-        ]
+            triple_tag.into(),
+        ];
+        if host_native_docker_platform()? == self.docker_platform {
+            args.push("-t".into());
+            args.push(self.image_tag.clone());
+        }
+        args.push(".".into());
+        Ok(args)
     }
 
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
@@ -293,10 +313,16 @@ pub fn run_at(root: &Path, args: &[String], docker: &dyn DockerPort) -> Result<(
         for note in &omitted {
             eprintln!("xtask runtime-image: {note}");
         }
-        docker.tag_image(plan.context(), &plan.docker_build_args())?;
+        let build_args = plan.docker_build_args()?;
+        docker.tag_image(plan.context(), &build_args)?;
         eprintln!(
-            "xtask runtime-image: tagged {} ({})",
-            plan.image_tag(),
+            "xtask runtime-image: tagged {} + {} ({})",
+            image_tag_for_triple(triple)?,
+            if host_native_docker_platform()? == plan.docker_platform() {
+                plan.image_tag()
+            } else {
+                "(not host :local)"
+            },
             plan.docker_platform()
         );
     }
@@ -508,12 +534,15 @@ mod tests {
     fn runtime_image_plan_docker_args_tag_locked_name() {
         let root = fixture_root();
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
-        let args = plan.docker_build_args();
+        let args = plan.docker_build_args().unwrap();
         assert_eq!(args[0], "build");
         assert!(args.contains(&"--platform".to_string()));
         assert!(args.contains(&"linux/arm64".to_string()));
         assert!(args.contains(&"-t".to_string()));
-        assert!(args.contains(&IMAGE_TAG.to_string()));
+        assert!(args.contains(&IMAGE_TAG_AARCH64.to_string()));
+        if host_native_docker_platform().unwrap() == "linux/arm64" {
+            assert!(args.contains(&IMAGE_TAG.to_string()));
+        }
         assert!(!args.iter().any(|a| a.contains("--output")));
         assert!(!args.iter().any(|a| a.contains("RUST_TARGET")));
         assert_eq!(args.last().map(String::as_str), Some("."));
@@ -529,7 +558,7 @@ mod tests {
         assert!(omitted.is_empty(), "{omitted:?}");
         let docker = RecordingDockerPort::new();
         docker
-            .tag_image(plan.context(), &plan.docker_build_args())
+            .tag_image(plan.context(), &plan.docker_build_args().unwrap())
             .unwrap();
         let recorded = docker.recorded_dests();
         assert_eq!(recorded.len(), 1);

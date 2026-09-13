@@ -408,7 +408,14 @@ impl PocIdeApp {
         let attach = if self.open_mode == OpenMode::Container {
             self.serve_mode = ServeMode::Mux;
             match DockerRunPlan::new("docker", root.as_path()) {
-                Ok(plan) => LspIoAttach::Container(plan),
+                Ok(plan) => {
+                    let plan = if let Some(p) = self.launch_journal.docker_run_platform() {
+                        plan.with_docker_platform(p)
+                    } else {
+                        plan
+                    };
+                    LspIoAttach::Container(plan)
+                }
                 Err(e) => {
                     self.lsp_session = self.lsp_session.finish_err();
                     self.lsp_error = Some(e.to_string());

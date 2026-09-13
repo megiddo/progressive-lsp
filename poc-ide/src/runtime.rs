@@ -36,23 +36,15 @@ impl DogfoodEnginePreflight {
         }
     }
 
-    /// One `sh -c` script for `docker run --rm --entrypoint sh IMAGE -c …`.
-    pub fn shell_probe(prefix: &str) -> String {
-        let mut lines = String::from("missing=\"\"\n");
-        for (pack, bin) in Self::PACKS {
-            lines.push_str(&format!(
-                "test -x {prefix}/engines/{pack}/{bin} || missing=\"$missing {pack}\"\n"
-            ));
-        }
-        lines.push_str("[ -z \"$missing\" ] || { echo \"missing dogfood packs:$missing\"; exit 1; }\n");
-        lines
+    pub fn engine_path(prefix: &str, pack: &str, bin: &str) -> String {
+        format!("{prefix}/engines/{pack}/{bin}")
     }
 
-    pub fn parse_probe_stdout(stdout: &str) -> Result<(), String> {
-        let line = stdout.lines().find(|l| l.contains("missing dogfood packs:"));
-        match line {
-            Some(l) => Err(l.trim().to_string()),
-            None => Ok(()),
+    /// Version flag for `docker run --entrypoint ENG PATH FLAG` (scratch images have no `sh`).
+    pub fn version_flag(pack: &str) -> &'static str {
+        match pack {
+            "gopls" => "-version",
+            _ => "--version",
         }
     }
 }
@@ -65,6 +57,8 @@ pub struct DockerRunPlan {
     docker: PathBuf,
     workspace: PathBuf,
     image: String,
+    /// `docker run --platform` (e.g. `linux/arm64` on Apple Silicon).
+    docker_platform: Option<String>,
 }
 
 impl DockerRunPlan {
@@ -86,7 +80,13 @@ impl DockerRunPlan {
             docker,
             workspace,
             image: RUNTIME_IMAGE.to_string(),
+            docker_platform: None,
         })
+    }
+
+    pub fn with_docker_platform(mut self, platform: impl Into<String>) -> Self {
+        self.docker_platform = Some(platform.into());
+        self
     }
 
     fn docker_path_missing(docker: &Path) -> bool {
@@ -119,10 +119,16 @@ impl DockerRunPlan {
     /// `run -i --rm -v WS:WS -w WS IMAGE serve --prefix /opt/plsp --mux`. Never `-t`.
     pub fn argv(&self) -> Vec<String> {
         let ws = self.workspace.to_string_lossy().into_owned();
-        vec![
+        let mut argv = vec![
             "run".into(),
             "-i".into(),
             "--rm".into(),
+        ];
+        if let Some(p) = &self.docker_platform {
+            argv.push("--platform".into());
+            argv.push(p.clone());
+        }
+        argv.extend([
             "-v".into(),
             format!("{ws}:{ws}"),
             "-w".into(),
@@ -132,7 +138,8 @@ impl DockerRunPlan {
             "--prefix".into(),
             Self::PREFIX.into(),
             "--mux".into(),
-        ]
+        ]);
+        argv
     }
 
     pub fn command(&self) -> Command {
@@ -338,6 +345,17 @@ impl LaunchJournal {
             .is_some_and(|s| s.state == StepState::Ok)
     }
 
+    /// From a successful `platform` step (Docker probe `Os/Arch`).
+    pub fn docker_run_platform(&self) -> Option<&'static str> {
+        let detail = self
+            .steps
+            .iter()
+            .find(|s| s.id == "platform" && s.state == StepState::Ok)?
+            .detail
+            .as_deref()?;
+        RuntimeInfo::new(true, detail).docker_run_platform()
+    }
+
     fn set(&mut self, id: &str, state: StepState, detail: Option<String>) {
         if let Some(step) = self.steps.iter_mut().find(|s| s.id == id) {
             step.state = state;
@@ -443,6 +461,15 @@ impl RuntimeInfo {
             "linux/arm64" | "linux/amd64" | "linux/aarch64" | "linux/x86_64"
         )
     }
+
+    /// Value for `docker run --platform` on this host.
+    pub fn docker_run_platform(&self) -> Option<&'static str> {
+        match self.platform.as_str() {
+            "linux/arm64" | "linux/aarch64" => Some("linux/arm64"),
+            "linux/amd64" | "linux/x86_64" => Some("linux/amd64"),
+            _ => None,
+        }
+    }
 }
 
 /// Started container session. Tests never hold a live Docker id.
@@ -468,8 +495,8 @@ impl RuntimeSession {
 pub trait RuntimePort {
     fn probe(&self) -> Result<RuntimeInfo, IdeError>;
     fn ensure_image(&self, image: &str) -> Result<(), IdeError>;
-    fn start(&self, workspace: &Path) -> Result<RuntimeSession, IdeError>;
-    fn preflight_t3(&self) -> Result<(), IdeError>;
+    fn start(&self, workspace: &Path, docker_platform: &str) -> Result<RuntimeSession, IdeError>;
+    fn preflight_t3(&self, docker_platform: &str) -> Result<(), IdeError>;
 }
 
 /// Scripted runtime. No daemon, no network.
@@ -565,14 +592,14 @@ impl RuntimePort for FakeRuntime {
         self.image.clone().map_err(IdeError::runtime)
     }
 
-    fn start(&self, workspace: &Path) -> Result<RuntimeSession, IdeError> {
+    fn start(&self, workspace: &Path, _docker_platform: &str) -> Result<RuntimeSession, IdeError> {
         self.start
             .clone()
             .map(|()| RuntimeSession::new(workspace))
             .map_err(IdeError::runtime)
     }
 
-    fn preflight_t3(&self) -> Result<(), IdeError> {
+    fn preflight_t3(&self, _docker_platform: &str) -> Result<(), IdeError> {
         self.preflight.clone().map_err(IdeError::runtime)
     }
 }
@@ -633,29 +660,42 @@ impl RuntimePort for DockerRuntime {
         }
     }
 
-    fn start(&self, workspace: &Path) -> Result<RuntimeSession, IdeError> {
-        let plan = DockerRunPlan::new(self.docker.clone(), workspace)?;
+    fn start(&self, workspace: &Path, docker_platform: &str) -> Result<RuntimeSession, IdeError> {
+        let plan = DockerRunPlan::new(self.docker.clone(), workspace)?
+            .with_docker_platform(docker_platform);
         Ok(RuntimeSession::new(plan.workspace()))
     }
 
-    fn preflight_t3(&self) -> Result<(), IdeError> {
-        let script = DogfoodEnginePreflight::shell_probe(DockerRunPlan::PREFIX);
-        let out = Command::new(&self.docker)
-            .args(["run", "--rm", "--entrypoint", "sh", RUNTIME_IMAGE, "-c", &script])
-            .output()
-            .map_err(|e| IdeError::runtime(format!("docker preflight: {e}")))?;
-        if out.status.success() {
-            return Ok(());
+    fn preflight_t3(&self, docker_platform: &str) -> Result<(), IdeError> {
+        let prefix = DockerRunPlan::PREFIX;
+        let mut missing = Vec::new();
+        for (pack, bin) in DogfoodEnginePreflight::PACKS {
+            let ep = DogfoodEnginePreflight::engine_path(prefix, pack, bin);
+            let flag = DogfoodEnginePreflight::version_flag(pack);
+            let out = Command::new(&self.docker)
+                .args([
+                    "run",
+                    "--rm",
+                    "--platform",
+                    docker_platform,
+                    "--entrypoint",
+                    &ep,
+                    RUNTIME_IMAGE,
+                    flag,
+                ])
+                .output()
+                .map_err(|e| IdeError::runtime(format!("docker preflight: {e}")))?;
+            if !out.status.success() {
+                missing.push(*pack);
+            }
         }
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if let Err(msg) = DogfoodEnginePreflight::parse_probe_stdout(&stdout) {
-            return Err(IdeError::runtime(msg));
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(IdeError::runtime(DogfoodEnginePreflight::format_missing(
+                &missing,
+            )))
         }
-        Err(IdeError::runtime(format!(
-            "dogfood preflight failed: {}",
-            stderr.trim()
-        )))
     }
 }
 
@@ -710,6 +750,16 @@ pub fn run_launch_reporting(
     journal.ok("platform", info.platform());
     report(journal);
 
+    let docker_platform = match info.docker_run_platform() {
+        Some(p) => p,
+        None => {
+            journal.fail("platform", "unsupported docker platform for run --platform");
+            skip_rest(journal, "platform");
+            report(journal);
+            return;
+        }
+    };
+
     journal.start("image");
     report(journal);
     match runtime.ensure_image(RUNTIME_IMAGE) {
@@ -732,7 +782,7 @@ pub fn run_launch_reporting(
 
     journal.start("start_serve");
     report(journal);
-    match runtime.start(workspace) {
+    match runtime.start(workspace, docker_platform) {
         Ok(_) => {
             journal.ok("start_serve", OpenMode::Container.as_str());
             report(journal);
@@ -747,7 +797,7 @@ pub fn run_launch_reporting(
 
     journal.start("t3_preflight");
     report(journal);
-    match runtime.preflight_t3() {
+    match runtime.preflight_t3(docker_platform) {
         Ok(()) => journal.ok("t3_preflight", "packs ready"),
         Err(e) => journal.skip("t3_preflight", e.to_string()),
     }
@@ -946,20 +996,20 @@ mod tests {
         assert!(err.to_string().contains("docker probe"));
         let img = rt.ensure_image(RUNTIME_IMAGE).unwrap_err();
         assert!(img.is_runtime());
-        let start_err = rt.start(Path::new("/ws")).unwrap_err();
+        let start_err = rt.start(Path::new("/ws"), "linux/arm64").unwrap_err();
         assert!(start_err.is_runtime());
         assert!(start_err.to_string().contains("docker binary missing"));
-        assert!(rt.preflight_t3().is_err());
+        assert!(rt.preflight_t3("linux/arm64").is_err());
         assert_eq!(DockerRuntime::new().docker, PathBuf::from("docker"));
         assert_eq!(DockerRuntime::default().docker, PathBuf::from("docker"));
         let path_rt = DockerRuntime::new();
-        let session = path_rt.start(Path::new("/ws")).unwrap();
+        let session = path_rt.start(Path::new("/ws"), "linux/arm64").unwrap();
         assert_eq!(session.workspace(), Path::new("/ws"));
-        let empty = path_rt.start(Path::new("")).unwrap_err();
+        let empty = path_rt.start(Path::new(""), "linux/arm64").unwrap_err();
         assert!(empty.is_runtime());
         assert!(empty.to_string().contains("empty workspace"));
         assert!(path_rt
-            .start(Path::new("rel"))
+            .start(Path::new("rel"), "linux/arm64")
             .unwrap_err()
             .is_not_absolute());
     }
@@ -983,12 +1033,7 @@ mod tests {
 case "$1" in
   version) echo "linux/arm64"; exit 0 ;;
   image) exit 0 ;;
-  run)
-    if [ "$2" = "--rm" ] && [ "$4" = "sh" ]; then
-      exit 0
-    fi
-    exit 1
-    ;;
+  run) exit 0 ;;
   *) exit 1 ;;
 esac
 "#,
@@ -998,9 +1043,9 @@ esac
         assert!(info.available());
         assert_eq!(info.platform(), "linux/arm64");
         rt.ensure_image(RUNTIME_IMAGE).unwrap();
-        let session = rt.start(Path::new("/ws")).unwrap();
+        let session = rt.start(Path::new("/ws"), "linux/arm64").unwrap();
         assert_eq!(session.workspace(), Path::new("/ws"));
-        assert!(rt.preflight_t3().is_ok());
+        assert!(rt.preflight_t3("linux/arm64").is_ok());
 
         let (_keep, slim_bin) = scripted_docker(
             r#"
@@ -1008,18 +1053,15 @@ case "$1" in
   version) echo "linux/arm64"; exit 0 ;;
   image) exit 0 ;;
   run)
-    if [ "$2" = "--rm" ] && [ "$4" = "sh" ]; then
-      echo "missing dogfood packs: clangd"
-      exit 1
-    fi
-    exit 1
+    if echo "$*" | grep -q clangd; then exit 1; fi
+    exit 0
     ;;
   *) exit 1 ;;
 esac
 "#,
         );
         let slim = DockerRuntime::from_binary(&slim_bin);
-        let err = slim.preflight_t3().unwrap_err();
+        let err = slim.preflight_t3("linux/arm64").unwrap_err();
         assert!(err.to_string().contains("clangd"), "{err}");
 
         let (_keep, fail_bin) = scripted_docker("exit 1\n");
@@ -1053,7 +1095,9 @@ esac
                 .is_runtime()
         );
 
-        let plan = DockerRunPlan::new("docker", Path::new("/Users/me/proj")).unwrap();
+        let plan = DockerRunPlan::new("docker", Path::new("/Users/me/proj"))
+            .unwrap()
+            .with_docker_platform("linux/arm64");
         assert_eq!(plan.docker(), Path::new("docker"));
         assert_eq!(plan.workspace(), Path::new("/Users/me/proj"));
         assert_eq!(plan.image(), RUNTIME_IMAGE);
@@ -1066,6 +1110,8 @@ esac
                 "run",
                 "-i",
                 "--rm",
+                "--platform",
+                "linux/arm64",
                 "-v",
                 "/Users/me/proj:/Users/me/proj",
                 "-w",
@@ -1103,8 +1149,8 @@ esac
             DogfoodEnginePreflight::format_missing(&[]),
             "packs ready"
         );
-        let script = DogfoodEnginePreflight::shell_probe("/opt/plsp");
-        assert!(script.contains("/opt/plsp/engines/clangd/clangd"));
+        assert!(DogfoodEnginePreflight::engine_path("/opt/plsp", "clangd", "clangd")
+            .contains("/opt/plsp/engines/clangd/clangd"));
 
         let ws = Path::new("/ws");
         let mut slim = LaunchJournal::container_plan();
