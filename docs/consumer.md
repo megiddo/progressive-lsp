@@ -71,7 +71,9 @@ Engine blobs are **not** committed to git. Pins live in `xtask/pack-pins.toml` (
 
 Schema reference: [xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json) (empty until you push).
 
-**Local store (default; no remote host required):** gitignored `target/local-artifacts/engines/{pack}/{upstream_sha}/{triple}.tar.gz` plus `target/local-artifacts/manifest.json` (`file://` URLs). After `--cache-fill`, run `cargo xtask pack --pack clangd --cache push` to archive the cache ELF and update the local manifest. Upload to CDN/GitHub later by copying those files and repointing `url` to `https://…`.
+**Local store (default; no remote host required):** gitignored `target/local-artifacts/engines/{pack}/{upstream_sha}/{triple}.tar.gz` plus `target/local-artifacts/manifest.json` (`file://` URLs). After `--cache-fill`, run `cargo xtask pack --pack clangd --cache push` to archive the cache ELF and update the local manifest.
+
+**GitHub Releases (target remote):** maintainer runbook [productization/release-runbook.md](productization/release-runbook.md) — tag `engines-{pack}-{upstream_sha}`, assets under `engines/…`, manifest asset with `https://` urls. Verify pull: [scripts/verify-clangd-cache-pull.sh](../scripts/verify-clangd-cache-pull.sh).
 
 **Remote layout (optional later)** when `PROGRESSIVE_LSP_ARTIFACT_BASE` is set:
 

@@ -99,7 +99,7 @@ Small doc-only PROD-4 work may land on `prod-housekeep` and merge early; **norma
 
 | ID | Task | Exit |
 |---|---|---|
-| PROD-2.1 | Maintainer runbook: `cache push` both triples → inspect `target/local-artifacts/manifest.json` | Documented in [consumer.md](consumer.md) or `docs/productization/release-runbook.md` |
+| PROD-2.1 | Maintainer runbook: `cache push` both triples → inspect `target/local-artifacts/manifest.json` | [productization/release-runbook.md](productization/release-runbook.md) + [consumer.md](consumer.md) |
 | PROD-2.2 | Define **Release naming**: tag pattern, asset names per `{pack}/{upstream_sha}/{triple}.tar.gz`, manifest asset URL | Table in runbook; matches `StoreManifest` |
 | PROD-2.3 | Implement or document **upload path**: `gh release upload` + manifest `url` → `https://github.com/.../releases/download/...` **or** extend xtask when `PROGRESSIVE_LSP_ARTIFACT_BASE` + `PROGRESSIVE_LSP_ARTIFACT_PUSH=1` | Pull from HTTPS works on clean machine without `--cache-fill` |
 | PROD-2.4 | Pin **example manifest** in repo ([xtask/artifact-manifest.example.json](../xtask/artifact-manifest.example.json)) with real layout but placeholder tag until first release | URLs are https template, not `file://` only |

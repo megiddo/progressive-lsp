@@ -31,6 +31,7 @@ CONTEXT_POLICY: pointer
 READ:
   docs/productization/agent-context.md
   docs/productization-plan.md
+  docs/productization/release-runbook.md
   docs/distribution-architecture.md
   docs/consumer.md
   docs/poc-tier/rest-live-proof.md
@@ -59,6 +60,7 @@ CONTEXT_POLICY: pointer
 READ:
   docs/productization/agent-context.md
   docs/productization-plan.md
+  docs/productization/release-runbook.md
   docs/distribution-architecture.md
   docs/consumer.md
   docs/poc-tier/rest-live-proof.md
