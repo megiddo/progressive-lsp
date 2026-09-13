@@ -19,6 +19,7 @@ This directory is the **source of truth** for the product. Implement from these 
 | Host stack (`host0`–`host7`; native vs container open) | [host/agent-context.md](host/agent-context.md) |
 | POC tier stack (T1/T2 complete + container T3) | [poc-tier-plan.md](poc-tier-plan.md), [poc-tier/agent-context.md](poc-tier/agent-context.md) |
 | After POC-tier PR (build, artifacts, IDE) | [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md), [post-poc-tier/agent-context.md](post-poc-tier/agent-context.md) |
+| Productization (releases, contracts, smoke) | [productization-plan.md](productization-plan.md), [productization/agent-context.md](productization/agent-context.md), [distribution-architecture.md](distribution-architecture.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |
 
@@ -52,3 +53,4 @@ This directory is the **source of truth** for the product. Implement from these 
 6. LOG orchestrators pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. poc-ide `RunLog` is a separate schema.
 7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host8`.
 8. POC-tier orchestrators pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on current `main` (`host-cleanup` merged). Plan: [poc-tier-plan.md](poc-tier-plan.md).
+9. Productization meta-orchestrator passes [productization/agent-context.md](productization/agent-context.md) unchanged. Phase order: PROD-1 → PROD-2 → PROD-3 → PROD-5; PROD-4 may overlap PROD-1 docs-only. Plan: [productization-plan.md](productization-plan.md).

@@ -2,13 +2,15 @@
 
 **Pointer-based context.** Meta-orchestrator and every track orchestrator get the **same** repo path and locks. Pass payloads **unchanged** to children. All implementation happens in the **Google Drive workspace checkout** (not sibling `~/progressive-lsp-*` worktrees unless the human explicitly opts in).
 
-Parent stack: **current `main`** after PR #8 merge. Do not reopen POC-URI … POC-REST WPs. Do not open `host8`. Do not run POST-PROOF overnight / `--cache-fill` unless the human asked. Do not `git stash`. Do not `git config`. Do not `--no-verify`. Do not force-push `main`. git-branchless (`git sl`). No Graphite.
+Parent stack: **current `main`** after PR #8 merge. Do not reopen POC-URI … POC-REST WPs. Do not open `host8`. Do not run `--cache-fill` unless the human asked. Do not `git stash`. Do not `git config`. Do not `--no-verify`. Do not force-push `main`. git-branchless (`git sl`). No Graphite.
 
-Plan: [../post-poc-tier-development-plan.md](../post-poc-tier-development-plan.md). Hygiene: [../testing.md](../testing.md).
+Plan: [../post-poc-tier-development-plan.md](../post-poc-tier-development-plan.md) (**tracks signed off**). **Active program:** [../productization-plan.md](../productization-plan.md) + [../productization/agent-context.md](../productization/agent-context.md). Hygiene: [../testing.md](../testing.md).
 
 ## Meta-orchestrator (orchestrator of orchestrators)
 
-**Role:** Run tracks **in order**. POST-BUILD and POST-ART are merged. **POST-IDE** may start without POST-PROOF. **Skip POST-PROOF** until the human runs overnight clangd. Do not let optional native Darwin T1/T2 drive design — default container, progressive T1/T2/T3 inside one Linux serve.
+**Historical.** POST-BUILD, POST-ART, POST-IDE merged. Human completed POST-PROOF.1 (clangd cache-fill). For new work, use **productization meta-orchestrator** ([../productization/agent-context.md](../productization/agent-context.md)), not this file.
+
+**Role (archived):** Run tracks **in order**. POST-IDE may start without POST-PROOF. Do not let optional native Darwin T1/T2 drive design — default container, progressive T1/T2/T3 inside one Linux serve.
 
 **Loop:**
 

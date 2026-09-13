@@ -4,9 +4,23 @@ Not a `cargo test`. Records dogfood image / pack proof after POC-JAVA / POC-IMG.
 
 ## REST.2 clangd (required)
 
-**Code (signed off on `t3-rest`):** `RuntimeImagePlan` / `PackImageCopy` require `clangd` on both triples; `freshness` seeds full dogfood dests in unit tests.
+**Code (signed off on `t3-rest`, fixes on `main` via PR #12):** `RuntimeImagePlan` / `PackImageCopy` require `clangd` on both triples; `freshness` seeds full dogfood dests in unit tests.
 
-**Live ELF (pending):** populate cache then extract:
+**Live ELF — musl dests + check-static (PASS, human 2026-09-12):** `scripts/clangd-overnight.sh` on `main` completed cache-fill both triples, pack extract, and `check-static` for:
+
+- `target/pack-cache/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/{x86_64,aarch64}-unknown-linux-musl/clangd`
+- `target/musl/{x86_64,aarch64}-unknown-linux-musl/engines/clangd/clangd`
+
+**Live image copy (PROD-3 / POST-PROOF.2):** record `cargo xtask runtime-image --both` digests here after dogfood image rebuild.
+
+Maintainer re-run (only if pins or Dockerfile change):
+
+```sh
+export CARGO_TARGET_DIR="$PWD/target"
+./scripts/clangd-overnight.sh 2>&1 | tee "target/clangd-overnight-logs/docker-$(date +%Y%m%d-%H%M%S).log"
+```
+
+Or manual steps:
 
 ```sh
 export CARGO_TARGET_DIR="$PWD/target"
@@ -15,29 +29,30 @@ cargo xtask pack --pack clangd --cache-fill --target aarch64-unknown-linux-musl
 cargo xtask pack --pack clangd --target x86_64-unknown-linux-musl
 cargo xtask pack --pack clangd --target aarch64-unknown-linux-musl
 cargo xtask check-static target/musl/x86_64-unknown-linux-musl/engines/clangd/clangd
+cargo xtask check-static target/musl/aarch64-unknown-linux-musl/engines/clangd/clangd
 cargo xtask runtime-image --both
 ```
 
-**2026-09-11 session:** x86_64 `--cache-fill` failed in Docker (**OOM** / `ResourceExhausted: cannot allocate memory` on musl `ninja clangd`). Dockerfile caps **`NINJAFLAGS=-j2`** (override build-arg `-j1` if still OOM).
+**Failure history (orchestrator notes):**
 
-**2026-09-12 build-host:** host tblgen cmake must use **`clang`/`clang++`** — Debian `cc` rejects LLVM’s `-Wcovered-switch-default` / `-Wstring-conversion` on `regcomp.c` (see `docker-20260911-225432.log`).
-
-**2026-09-11 musl link fix (`fix-clangd-musl-link`):** musl stage no longer uses `musl-gcc` + `g++` + `-static` (glibc **libstdc++.a** vs musl **ld** → `__libc_single_threaded` / `_dl_find_object` on `clang-tidy-confusable-chars-gen`). **build-host** also builds `clang-tidy-confusable-chars-gen`; musl cmake pins **`CLANG_TIDY_CONFUSABLE_CHARS_GEN`** and links with **`clang++ --target=*-linux-musl -static`**.
+- **2026-09-11:** x86_64 musl **OOM** during `ninja clangd`. Dockerfile caps **`NINJAFLAGS=-j2`** (override `NINJAFLAGS=-j1` if still OOM).
+- **2026-09-12 build-host:** host tblgen cmake must use **`clang`/`clang++`** — Debian `cc` rejects LLVM’s `-Wcovered-switch-default` / `-Wstring-conversion` on `regcomp.c` (see `target/clangd-overnight-logs/docker-20260911-225432.log`; fixed on `main` in PR #12).
+- **Musl link (PR #12):** musl stage uses host `clang-tidy-confusable-chars-gen`, **`clang++ --target=*-linux-musl -static`**, not `g++` + glibc libstdc++.a.
 
 ### Overnight run (when Docker is resourced)
 
-1. **Docker Desktop → Settings → Resources:** give the VM **≥ 12 GiB RAM** (16 GiB safer for musl LLVM link). **≥ 80 GiB disk** free on the data disk. Quit other heavy containers.
-2. **Branch:** `t3-rest`, repo root = Google Drive checkout.
-3. **Kick off** (logs under `target/clangd-overnight-logs/`; `scripts/clangd-overnight.sh` tees stdout/stderr there). For a manual cache-fill, save the Docker build log the same way, e.g. `cargo xtask pack --pack clangd --cache-fill --target x86_64-unknown-linux-musl 2>&1 | tee target/clangd-overnight-logs/cache-fill-x86_64-$(date +%Y%m%d-%H%M%S).log`. If musl `ninja` still OOMs, `export NINJAFLAGS=-j1` before the script (xtask forwards it to the cache-fill image build):
+1. **Docker Desktop → Settings → Resources:** **≥ 12 GiB RAM** (16 GiB safer). **≥ 80 GiB disk** free. Quit other heavy containers.
+2. **Branch:** current `main` (or branch with the same `docker/engine-pack-clangd-cache-fill.Dockerfile`). Repo root = Google Drive checkout.
+3. **Kick off** one command (logs under `target/clangd-overnight-logs/`):
 
 ```sh
-chmod +x scripts/clangd-overnight.sh
-./scripts/clangd-overnight.sh
+mkdir -p target/clangd-overnight-logs
+./scripts/clangd-overnight.sh 2>&1 | tee "target/clangd-overnight-logs/docker-$(date +%Y%m%d-%H%M%S).log"
 ```
 
-Or run the commands in the **Live ELF** block above one triple at a time. Expect **several hours per triple** for cache-fill; **do not** run two cache-fills in parallel.
+If musl `ninja` OOMs: `export NINJAFLAGS=-j1` before the script. Expect **several hours per triple** for cache-fill; **do not** run two cache-fills in parallel.
 
-4. **Morning:** if the script exits 0, optional `cargo xtask runtime-image --both`, then paste `check-static` output + image digests into this file and check REST.2 live rows in [milestones.md](../milestones.md).
+4. **After exit 0:** optional `cargo xtask runtime-image --both` (PROD-3); paste image digests below.
 
 Dest paths stay gitignored under `target/musl/<triple>/engines/` and `target/pack-cache/clangd/<sha>/<triple>/`.
 
@@ -45,7 +60,7 @@ Dest paths stay gitignored under `target/musl/<triple>/engines/` and `target/pac
 
 | Gate | Result |
 |---|---|
-| `cargo test -p xtask -- --test-threads=1` | **PASS** (113 tests; `CARGO_TARGET_DIR=$PWD/target`) |
+| `cargo test -p xtask -- --test-threads=1` | **PASS** (113+ tests; `CARGO_TARGET_DIR=$PWD/target`) |
 | Full workspace `cargo test -- --test-threads=1` | **Cursor sandbox:** `serve_host::tests::initialize_merges_overlay_and_excludes_without_editing_gitignore` fails (` .git/hooks/: Operation not permitted` in temp repo). Run the full suite on the host outside the agent sandbox for a green. |
 | `cargo llvm-cov` / `cargo mutants` on `xtask/` | **N/A** per [testing.md](../testing.md) (xtask excluded from 95% / mutants denominator). |
 
@@ -60,4 +75,4 @@ Container ships **rust-analyzer** only. A Darwin rustc sysroot does **not** sati
 | Java tree → T3 | `javacs` in image; aarch64 glibc base | POC-JAVA live pack + POC-IMG `progressive-lsp-runtime:local` ([spike/java-t3.md](../../spike/java-t3.md)) |
 | One other slim language | static slim ELF in image | `python`/`ty` staged with image |
 | One full-pack language | tsgo / gopls / zls required dest | `RuntimeImagePlan` fail-closed if missing |
-| C/C++ T3 | static `clangd` in image | REST.2 above (live pending cache-fill) |
+| C/C++ T3 | static `clangd` musl dest + `check-static` | **PASS** musl dests (2026-09-12 overnight); **image copy** pending PROD-3 |

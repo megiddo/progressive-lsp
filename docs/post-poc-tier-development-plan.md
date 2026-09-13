@@ -4,7 +4,7 @@ Work after **`t3-rest` merges to `main`**. POC-tier stack (POC-URI → POC-REST)
 
 Hygiene: [testing.md](testing.md). Exits copy to [milestones.md](milestones.md) when each WP signs off. Patterns: [design-patterns.md](design-patterns.md). Do not open `host8`. Do not commit musl ELFs or pack-cache blobs to git.
 
-Related: [poc-tier-plan.md](poc-tier-plan.md), [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md), [consumer.md](consumer.md), [architecture.md](architecture.md).
+Related: [poc-tier-plan.md](poc-tier-plan.md), [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md), [consumer.md](consumer.md), [architecture.md](architecture.md). **Next program:** [productization-plan.md](productization-plan.md).
 
 ## Locks (unchanged)
 
@@ -53,9 +53,9 @@ Do not start a child branch until the parent WP’s exit criteria are met. Small
 
 | ID | Task | Exit |
 |---|---|---|
-| POST-PROOF.1 | Run `scripts/clangd-overnight.sh` (or manual cache-fill + pack both triples) | Cache + musl dests exist; `check-static` green on both clangd ELFs |
-| POST-PROOF.2 | `cargo xtask runtime-image --both` | `progressive-lsp-runtime:local` builds; record digests in rest-live-proof |
-| POST-PROOF.3 | Update milestones REST.2 live rows | Proof table filled; no cmake in PR CI |
+| POST-PROOF.1 | Run `scripts/clangd-overnight.sh` (or manual cache-fill + pack both triples) | **Done (human 2026-09-12).** Cache + musl dests; `check-static` green both triples |
+| POST-PROOF.2 | `cargo xtask runtime-image --both` | **PROD-3.** `progressive-lsp-runtime:local` builds; record digests in rest-live-proof |
+| POST-PROOF.3 | Update milestones REST.2 live rows | **PROD-1 done.** Proof table updated; no cmake in PR CI |
 
 ---
 

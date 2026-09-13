@@ -1368,7 +1368,7 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-REST — remaining T3 in the dogfood image
 
-**Status: SIGNED OFF (code + unit gates).** Live REST.2 clangd ELF proof **pending** cache-fill retry ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)). Branch `t3-rest` on signed-off `t3-image`. Do not open `host8`.
+**Status: SIGNED OFF (code + unit gates).** Live REST.2 clangd **musl dests + check-static PASS** (human overnight 2026-09-12; [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)). Runtime image digests → PROD-3. Do not open `host8`.
 
 **Scope:** POC container image includes every T3 except C#. **clangd** static musl both ISAs (required in `RuntimeImagePlan`).
 
@@ -1435,6 +1435,20 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 - [x] `CARGO_TARGET_DIR=$PWD/target cargo test -p poc-ide` and `cargo test -p xtask -- --test-threads=1`
 - [x] No Docker daemon in unit tests
 - [x] Patterns named in [design-patterns.md](design-patterns.md)
+
+## Productization (PROD-1 … PROD-5)
+
+**Status: IN PROGRESS.** Master plan: [productization-plan.md](productization-plan.md). Meta-orchestrator: [productization/agent-context.md](productization/agent-context.md).
+
+| Phase | Summary | Status |
+|---|---|---|
+| PROD-1 HOUSEKEEP | POST-PROOF docs; REST.2 live rows; agent pointers | **signed off** (branch `prod-housekeep`) |
+| PROD-2 ARTIFACTS | Local push → GitHub Releases; manifest HTTPS pull | pending |
+| PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | pending |
+| PROD-4 CONTRACTS | [distribution-architecture.md](distribution-architecture.md) S1–S4 | pending (stub exists) |
+| PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | pending |
+
+**Sign-off checklist (program):** all phase exit tables in productization-plan; no ELFs in git; PR CI still no `--cache-fill`.
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 
