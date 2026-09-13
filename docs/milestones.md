@@ -1438,15 +1438,15 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 
 ## Productization (PROD-1 … PROD-5)
 
-**Status: IN PROGRESS.** Master plan: [productization-plan.md](productization-plan.md). Meta-orchestrator: [productization/agent-context.md](productization/agent-context.md).
+**Status: SIGNED OFF** (2026-09-13, branch stack `prod-housekeep` → `prod-validation`). Master plan: [productization-plan.md](productization-plan.md).
 
 | Phase | Summary | Status |
 |---|---|---|
 | PROD-1 HOUSEKEEP | POST-PROOF docs; REST.2 live rows; agent pointers | **signed off** (branch `prod-housekeep`) |
 | PROD-2 ARTIFACTS | Local push → GitHub Releases; manifest HTTPS pull | **signed off** — [release](https://github.com/megiddo/progressive-lsp/releases/tag/engines-clangd-3623fe661ae35c6c80ac221f14d85be76aa870f1) |
-| PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | **in progress** (docs + recipe on `prod-image`; digest pending full dogfood `./build lsp`) |
+| PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | **signed off** — `progressive-lsp-runtime:local` `7bd38315eb76` |
 | PROD-4 CONTRACTS | [distribution-architecture.md](distribution-architecture.md) S1–S4 | **signed off** (branch `prod-contracts`) |
-| PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | **in progress** (tier 0: `scripts/smoke-tier0.sh`, `cargo xtask smoke`; tier 1 fixtures TBD) |
+| PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | **signed off** (tier 0 automated; tier 1 preflight + manual IDE checklist) |
 
 **Sign-off checklist (program):** all phase exit tables in productization-plan; no ELFs in git; PR CI still no `--cache-fill`.
 

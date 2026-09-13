@@ -22,7 +22,7 @@ docker images progressive-lsp-runtime:local
 
 Record image ID/digest below when built. (Orchestrator 2026-09-13: `runtime-image --both` fail-closed on missing `aarch64` slim `java/javacs` — full dogfood `./build lsp` required first.)
 
-**Image digest (fill when built):** _pending full dogfood dests + successful `runtime-image --both`_
+**Image (PASS 2026-09-13):** `progressive-lsp-runtime:local` image ID **`7bd38315eb76`** (142MB content size; `./scripts/prod3-dogfood-and-image.sh`).
 
 Maintainer re-run (only if pins or Dockerfile change):
 
@@ -86,4 +86,4 @@ Container ships **rust-analyzer** only. A Darwin rustc sysroot does **not** sati
 | Java tree → T3 | `javacs` in image; aarch64 glibc base | POC-JAVA live pack + POC-IMG `progressive-lsp-runtime:local` ([spike/java-t3.md](../../spike/java-t3.md)) |
 | One other slim language | static slim ELF in image | `python`/`ty` staged with image |
 | One full-pack language | tsgo / gopls / zls required dest | `RuntimeImagePlan` fail-closed if missing |
-| C/C++ T3 | static `clangd` musl dest + `check-static` | **PASS** musl dests (2026-09-12 overnight); **image copy** pending PROD-3 |
+| C/C++ T3 | static `clangd` in dogfood image | **PASS** musl dests (2026-09-12); **PASS** runtime image (2026-09-13, `7bd38315eb76`) |

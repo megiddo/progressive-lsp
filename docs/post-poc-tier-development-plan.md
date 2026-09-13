@@ -54,7 +54,7 @@ Do not start a child branch until the parent WP’s exit criteria are met. Small
 | ID | Task | Exit |
 |---|---|---|
 | POST-PROOF.1 | Run `scripts/clangd-overnight.sh` (or manual cache-fill + pack both triples) | **Done (human 2026-09-12).** Cache + musl dests; `check-static` green both triples |
-| POST-PROOF.2 | `cargo xtask runtime-image --both` | **PROD-3.** `progressive-lsp-runtime:local` builds; record digests in rest-live-proof |
+| POST-PROOF.2 | `cargo xtask runtime-image --both` | **Done (2026-09-13).** Image `7bd38315eb76` in rest-live-proof |
 | POST-PROOF.3 | Update milestones REST.2 live rows | **PROD-1 done.** Proof table updated; no cmake in PR CI |
 
 ---

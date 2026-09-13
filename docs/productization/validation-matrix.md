@@ -17,12 +17,14 @@ Tiered checks for laptop POC and release gates. No `--cache-fill` in PR CI.
 
 ## Smoke tier 1 (container serve)
 
+Preflight (automated): `./scripts/smoke-tier1-preflight.sh`
+
 | Check | Bar |
 |---|---|
 | Image present | `docker image inspect progressive-lsp-runtime:local` |
-| Open folder in container | `./build run ide --folder <fixture>` (non-Linux default container) |
+| Open folder in container | `./build run ide --folder integration/fixtures/smoke-python --container` |
 | T1 attach | Journal shows serve ready; tree populates |
-| One slim T3 | e.g. Python fixture with `ty` in image |
+| One slim T3 | Python `ty` in dogfood image |
 
 **Fixture dirs:** [integration/fixtures/smoke-python](../../integration/fixtures/smoke-python) (minimal; expand for Java/C++).
 
