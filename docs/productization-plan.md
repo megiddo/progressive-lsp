@@ -158,7 +158,7 @@ Small doc-only PROD-4 work may land on `prod-housekeep` and merge early; **norma
 |---|---|---|
 | PROD-5.1 | **Smoke tier 0:** script or `xtask` subcommand — docker reachable, image present, `progressive-lsp serve --mux` starts (fake or short-lived) | Documented in [testing.md](testing.md); runs without cache-fill |
 | PROD-5.2 | **Smoke tier 1:** poc-ide or `./build run ide --folder <fixture>` — T1 attach + one slim T3 language | Manual checklist + optional automation behind `integration/` |
-| PROD-5.3 | **Dogfood matrix:** table of languages × tier × expected gate (clangd for C/C++, Java aarch64 libc exception, Rust sysroot honesty) | [conformance.md](conformance.md) or productization appendix |
+| PROD-5.3 | **Dogfood matrix:** table of languages × tier × expected gate (clangd for C/C++, Java aarch64 libc exception, Rust sysroot honesty) | [productization/validation-matrix.md](productization/validation-matrix.md) |
 | PROD-5.4 | Release/nightly bar: which smokes run on PR vs on Release publish | [integration/README.md](../integration/README.md) updated |
 
 **Orchestrator spawn:** phase orchestrator → sub-orchestrator **VALIDATION-TOOLS** if both xtask smoke and integration fixtures land in one phase.

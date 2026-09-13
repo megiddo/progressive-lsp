@@ -1444,9 +1444,9 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 |---|---|---|
 | PROD-1 HOUSEKEEP | POST-PROOF docs; REST.2 live rows; agent pointers | **signed off** (branch `prod-housekeep`) |
 | PROD-2 ARTIFACTS | Local push → GitHub Releases; manifest HTTPS pull | **signed off** (branch `prod-artifacts`; GitHub upload human gate) |
-| PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | pending |
+| PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | **in progress** (docs + recipe on `prod-image`; digest pending full dogfood `./build lsp`) |
 | PROD-4 CONTRACTS | [distribution-architecture.md](distribution-architecture.md) S1–S4 | **signed off** (branch `prod-contracts`) |
-| PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | pending |
+| PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | **in progress** (matrix doc on `prod-validation`; tier 0 script TBD) |
 
 **Sign-off checklist (program):** all phase exit tables in productization-plan; no ELFs in git; PR CI still no `--cache-fill`.
 
