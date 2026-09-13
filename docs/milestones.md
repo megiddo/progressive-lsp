@@ -1443,7 +1443,7 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 | Phase | Summary | Status |
 |---|---|---|
 | PROD-1 HOUSEKEEP | POST-PROOF docs; REST.2 live rows; agent pointers | **signed off** (branch `prod-housekeep`) |
-| PROD-2 ARTIFACTS | Local push → GitHub Releases; manifest HTTPS pull | **signed off** (branch `prod-artifacts`; GitHub upload human gate) |
+| PROD-2 ARTIFACTS | Local push → GitHub Releases; manifest HTTPS pull | **signed off** — [release](https://github.com/megiddo/progressive-lsp/releases/tag/engines-clangd-3623fe661ae35c6c80ac221f14d85be76aa870f1) |
 | PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | **in progress** (docs + recipe on `prod-image`; digest pending full dogfood `./build lsp`) |
 | PROD-4 CONTRACTS | [distribution-architecture.md](distribution-architecture.md) S1–S4 | **signed off** (branch `prod-contracts`) |
 | PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | **in progress** (tier 0: `scripts/smoke-tier0.sh`, `cargo xtask smoke`; tier 1 fixtures TBD) |

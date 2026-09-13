@@ -24,7 +24,7 @@ Tiered checks for laptop POC and release gates. No `--cache-fill` in PR CI.
 | T1 attach | Journal shows serve ready; tree populates |
 | One slim T3 | e.g. Python fixture with `ty` in image |
 
-**Fixture dirs:** TBD under `integration/fixtures/` (PROD-5.2).
+**Fixture dirs:** [integration/fixtures/smoke-python](../../integration/fixtures/smoke-python) (minimal; expand for Java/C++).
 
 ## Dogfood language matrix (manual until automated)
 

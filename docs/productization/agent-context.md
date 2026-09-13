@@ -22,6 +22,7 @@ Hygiene: [../testing.md](../testing.md). Prior meta (historical): [../post-poc-t
 4. Phase orchestrator may spawn **sub-orchestrators** only when the plan says so (PROD-5 tools vs matrix).
 5. Meta-orchestrator verifies exit table for that phase before spawning the next.
 6. Commits only when the human asked (unless human delegated “commit when phase complete”).
+7. **Do not stop** for status summaries. Continue phase work until a step **mandates human action** (e.g. missing Docker daemon on host, `gh` not authenticated, destructive prod choice). Long builds run in background; poll logs and proceed.
 
 ### Meta payload (copy to meta-orchestrator chat)
 

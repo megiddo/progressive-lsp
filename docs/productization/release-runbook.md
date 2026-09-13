@@ -65,28 +65,13 @@ Then `artifact_url_from_base` matches the table above.
 
 ## 4. Upload (human `gh` auth)
 
-Create draft release and upload archives from the local store (preserve path with `#`):
+Automated (after `cache push`):
 
 ```sh
-TAG="engines-clangd-3623fe661ae35c6c80ac221f14d85be76aa870f1"
-SHA="3623fe661ae35c6c80ac221f14d85be76aa870f1"
-ROOT="$PWD/target/local-artifacts/engines/clangd/$SHA"
-
-gh release create "$TAG" --draft --title "Engine pack: clangd @ ${SHA:0:8}" --notes "Static musl clangd cache blobs. Pin in pack-pins.toml."
-
-for triple in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-  src="$ROOT/${triple}.tar.gz"
-  dest="engines/clangd/${SHA}/${triple}.tar.gz"
-  gh release upload "$TAG" "${src}#${dest}"
-done
+./scripts/publish-clangd-github-release.sh
 ```
 
-Publish manifest for consumers (after rewriting urls — step 5):
-
-```sh
-gh release upload "$TAG" target/local-artifacts/manifest.json#manifest.json
-gh release edit "$TAG" --draft=false
-```
+Manual equivalent: see git history of that script (`gh release create`, upload with `#engines/…` paths, `manifest-release.json`).
 
 **Note:** `PROGRESSIVE_LSP_ARTIFACT_PUSH=1` + `curl PUT` in xtask targets generic HTTPS hosts, **not** GitHub Releases. Use `gh release upload` for this repo.
 

@@ -35,6 +35,7 @@ integration/
   artifacts/            # CI drops the musl ELF here (not committed)
   corpora/              # pins.json + fetch-at-SHA (PD2); csharp-mini snippet
   expected/             # golden find / ghost siblings per corpus
+  fixtures/smoke-python/  # PROD-5 tier-1 minimal tree for manual container smoke
 ```
 
 **Darwin:** `harness/run-it1.sh auto` is host_smoke + a gap note when Docker or a musl ELF is missing. Do not treat that as IT-1.1. Linux CI bind-mounts a `check-static` musl ELF and runs the four distros. After LOG-4, that ELF is rusqlite-linked: Linux CI must `check-static` it (no `DT_NEEDED` / `libdl`). Do not run `check-static` on a Darwin Mach-O and call it green. IT-1.1 also asserts a `serve-*.sqlite` WAL under `$PREFIX/log/` after handshake (Linux CI / Docker only).

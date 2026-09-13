@@ -6,16 +6,16 @@
       "pack": "clangd",
       "upstream_sha": "3623fe661ae35c6c80ac221f14d85be76aa870f1",
       "triple": "x86_64-unknown-linux-musl",
-      "sha256": "<archive-sha256-from-cache-push>",
-      "url": "https://github.com/megiddo/progressive-lsp/releases/download/<TAG>/engines/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "75c8130a2f18f14bb20197b21898e0fdd2065049335ed4d6748835ae32e466d2",
+      "url": "https://github.com/megiddo/progressive-lsp/releases/download/engines-clangd-3623fe661ae35c6c80ac221f14d85be76aa870f1/engines/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/x86_64-unknown-linux-musl.tar.gz",
       "format": "tar.gz"
     },
     {
       "pack": "clangd",
       "upstream_sha": "3623fe661ae35c6c80ac221f14d85be76aa870f1",
       "triple": "aarch64-unknown-linux-musl",
-      "sha256": "<archive-sha256-from-cache-push>",
-      "url": "https://github.com/megiddo/progressive-lsp/releases/download/<TAG>/engines/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "1456113e3ba50d09191ff42505a369e074c479b3ee292c47b7213062447e87fb",
+      "url": "https://github.com/megiddo/progressive-lsp/releases/download/engines-clangd-3623fe661ae35c6c80ac221f14d85be76aa870f1/engines/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/aarch64-unknown-linux-musl.tar.gz",
       "format": "tar.gz"
     }
   ]
