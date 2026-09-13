@@ -126,7 +126,20 @@ Then `./build lsp $(uname -m | sed 's/arm64/aarch64/') --flavor dogfood` should 
 
 ---
 
-## 7. What this does not cover
+## 7. Dogfood runtime image (PROD-3)
+
+Requires musl **pack dests** (clangd + full packs) under `target/musl/`. After overnight or `./build lsp <arch> --flavor dogfood`:
+
+```sh
+export CARGO_TARGET_DIR="$PWD/target"
+cargo xtask runtime-image --both
+```
+
+Record `docker images progressive-lsp-runtime:local` digest/id in [poc-tier/rest-live-proof.md](../poc-tier/rest-live-proof.md). Do not run in parallel with `--cache-fill`.
+
+---
+
+## 8. What this does not cover
 
 - **S1** `progressive-lsp` binary releases (fat dist / core tarballs) — use `xtask dist` + separate release tag when ready.
-- **Runtime OCI image** — [PROD-3](../productization-plan.md) (`runtime-image --both`); not uploaded as part of engine-only tag unless you add an image release process later.
+- **OCI image publish** to ghcr — local `:local` tag only until a registry release process exists.
