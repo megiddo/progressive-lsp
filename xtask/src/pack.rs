@@ -1024,7 +1024,8 @@ fn check_static_dest(plan: &PackBuildPlan) -> Result<(), String> {
              unclosable clangd .so is a miss, do not ship dynamic)",
             plan.dest().display()
         )
-    })
+    })?;
+    check_static::ensure_executable(plan.dest())
 }
 
 fn refuse_unknown(pack: &str) -> Result<(), String> {

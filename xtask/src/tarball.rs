@@ -27,7 +27,7 @@ pub fn write_ustar(files: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
 fn ustar_header(name: &str, size: u64) -> Result<[u8; BLOCK], String> {
     let mut h = [0u8; BLOCK];
     write_str(&mut h[0..100], name);
-    write_octal(&mut h[100..108], 0o644);
+    write_octal(&mut h[100..108], 0o755);
     write_octal(&mut h[108..116], 0);
     write_octal(&mut h[116..124], 0);
     write_octal(&mut h[124..136], size);

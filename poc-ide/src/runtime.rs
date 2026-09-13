@@ -40,11 +40,11 @@ impl DogfoodEnginePreflight {
         format!("{prefix}/engines/{pack}/{bin}")
     }
 
-    /// Version flag for `docker run --entrypoint ENG PATH FLAG` (scratch images have no `sh`).
-    pub fn version_flag(pack: &str) -> &'static str {
+    /// Trailing argv for `docker run --entrypoint ENG IMAGE …` (scratch images have no `sh`).
+    pub fn probe_argv(pack: &str) -> &'static [&'static str] {
         match pack {
-            "gopls" => "-version",
-            _ => "--version",
+            "gopls" => &["version"],
+            _ => &["--version"],
         }
     }
 }
@@ -671,18 +671,16 @@ impl RuntimePort for DockerRuntime {
         let mut missing = Vec::new();
         for (pack, bin) in DogfoodEnginePreflight::PACKS {
             let ep = DogfoodEnginePreflight::engine_path(prefix, pack, bin);
-            let flag = DogfoodEnginePreflight::version_flag(pack);
+            let probe = DogfoodEnginePreflight::probe_argv(pack);
             let out = Command::new(&self.docker)
-                .args([
-                    "run",
-                    "--rm",
-                    "--platform",
-                    docker_platform,
-                    "--entrypoint",
-                    &ep,
-                    RUNTIME_IMAGE,
-                    flag,
-                ])
+                .arg("run")
+                .arg("--rm")
+                .arg("--platform")
+                .arg(docker_platform)
+                .arg("--entrypoint")
+                .arg(&ep)
+                .arg(RUNTIME_IMAGE)
+                .args(probe)
                 .output()
                 .map_err(|e| IdeError::runtime(format!("docker preflight: {e}")))?;
             if !out.status.success() {
@@ -1151,6 +1149,8 @@ esac
         );
         assert!(DogfoodEnginePreflight::engine_path("/opt/plsp", "clangd", "clangd")
             .contains("/opt/plsp/engines/clangd/clangd"));
+        assert_eq!(DogfoodEnginePreflight::probe_argv("gopls"), &["version"]);
+        assert_eq!(DogfoodEnginePreflight::probe_argv("clangd"), &["--version"]);
 
         let ws = Path::new("/ws");
         let mut slim = LaunchJournal::container_plan();

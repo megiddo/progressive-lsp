@@ -14,6 +14,7 @@ use progressive_lsp_engine::{
     ZLS_PACK,
 };
 
+use crate::check_static;
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
@@ -298,6 +299,7 @@ fn touch_keep(dir: &Path) -> Result<(), String> {
 fn copy_file(src: &Path, dest: &Path) -> Result<(), String> {
     fs::copy(src, dest)
         .map_err(|e| format!("copy {} -> {}: {e}", src.display(), dest.display()))?;
+    check_static::ensure_executable(dest)?;
     Ok(())
 }
 
