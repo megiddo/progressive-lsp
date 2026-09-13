@@ -11,7 +11,18 @@ Not a `cargo test`. Records dogfood image / pack proof after POC-JAVA / POC-IMG.
 - `target/pack-cache/clangd/3623fe661ae35c6c80ac221f14d85be76aa870f1/{x86_64,aarch64}-unknown-linux-musl/clangd`
 - `target/musl/{x86_64,aarch64}-unknown-linux-musl/engines/clangd/clangd`
 
-**Live image copy (PROD-3 / POST-PROOF.2):** record `cargo xtask runtime-image --both` digests here after dogfood image rebuild.
+**Live image copy (PROD-3 / POST-PROOF.2):** run after **all** dogfood pack dests exist (not clangd alone):
+
+```sh
+export CARGO_TARGET_DIR="$PWD/target"
+./build lsp "$(uname -m | sed 's/arm64/aarch64/')" --flavor dogfood
+cargo xtask runtime-image --both
+docker images progressive-lsp-runtime:local
+```
+
+Record image ID/digest below when built. (Orchestrator 2026-09-13: `runtime-image --both` fail-closed on missing `aarch64` slim `java/javacs` — full dogfood `./build lsp` required first.)
+
+**Image digest (fill when built):** _pending full dogfood dests + successful `runtime-image --both`_
 
 Maintainer re-run (only if pins or Dockerfile change):
 
