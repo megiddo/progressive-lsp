@@ -2,14 +2,18 @@
 
 Tiered checks for laptop POC and release gates. No `--cache-fill` in PR CI.
 
-## Smoke tier 0 (automate target)
+## Smoke tier 0 (automated)
+
+```sh
+./scripts/smoke-tier0.sh
+```
 
 | Check | Command / gate | CI |
 |---|---|---|
-| xtask unit | `CARGO_TARGET_DIR=$PWD/target cargo test -p xtask -- --test-threads=1` | PR |
+| xtask unit | `cargo test -p xtask -- --test-threads=1` | PR |
 | poc-ide unit | `cargo test -p poc-ide` | PR |
-| Docker daemon | `docker info` | manual / nightly |
-| Clangd pull | [scripts/verify-clangd-cache-pull.sh](../../scripts/verify-clangd-cache-pull.sh) | manual (needs local-artifacts) |
+| Docker daemon | `cargo xtask smoke` → `docker info` | manual / nightly |
+| Clangd pull | `cargo xtask smoke` → [verify-clangd-cache-pull.sh](../../scripts/verify-clangd-cache-pull.sh) | manual (needs local-artifacts) |
 
 ## Smoke tier 1 (container serve)
 

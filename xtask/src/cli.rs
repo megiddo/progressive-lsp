@@ -361,7 +361,7 @@ pub fn parse(args: &[String]) -> Result<XtaskCommand, String> {
         "poc" => parse_run_flags(&args[1..]),
         "build" => parse_build(&args[1..]),
         "musl" | "pack" | "runtime-image" | "check-static" | "bench-alloc" | "bench-perf"
-        | "dist" => Ok(XtaskCommand::Legacy {
+        | "dist" | "smoke" => Ok(XtaskCommand::Legacy {
             name: cmd.to_string(),
             rest: args[1..].to_vec(),
         }),
@@ -714,6 +714,7 @@ fn execute_legacy(name: &str, rest: &[String]) -> Result<(), String> {
         "bench-alloc" => allocator::run(rest),
         "bench-perf" => perf::run(rest),
         "dist" => dist::run(rest),
+        "smoke" => crate::smoke::run(rest),
         other => Err(format!("unknown command: {other}")),
     }
 }
