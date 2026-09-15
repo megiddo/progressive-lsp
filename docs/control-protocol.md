@@ -66,6 +66,9 @@ Names are proto service methods. Unary unless marked push.
 | `TierReady` | **push** | Package upgraded tier |
 | `CacheReady` | **push** | T3′ query became ready after `inflight` (`file`, `query_kind`, `location_count`) |
 | `ReloadScripts` | req/resp | Reload Rhai from merge chain |
+| `FetchTrace` | req/resp | Return log rows for an LSP `progressiveMeta.traceId` (in-memory ring; see ADR 004) |
+
+**SEAMS (additive):** Unary RPC responses may carry optional `ProgressiveMeta` (high field numbers in proto) when the client requested `emit_result_meta` on the request wrapper. LSP clients use JSON `progressiveMeta` instead.
 
 **FilesSince** is not in LSP. Do not add `workspace/filesSince` or `$/progressive/filesSince` in v1. M1 wires `FilesSince` to the watch journal (`truncated` after overflow or a generation gap). `WatchBatch` is the coalesced push DTO.
 

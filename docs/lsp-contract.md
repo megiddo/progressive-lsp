@@ -30,6 +30,8 @@ Advertise what we actually implement for the active languages. Do not advertise 
 
 **Locations:** optional `Location.data.tier` = `"syntax"` | `"graph"` | `"types"`.
 
+**Extended results (opt-in, SEAMS):** When the client sets `initializationOptions.progressiveLsp.emitResultMeta`, intelligence JSON-RPC `result` becomes `{ "value": <stock LSP>, "progressiveMeta": { traceId, tier, backendLanguage, backendVersion, timing? } }`. Per-request overrides use a top-level `progressiveLsp` object on the RPC params. When meta is off, the wire shape is unchanged (bare array/object/null). See [ADR 004](adr/004-progressive-result-meta-and-trace.md).
+
 ## Stock vs progressive
 
 | Concern | Stock LSP client | Progressive client |

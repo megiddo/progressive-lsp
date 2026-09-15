@@ -1,6 +1,6 @@
 # Integration seams — request limits, response meta, trace API
 
-**Status:** Planned (implement **before / with** IT-TAM TAM-2).  
+**Status:** In progress (SEAMS-1…3 landed on `integ-seams-*`; IT-TAM harness follows).  
 **Driver:** Tier API Matrix needs deterministic tier caps, uniform observability on every API, and correlated deep traces — not WAL scraping alone.
 
 **Related:** [README.md](README.md), [progressive-lsp-apis.md](../../docs/progressive-lsp-apis.md), [lsp-contract.md](../../docs/lsp-contract.md), [control-protocol.md](../../docs/control-protocol.md), [ADR 002](../../docs/adr/002-serve-readiness-fsm.md).
@@ -230,11 +230,11 @@ Report columns: `trace_id`, `meta_tier`, `backend_version`, `resolve_ms`, `trace
 
 ## 6. ADR / docs checklist
 
-- [ ] [ADR 004](../../docs/adr/004-progressive-result-meta-and-trace.md) — extended results, stock compatibility, ring buffer TTL
-- [ ] [lsp-contract.md](../../docs/lsp-contract.md) — `value` + `progressiveMeta` wrapper
-- [ ] [control-protocol.md](../../docs/control-protocol.md) — `FetchTrace`, request meta flags
-- [ ] [progressive-lsp-apis.md](../../docs/progressive-lsp-apis.md) — catalog entries
-- [ ] [design-patterns.md](../../docs/design-patterns.md) — `ChainPolicy`, `ProgressiveMeta`, `TraceRing`
+- [x] [ADR 004](../../docs/adr/004-progressive-result-meta-and-trace.md) — extended results, stock compatibility, ring buffer TTL
+- [x] [lsp-contract.md](../../docs/lsp-contract.md) — `value` + `progressiveMeta` wrapper
+- [x] [control-protocol.md](../../docs/control-protocol.md) — `FetchTrace`, request meta flags
+- [x] [progressive-lsp-apis.md](../../docs/progressive-lsp-apis.md) — catalog entries
+- [x] [design-patterns.md](../../docs/design-patterns.md) — `ChainPolicy`, `ProgressiveMeta`, `TraceRing`
 
 ---
 

@@ -34,6 +34,9 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `TsgPin` | Value object | Git URL + SHA + rel path; fetch-at-SHA; never a `third_party/` dump |
 | `TsgLoadState` | Value object | `Unused` vs `SourceLoaded` / `RuntimeReady` / `FetchFailed`; selected backend is never the unused slot |
 | `ResolveQuery`, `QueryKind`, `ResolveResult`, `LspLocation` | Query / Command | Protocol crate builds a query; resolvers do not parse JSON-RPC; `LspLocation.data.tier` when we set `data` |
+| `ChainPolicy` | Value object | Optional `maxChainIter` / `maxTier` on `ResolveQuery`; `ResolverChain` honors limits (IT-TAM deterministic tiers) |
+| `ProgressiveResultMeta` / extended LSP `result` | DTO | Opt-in `{ value, progressiveMeta }` wrapper; stock wire when meta off |
+| `TraceRing` | Ring buffer | In-memory rows keyed by `traceId`; `FetchTrace` on control plane |
 | `WorkspaceSource` adapters | Adapter | Disk/build files → `WorkspaceModel`; no compiler invocation except documented one-shots |
 | `WorkspaceModel` | Domain model / DTO | Roots and classpath-like entries **exist on disk**; scripts cannot invent jars |
 | `EngineAdapter` | Adapter | Child argv/stdio/ready → supervisor API |
