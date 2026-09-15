@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::result_tree::{
-    cargo_failure_snippet, failed_crates_from_cargo_output, parse_cargo_test_totals, Outcome,
-    ResultTree,
+    cargo_failure_snippet, failed_crates_from_cargo_output, parse_cargo_test_by_package,
+    parse_cargo_test_totals, Outcome, ResultTree,
 };
 use crate::workspace_root;
 
@@ -127,11 +127,14 @@ const WORKSPACE_TEST_ARGS: &[&str] = &[
     "poc-ide",
 ];
 
-pub fn run(_args: &[String]) -> Result<(), String> {
-    let root = workspace_root();
-    let mut tree = ResultTree::new("test");
+fn workspace_package_order() -> Vec<&'static str> {
+    WORKSPACE_TEST_ARGS
+        .windows(2)
+        .filter_map(|w| (w[0] == "-p").then_some(w[1]))
+        .collect()
+}
 
-    let ws = run_cargo_test(&root, WORKSPACE_TEST_ARGS);
+fn push_workspace_breakdown(tree: &mut ResultTree, ws: &TestRun) {
     tree.push_counts(
         1,
         "workspace",
@@ -140,16 +143,51 @@ pub fn run(_args: &[String]) -> Result<(), String> {
         ws.failed,
         ws.detail.clone(),
     );
+    let by_pkg = parse_cargo_test_by_package(&ws.combined);
+    for pkg in workspace_package_order() {
+        let Some((p, f)) = by_pkg.get(pkg) else {
+            continue;
+        };
+        if *p == 0 && *f == 0 {
+            continue;
+        }
+        let outcome = if *f > 0 {
+            Outcome::Fail
+        } else {
+            Outcome::Pass
+        };
+        tree.push_counts(2, pkg, outcome, *p, *f, None);
+    }
+    for (pkg, (p, f)) in &by_pkg {
+        if workspace_package_order().contains(&pkg.as_str()) {
+            continue;
+        }
+        if *p == 0 && *f == 0 {
+            continue;
+        }
+        let outcome = if *f > 0 {
+            Outcome::Fail
+        } else {
+            Outcome::Pass
+        };
+        tree.push_counts(2, pkg.clone(), outcome, *p, *f, None);
+    }
+}
+
+pub fn run(_args: &[String]) -> Result<(), String> {
+    let root = workspace_root();
+    let mut tree = ResultTree::new("test");
+
+    let ws = run_cargo_test(&root, WORKSPACE_TEST_ARGS);
+    push_workspace_breakdown(&mut tree, &ws);
     if ws.outcome == Outcome::Fail {
         for crate_name in failed_crates_from_cargo_output(&ws.combined) {
             let args = ["test", "-p", crate_name.as_str()];
             let sub = run_cargo_test(&root, &args);
-            tree.push_counts(
+            tree.push_detail(
                 2,
-                crate_name,
+                format!("{crate_name} (detail)"),
                 sub.outcome,
-                sub.passed,
-                sub.failed,
                 sub.detail,
             );
         }
@@ -161,12 +199,21 @@ pub fn run(_args: &[String]) -> Result<(), String> {
     );
     tree.push_counts(
         1,
-        "plsp-it1 harness",
+        "integration harness",
         harness.outcome,
         harness.passed,
         harness.failed,
-        harness.detail,
+        harness.detail.clone(),
     );
+    let harness_pkgs = parse_cargo_test_by_package(&harness.combined);
+    if let Some((p, f)) = harness_pkgs.get("plsp-it1") {
+        let outcome = if *f > 0 {
+            Outcome::Fail
+        } else {
+            Outcome::Pass
+        };
+        tree.push_counts(2, "plsp-it1", outcome, *p, *f, None);
+    }
 
     tree.print();
     if tree.failed() {

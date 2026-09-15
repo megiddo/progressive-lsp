@@ -130,16 +130,29 @@ impl ResultTree {
     }
 
     pub fn total_passed(&self) -> u32 {
-        let has_depth_2 = self.lines.iter().any(|l| l.depth == 2);
-        if has_depth_2 {
-            return self
-                .lines
-                .iter()
-                .filter(|l| l.depth == 2)
-                .map(|l| l.passed)
-                .sum();
+        let mut total = 0u32;
+        let mut i = 0usize;
+        while i < self.lines.len() {
+            if self.lines[i].depth != 1 {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            let mut child_pass = 0u32;
+            while j < self.lines.len() && self.lines[j].depth > 1 {
+                if self.lines[j].depth == 2 {
+                    child_pass += self.lines[j].passed;
+                }
+                j += 1;
+            }
+            total += if child_pass > 0 {
+                child_pass
+            } else {
+                self.lines[i].passed
+            };
+            i = j;
         }
-        self.lines.iter().map(|l| l.passed).sum()
+        total
     }
 
     pub fn root_outcome(&self) -> Outcome {
@@ -217,6 +230,91 @@ impl Line {
 }
 
 /// Sum `test result:` lines from `cargo test` (lib + integration + doc bins).
+/// Per-package totals from one `cargo test` log (`Running …` + following `test result:`).
+pub fn parse_cargo_test_by_package(text: &str) -> std::collections::BTreeMap<String, (u32, u32)> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+    let mut current_pkg: Option<String> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Running ") && trimmed.contains("(target/") {
+            if let Some(stem) = deps_stem_from_running_line(trimmed) {
+                current_pkg = Some(package_from_deps_stem(&stem));
+            }
+            continue;
+        }
+        if !trimmed.starts_with("test result:") {
+            continue;
+        }
+        let (p, f) = parse_single_test_result_line(trimmed);
+        let pkg = current_pkg.clone().unwrap_or_else(|| "unknown".into());
+        let entry = out.entry(pkg).or_insert((0, 0));
+        entry.0 += p;
+        entry.1 += f;
+    }
+    out
+}
+
+fn deps_stem_from_running_line(line: &str) -> Option<String> {
+    let open = line.rfind('(')?;
+    let close = line.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let path = &line[open + 1..close];
+    let file = path.rsplit('/').next()?.rsplit('\\').next()?;
+    Some(file.to_string())
+}
+
+fn strip_deps_hash(stem: &str) -> &str {
+    if let Some(i) = stem.rfind('-') {
+        let suffix = &stem[i + 1..];
+        if suffix.len() == 16 && suffix.chars().all(|c| c.is_ascii_hexdigit()) {
+            return &stem[..i];
+        }
+    }
+    stem
+}
+
+fn package_from_deps_stem(stem: &str) -> String {
+    let base = strip_deps_hash(stem);
+    if base == "seams_extended" {
+        return "progressive-lsp".into();
+    }
+    if let Some(rest) = base.strip_prefix("progressive_lsp_") {
+        return format!("progressive-lsp-{rest}").replace('_', "-");
+    }
+    if base == "progressive_lsp" || base.starts_with("progressive_lsp-") {
+        return "progressive-lsp".into();
+    }
+    if base == "poc_ide" || base.starts_with("poc_ide-") {
+        return "poc-ide".into();
+    }
+    if base == "plsp_it1" || base.starts_with("plsp_it1-") {
+        return "plsp-it1".into();
+    }
+    base.replace('_', "-")
+}
+
+fn parse_single_test_result_line(line: &str) -> (u32, u32) {
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+    for segment in line.split(';') {
+        let seg = segment.trim();
+        if let Some(idx) = seg.find(" passed") {
+            if let Some(n) = seg[..idx].trim().split_whitespace().last() {
+                passed += n.parse().unwrap_or(0);
+            }
+        }
+        if let Some(idx) = seg.find(" failed") {
+            if let Some(n) = seg[..idx].trim().split_whitespace().last() {
+                failed += n.parse().unwrap_or(0);
+            }
+        }
+    }
+    (passed, failed)
+}
+
 pub fn parse_cargo_test_totals(text: &str) -> (u32, u32) {
     let mut passed = 0u32;
     let mut failed = 0u32;
@@ -373,6 +471,19 @@ mod tests {
         let sample = "test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\
                       test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
         assert_eq!(parse_cargo_test_totals(sample), (45, 0));
+    }
+
+    #[test]
+    fn parse_cargo_test_by_package_groups_running_blocks() {
+        let sample = "\
+     Running unittests src/lib.rs (target/debug/deps/progressive_lsp_core-0123456789abcdef)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs (target/debug/deps/progressive_lsp_resolve-fedcba9876543210)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+";
+        let map = parse_cargo_test_by_package(sample);
+        assert_eq!(map.get("progressive-lsp-core"), Some(&(10, 0)));
+        assert_eq!(map.get("progressive-lsp-resolve"), Some(&(5, 0)));
     }
 
     #[test]
