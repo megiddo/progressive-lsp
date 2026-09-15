@@ -119,6 +119,8 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
 | `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
 | `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |
+| `FileEventHub` | Observer + pub/sub | ADR 003: one coalescing thread; `WatchBackend` + buffer `didChange`; subscribers (index, T3′, engine forward, control journal); `poll_disk_watch` is fallback/rescan only |
+| `FileHubSlot` | Facade | `ServeHost` hub lifecycle; `wire_file_event_hub` after `Arc`; `NotifyWatcher` production adapter (platform-scoped live notify) |
 | `CorpusPin` (`integration/corpora/pins.json`) | Value object / Schema | URL + peeled SHA + entry; fetch-at-SHA; never a submodule mirror |
 | `ExpectedGolden` | Schema / DTO | 0-based `find` → line/character; integration only |
 | `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |

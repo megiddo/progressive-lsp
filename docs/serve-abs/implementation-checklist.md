@@ -56,14 +56,14 @@ Fine-grained work packages for **ABS-0 … ABS-4**. Depends-on is strict.
 
 | ID | Work package | Depends-on | Exit criteria | Done |
 |----|--------------|------------|---------------|------|
-| ABS-2.1 | `FileEventHub` struct + dedicated thread; mpsc in, coalesced batches out | ABS-1.3 | Unit: FakeWatcher → one batch, generation bump | [ ] |
-| ABS-2.2 | `Subscriber` trait; index subscriber → `apply_watch_batch` | ABS-2.1 | Reuse existing index tests path | [ ] |
-| ABS-2.3 | T3′ subscriber → invalidate / generation | ABS-2.1 | Types-cache invalidation test | [ ] |
-| ABS-2.4 | Engine forward subscriber → `supervisor.forward_did_change` | ABS-2.1 | Fake supervisor records URIs | [ ] |
-| ABS-2.5 | Control subscriber → journal + `pending_batches` | ABS-2.1 | WatchBatch push without `poll_disk_watch` diff | [ ] |
-| ABS-2.6 | Wire hub at `ServeHost` initialize; demote `poll_disk_watch` to fallback/rescan only | ABS-2.2–2.5 | Integration: disk modify updates index | [ ] |
-| ABS-2.7 | `didChange` enqueues hub (buffer path) | ABS-2.1 | Unit: coalesced with disk events | [ ] |
-| ABS-2.8 | Live `NotifyWatcher` (or document platform scope) | ABS-2.1 | Manual/Linux CI note if Darwin limited | [ ] |
+| ABS-2.1 | `FileEventHub` struct + dedicated thread; mpsc in, coalesced batches out | ABS-1.3 | Unit: FakeWatcher → one batch, generation bump | [x] |
+| ABS-2.2 | `Subscriber` trait; index subscriber → `apply_watch_batch` | ABS-2.1 | Reuse existing index tests path | [x] |
+| ABS-2.3 | T3′ subscriber → invalidate / generation | ABS-2.1 | Types-cache invalidation test | [x] |
+| ABS-2.4 | Engine forward subscriber → `supervisor.forward_did_change` | ABS-2.1 | Fake supervisor records URIs | [x] |
+| ABS-2.5 | Control subscriber → journal + `pending_batches` | ABS-2.1 | WatchBatch push without `poll_disk_watch` diff | [x] |
+| ABS-2.6 | Wire hub at `ServeHost` initialize; demote `poll_disk_watch` to fallback/rescan only | ABS-2.2–2.5 | Integration: disk modify updates index | [x] |
+| ABS-2.7 | `didChange` enqueues hub (buffer path) | ABS-2.1 | Unit: coalesced with disk events | [x] |
+| ABS-2.8 | Live `NotifyWatcher` (or document platform scope) | ABS-2.1 | Manual/Linux CI note if Darwin limited | [x] |
 
 **Phase exit:** ABS-2.6; ghost edit IT without serve-side sleep for tier truth.
 

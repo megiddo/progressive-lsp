@@ -103,7 +103,19 @@ impl WatchCoalescer {
     }
 
     pub fn ingest_raw(&mut self, events: impl IntoIterator<Item = RawWatchEvent>) {
-        self.ingest(events.into_iter().map(|e| WatchEvent::new(e.path, e.kind)));
+        self.ingest(
+            events
+                .into_iter()
+                .map(|e| WatchEvent::new(e.path, e.kind)),
+        );
+    }
+
+    /// Emit one batch immediately (hub thread / tests). Never sleeps.
+    pub fn flush_now(&mut self) -> Option<WatchBatch> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        Some(self.flush_pending(false))
     }
 
     pub fn poll_backend(&mut self, backend: &mut dyn WatchBackend) {

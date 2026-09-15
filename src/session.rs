@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use progressive_lsp_control::IngestState;
 use progressive_lsp_core::{
+    path_to_file_uri,
     path_from_file_uri, FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort,
     LogRecord, LogScope, NullLog, PackageId, PrefixLayout, T2Backend, Tier,
 };
@@ -21,7 +22,10 @@ use progressive_lsp_resolve::{
     TreeSitterResolver,
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
-use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
+use progressive_lsp_watch::{
+    DefaultIgnoreFilter, WatchBackend, WatchBatch, WatchCoalescer, WatchEventSource, WatchFilter,
+    WatchKind,
+};
 use progressive_lsp_workspace::{detect_workspace, PackageEntry, WorkspaceModel};
 
 #[cfg(test)]
@@ -449,6 +453,57 @@ impl WorkspaceSession {
         }
         n
     }
+
+    /// LSP buffer edit on the mux thread (index only).
+    pub fn apply_buffer_change(&self, uri: &str, text: &str) {
+        let path = path_from_file_uri(uri);
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(path.to_string_lossy().into_owned())
+                .operation("textDocument/didChange"),
+        );
+        self.log.debug("textDocument/didChange");
+        if let Some(indexer) = self.indexer_for(&path, "") {
+            let old = self.index.lock().source(&path).unwrap_or("").to_string();
+            let change = InputChange::replace_all(&old, text);
+            self.index
+                .lock()
+                .apply_change(&path, &change, indexer.as_ref());
+        }
+    }
+
+    pub fn forward_buffer_change(&self, uri: &str, text: &str) {
+        if let Some(sup) = &self.supervisor {
+            sup.forward_did_change(uri, text);
+        }
+    }
+
+    /// Hub subscriber: index, T3′ invalidation, engine forward (ABS-2.2–2.4).
+    pub fn apply_hub_batch(&self, batch: &WatchBatch) {
+        let mut filtered = batch.clone();
+        let paths: Vec<String> = filtered.events.iter().map(|e| e.path.clone()).collect();
+        let kept = self.filter_watch_paths(&paths);
+        filtered.events.retain(|e| kept.iter().any(|k| k == &e.path));
+        if filtered.events.is_empty() {
+            return;
+        }
+        self.index
+            .lock()
+            .apply_watch_batch(&filtered, self.filter.as_ref());
+        for ev in &filtered.events {
+            if ev.source == WatchEventSource::Disk && ev.kind != WatchKind::Delete {
+                self.apply_disk_path(Path::new(&ev.path));
+            }
+            if let Some(sup) = &self.supervisor {
+                let path = Path::new(&ev.path);
+                if let Some(text) = self.index.lock().source(path) {
+                    let uri = path_to_file_uri(path);
+                    sup.forward_did_change(&uri, text);
+                }
+            }
+        }
+        self.types_cache.on_watch_batch(&filtered);
+    }
 }
 
 fn to_lsp_progress(ev: &progressive_lsp_index::WorkDoneProgress) -> WorkDoneProgress {
@@ -644,23 +699,8 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_change(&self, uri: &str, text: &str) {
-        let path = path_from_file_uri(uri);
-        let _g = LogScope::enter(
-            LogScope::new()
-                .path(path.to_string_lossy().into_owned())
-                .operation("textDocument/didChange"),
-        );
-        self.log.debug("textDocument/didChange");
-        if let Some(indexer) = self.indexer_for(&path, "") {
-            let old = self.index.lock().source(&path).unwrap_or("").to_string();
-            let change = InputChange::replace_all(&old, text);
-            self.index
-                .lock()
-                .apply_change(&path, &change, indexer.as_ref());
-        }
-        if let Some(sup) = &self.supervisor {
-            sup.forward_did_change(uri, text);
-        }
+        self.apply_buffer_change(uri, text);
+        self.forward_buffer_change(uri, text);
     }
 
     fn did_close(&self, uri: &str) {

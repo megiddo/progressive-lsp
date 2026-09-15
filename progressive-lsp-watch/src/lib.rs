@@ -3,6 +3,7 @@
 pub mod backend;
 pub mod coalescer;
 pub mod filter;
+pub mod hub;
 pub mod journal;
 
 pub use backend::{FakeWatcher, NotifyWatcher, RawWatchEvent, WatchBackend, WatchKind};
@@ -14,16 +15,28 @@ pub use filter::{
     DefaultIgnoreFilter, DenyListFilter, IdentityWatchFilter, WatchFilter, DEFAULT_IGNORE_GLOBS,
     MANIFEST_NAMES,
 };
+pub use hub::{
+    CallbackSubscriber, FileEventHub, HubCommand, HubHandle, HubSubscriber, RecordingSubscriber,
+};
 pub use journal::{FilesSinceAnswer, FilesSinceJournal, FilesSinceQuery};
 
 use progressive_lsp_control::WatchBatch as ProtoBatch;
 use progressive_lsp_control::WatchEvent as ProtoEvent;
+
+/// Buffer (LSP) vs disk notify. Proto DTO omits this field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WatchEventSource {
+    #[default]
+    Disk,
+    Buffer,
+}
 
 /// Domain watch event. Converts to the protobuf DTO at the control boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WatchEvent {
     pub path: String,
     pub kind: WatchKind,
+    pub source: WatchEventSource,
 }
 
 impl WatchEvent {
@@ -31,6 +44,15 @@ impl WatchEvent {
         Self {
             path: path.into(),
             kind,
+            source: WatchEventSource::Disk,
+        }
+    }
+
+    pub fn buffer_modify(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            kind: WatchKind::Modify,
+            source: WatchEventSource::Buffer,
         }
     }
 

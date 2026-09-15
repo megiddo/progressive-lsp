@@ -26,9 +26,10 @@ use progressive_lsp_log::ConfigWarnAdapter;
 use progressive_lsp_protocol::LspIntelligence;
 use progressive_lsp_resolve::{ResolveQuery, ResolveResult};
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
-use progressive_lsp_watch::{FilesSinceJournal, FilesSinceQuery};
+use progressive_lsp_watch::{FilesSinceJournal, FilesSinceQuery, WatchBatch as DomainWatchBatch};
 use serde_json::Value;
 
+use crate::file_hub::FileHubSlot;
 use crate::session::collect_sources;
 use crate::WorkspaceSession;
 
@@ -66,6 +67,7 @@ pub struct ServeHost {
     pending_cache_ready: Arc<Mutex<Vec<CacheReady>>>,
     log: Arc<dyn LogPort>,
     supervisor: Option<Arc<EngineSupervisor>>,
+    file_hub: FileHubSlot,
 }
 
 impl ServeHost {
@@ -94,7 +96,44 @@ impl ServeHost {
             pending_cache_ready: Arc::new(Mutex::new(Vec::new())),
             log,
             supervisor: None,
+            file_hub: FileHubSlot::default(),
         })
+    }
+
+    /// Called from `serve_with_io_and_log` after `Arc::new` so hub subscribers can reach the host.
+    pub fn wire_file_event_hub(self: &Arc<Self>) {
+        let host = Arc::clone(self);
+        self.file_hub.wire_deliver(Arc::new(move |batch| {
+            host.deliver_hub_batch(batch);
+        }));
+    }
+
+    fn deliver_hub_batch(&self, batch: DomainWatchBatch) {
+        self.file_hub.note_batch_flags(&batch);
+        self.session.apply_hub_batch(&batch);
+        self.hub_control_subscriber(&batch);
+    }
+
+    /// ABS-2.5: journal + pending WatchBatch pushes (no tree-scan diff).
+    fn hub_control_subscriber(&self, batch: &DomainWatchBatch) {
+        if batch.events.is_empty() {
+            return;
+        }
+        let mut journal = self.journal.lock().expect("journal");
+        let gen = batch.generation;
+        if batch.overflow {
+            journal.mark_overflow(gen);
+        }
+        for ev in &batch.events {
+            journal.record(&ev.path, gen, 0);
+        }
+        drop(journal);
+        if *self.subscribed.lock().expect("sub") {
+            self.pending_batches
+                .lock()
+                .expect("batches")
+                .push(batch.to_proto());
+        }
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
@@ -169,9 +208,20 @@ impl ServeHost {
         Ok(())
     }
 
-    /// Diff on-disk sources vs last snapshot. Queues WatchBatch when subscribed.
+    /// Fallback tree-scan when hub is off or `need_rescan` (ABS-2.6).
     pub fn poll_disk_watch(&self) -> usize {
         self.sync_types_tier_from_engines();
+        if self.file_hub.is_running() {
+            if self.file_hub.need_rescan() {
+                self.file_hub.clear_need_rescan();
+                return self.fallback_tree_scan_disk_watch();
+            }
+            return self.disk_watch.poll(&self.session);
+        }
+        self.fallback_tree_scan_disk_watch()
+    }
+
+    fn fallback_tree_scan_disk_watch(&self) -> usize {
         let Some(root) = self.workspace.lock().expect("ws").clone() else {
             return self.disk_watch.poll(&self.session);
         };
@@ -339,7 +389,7 @@ impl LspIntelligence for ServeHost {
                 .line(q.position.line)
                 .operation(operation),
         );
-        let discover = matches!(
+        let _discover = matches!(
             q.kind,
             progressive_lsp_resolve::QueryKind::Definition
                 | progressive_lsp_resolve::QueryKind::Implementation
@@ -366,7 +416,13 @@ impl LspIntelligence for ServeHost {
                 .path(path.to_string_lossy().into_owned())
                 .operation("textDocument/didChange"),
         );
-        self.session.did_change(uri, text);
+        self.session.apply_buffer_change(uri, text);
+        if self.file_hub.is_running() {
+            self.file_hub
+                .publish_buffer_modify(&path.to_string_lossy());
+        } else {
+            self.session.forward_buffer_change(uri, text);
+        }
     }
 
     fn did_close(&self, uri: &str) {
@@ -407,6 +463,7 @@ impl LspIntelligence for ServeHost {
             }
             self.sync_types_tier_from_engines();
             self.disk_watch.snapshot_root(&self.session);
+            let _ = self.file_hub.try_start(&root);
             let _ = self.poll_disk_watch();
         }
         let _g = LogScope::enter(
@@ -1058,6 +1115,7 @@ mod tests {
         )
         .unwrap();
         let _ = format!("{:?}", ServeDiskWatch::new());
+        host.poll_disk_watch();
         let sym = host.resolve(&ResolveQuery::workspace_symbol("ghost"));
         let src_now = host
             .session

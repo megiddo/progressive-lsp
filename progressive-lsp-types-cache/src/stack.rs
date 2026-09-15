@@ -15,7 +15,10 @@ use crate::engine_builder::{
 use crate::port::{GenerationPort, IndexGenerationPort};
 use crate::resolver::TypesCacheResolver;
 use crate::serve_state::CacheServeState;
+use crate::invalidation::InvalidationPolicy;
 use crate::store::TypesCacheStore;
+use progressive_lsp_core::FileId;
+use progressive_lsp_watch::{WatchBatch, WatchKind};
 
 pub struct TypesCacheStack {
     pub store: Arc<TypesCacheStore>,
@@ -68,6 +71,20 @@ impl TypesCacheStack {
         let entry = TypesCacheEntry::new(result.clone(), 0, CacheEntrySource::Engine)
             .with_engine_generation(self.store.engine_generation());
         self.store.put(key, entry);
+    }
+
+    /// T3′ invalidation when the file-event hub delivers a batch.
+    pub fn on_watch_batch(&self, batch: &WatchBatch) {
+        let policy = InvalidationPolicy::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.generation),
+        );
+        for ev in &batch.events {
+            if ev.kind == WatchKind::Delete {
+                continue;
+            }
+            policy.on_file_dirty(&FileId::new(&ev.path));
+        }
     }
 
     pub fn attach_engine_builder(
