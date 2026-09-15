@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use progressive_lsp_core::{FileId, LanguageId, PackageId};
+use progressive_lsp_core::{language_id_from_path, FileId, LanguageId, PackageId};
 use progressive_lsp_engine::EngineSupervisor;
 use progressive_lsp_resolve::{QueryKind, ResolveOutcome, ResolveQuery};
 
@@ -80,30 +80,6 @@ struct WorkerCtx {
     wake_rx: Receiver<()>,
 }
 
-fn language_from_file(path: &str) -> Option<LanguageId> {
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    let id = match ext {
-        "java" => "java",
-        "php" => "php",
-        "html" | "htm" => "html",
-        "css" => "css",
-        "js" | "mjs" | "cjs" => "javascript",
-        "ts" => "typescript",
-        "go" => "go",
-        "zig" => "zig",
-        "py" => "python",
-        "rs" => "rust",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
-        "cs" => "csharp",
-        _ => return None,
-    };
-    Some(LanguageId::new(id))
-}
-
 fn package_for(supervisor: &EngineSupervisor, file: &FileId) -> PackageId {
     let bound = supervisor.package_for_file(file);
     if bound.as_str() == "pkg" {
@@ -131,8 +107,8 @@ fn drain_queue(ctx: &WorkerCtx) {
         }
         let gen = ctx.generation.file_generation(&key.file);
         key.generation = gen;
-        let language =
-            language_from_file(key.file.as_str()).unwrap_or_else(|| LanguageId::new("java"));
+        let language = language_id_from_path(key.file.as_str())
+            .unwrap_or_else(|| LanguageId::new("java"));
         let package = package_for(&ctx.supervisor, &key.file);
         let q = query_from_key(&key);
         ctx.resolve_count

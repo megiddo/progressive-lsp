@@ -59,6 +59,8 @@ impl Resolver for TypesCacheResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timing::{assert_within_budget, elapsed};
+    use std::time::Instant;
     use crate::builder::RecordingBuilder;
     use crate::fake_chain::chain_with_types_cache_and_t2;
     use crate::key::{CacheEntrySource, CacheGeneration, TypesCacheEntry};
@@ -67,6 +69,25 @@ mod tests {
     use progressive_lsp_resolve::{
         fake::FakeResolver, LspLocation, Position, QueryKind, Range, ResolveQuery, ResolverChain,
     };
+
+    #[test]
+    fn t3_prime_resolve_within_20ms_on_small_fixture() {
+        let store = Arc::new(TypesCacheStore::new());
+        let resolver = TypesCacheResolver::new(
+            store,
+            Arc::new(FixedGenerationPort::new(CacheGeneration::zero())),
+            Arc::new(RecordingBuilder::new()),
+            Arc::new(Mutex::new(None)),
+        );
+        let q = ResolveQuery::new(
+            FileId::new("A.java"),
+            Position::new(0, 0),
+            QueryKind::Definition,
+        );
+        let start = Instant::now();
+        let _ = resolver.resolve(&q);
+        assert_within_budget(elapsed(start), "TypesCacheResolver");
+    }
 
     #[test]
     fn stub_miss_falls_through_to_fake_t2() {

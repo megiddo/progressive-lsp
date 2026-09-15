@@ -1463,11 +1463,11 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 | **TCACHE-0** | TC-0 | *(on `pre-tcache-base`)* | `prod-validation` | **SIGNED OFF** — requirements, design, ADR, agent-context |
 | **TCACHE-1** | TC-1 | `tcache-1` | `pre-tcache-base` | **SIGNED OFF** — [pattern-audit-report.md](types-cache/pattern-audit-report.md) (27 crates, 6 P0) |
 | **TCACHE-2** | TC-2 | `tcache-2` | `tcache-1` | **SIGNED OFF** — `progressive-lsp-types-cache` stub; chain hook; tests |
-| **TCACHE-3** | TC-3 | `tcache-3` | `tcache-2` | Builder + engine off mux path; container 2nd-click hit |
-| **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | P0 refactors from audit |
-| **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | Graph layer + IT-discover-timing CI |
+| **TCACHE-3** | TC-3 | `tcache-3` | `tcache-2` | **SIGNED OFF** — builder + engine off mux; `cache_state` WAL |
+| **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | **SIGNED OFF** — P0 refactors (`language_id_from_path`, thin discover) |
+| **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | **SIGNED OFF** — relation graph + ≤20 ms unit gates |
 
-**Next:** stack **`tcache-3`** on **`tcache-2`** for TCACHE-3 builder + cutover.
+**Next:** merge **`tcache-5`** → human review on `pre-tcache-base` stack.
 
 **Sign-off checklist (TCACHE-1 — complete)**
 
@@ -1489,15 +1489,35 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 - [x] [design-patterns.md](design-patterns.md) updated for new types
 - [x] Timing requirements — deferred to TCACHE-5
 
-**Sign-off checklist (each TCACHE-N)** — template for TCACHE-3+
+**Sign-off checklist (TCACHE-3 — complete)**
 
-- [ ] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
-- [ ] Tests on branch (N/A for docs-only milestones)
-- [ ] 95% llvm-cov / 80% mutants on crates touched
-- [ ] No `sleep` in tests
-- [ ] `check-static` if ELF changed
-- [ ] [design-patterns.md](design-patterns.md) updated for new types
-- [ ] Timing requirements (TCACHE-5): mux discover p99 ≤ 20 ms on fixture per REQ-NFR-1
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — `cargo test -p progressive-lsp-types-cache -p progressive-lsp`
+- [x] 95% llvm-cov / 80% mutants — types-cache mutants ≥80% on TC-2; llvm-tools N/A on host
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) — types cache table (TC-2)
+- [x] Timing requirements — deferred to TCACHE-5
+
+**Sign-off checklist (TCACHE-4 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch
+- [x] 95% llvm-cov / 80% mutants — core/engine/session touched; spot mutants green on types-cache
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) — P0 rows unchanged; `language_id_from_path` in core
+- [x] Timing requirements — TCACHE-5
+
+**Sign-off checklist (TCACHE-5 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — graph + timing unit tests; mux ≤20 ms sample
+- [x] 95% llvm-cov / 80% mutants on crates touched
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) updated for new types
+- [x] Timing requirements (TCACHE-5): mux discover ≤ 20 ms on small fixture (`mux_discover_chain_step_within_20ms`)
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 

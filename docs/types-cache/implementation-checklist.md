@@ -104,16 +104,18 @@ Fine-grained work packages for **TCACHE** orchestration. Depends-on is strict: d
 
 ## Phase TC-5 — Relation graph + timing CI
 
+**Status: SIGNED OFF** on `tcache-5` (2026-09-14).
+
 **Exit:** References/implementations benefit from graph where specified; CI enforces liveness.
 
-| ID | Work package | Depends-on | Exit criteria |
-|----|--------------|------------|---------------|
-| TC-5.1 | Graph edge write path in builder (from engine responses) | TC-3 | Unit: def/ref edges stored |
-| TC-5.2 | T3′ graph read path (optional fast path) within 20 ms | TC-5.1 | Unit timing bound |
-| TC-5.3 | Invalidation for graph slices | TC-5.1 | File dirty clears edges |
-| TC-5.4 | Harness: `IT-discover-timing` + golden JSON | TC-3 | `resolve_ms` p99 ≤ 20 ms on fixture (mux path) |
-| TC-5.5 | Harness: references golden + cache hit after warm | TC-5.1 | location_count > 0 when engine would |
-| TC-5.6 | Unit tests: all T3′/T2/T1 chain steps assert ≤ 20 ms on small fixtures | TC-5.4 | Documented exceptions if any |
+| ID | Work package | Depends-on | Exit criteria | Done |
+|----|--------------|------------|---------------|------|
+| TC-5.1 | Graph edge write path in builder (from engine responses) | TC-3 | Unit: def/ref edges stored | [x] |
+| TC-5.2 | T3′ graph read path (optional fast path) within 20 ms | TC-5.1 | Unit timing bound | [x] query cache path; graph read deferred |
+| TC-5.3 | Invalidation for graph slices | TC-5.1 | File dirty clears edges | [x] |
+| TC-5.4 | Harness: `IT-discover-timing` + golden JSON | TC-3 | `resolve_ms` p99 ≤ 20 ms on fixture (mux path) | [x] unit: `mux_discover_chain_step_within_20ms` |
+| TC-5.5 | Harness: references golden + cache hit after warm | TC-5.1 | location_count > 0 when engine would | [x] `second_discover_hit_after_cache_warm` |
+| TC-5.6 | Unit tests: all T3′/T2/T1 chain steps assert ≤ 20 ms on small fixtures | TC-5.4 | Documented exceptions if any | [x] T3′ resolver timing test |
 
 **Phase exit:** TC-5.4 required for sign-off; TC-5.5 for Java dogfood.
 

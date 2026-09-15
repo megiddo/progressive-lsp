@@ -5,12 +5,14 @@ use std::sync::Mutex;
 
 use progressive_lsp_core::FileId;
 
+use crate::graph::RelationGraph;
 use crate::key::{CacheGeneration, TypesCacheEntry, TypesCacheKey};
 
 /// Repository + facade for T3′ query cache.
 pub struct TypesCacheStore {
     entries: Mutex<HashMap<TypesCacheKey, TypesCacheEntry>>,
     engine_generation: Mutex<u64>,
+    pub graph: RelationGraph,
 }
 
 impl Default for TypesCacheStore {
@@ -24,6 +26,7 @@ impl TypesCacheStore {
         Self {
             entries: Mutex::new(HashMap::new()),
             engine_generation: Mutex::new(0),
+            graph: RelationGraph::new(),
         }
     }
 
@@ -33,6 +36,11 @@ impl TypesCacheStore {
     }
 
     pub fn put(&self, key: TypesCacheKey, entry: TypesCacheEntry) {
+        self.graph.add_from_locations(
+            key.kind,
+            &key.file,
+            &entry.result.locations,
+        );
         self.entries
             .lock()
             .expect("store")
@@ -70,6 +78,7 @@ impl TypesCacheStore {
     }
 
     pub fn invalidate_stale_generations(&self, file: &FileId, current: CacheGeneration) {
+        self.graph.invalidate_file(file, current);
         self.entries.lock().expect("store").retain(|k, _| {
             if k.file == *file {
                 k.generation == current

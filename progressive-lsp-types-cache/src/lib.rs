@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod engine_builder;
 pub mod fake_chain;
+pub mod graph;
 pub mod invalidation;
 pub mod key;
 pub mod port;
@@ -10,6 +11,7 @@ pub mod resolver;
 pub mod serve_state;
 pub mod stack;
 pub mod store;
+pub mod timing;
 
 pub use builder::{
     BuilderQueue, QueuingBuilder, RecordingBuilder, TypesCacheBuilder,
