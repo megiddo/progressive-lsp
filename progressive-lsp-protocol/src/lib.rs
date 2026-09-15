@@ -4,6 +4,7 @@ pub mod framing;
 pub mod intelligence;
 pub mod mux;
 pub mod progress;
+pub mod progressive_lsp;
 pub mod rpc;
 
 use std::io::{BufRead, Write};
@@ -20,6 +21,7 @@ use crate::intelligence::{
 use crate::rpc::{JsonRpcError, JsonRpcRequest};
 
 pub use intelligence::LspIntelligence;
+pub use progressive_lsp::{ProgressiveLspRequestOptions, ProgressiveLspSessionOptions};
 pub use mux::{
     decode_mux_frame, encode_mux_frame, read_mux_frame, write_mux_frame, MuxError, MuxFrame,
     CHANNEL_CONTROL, CHANNEL_LSP, MAX_MUX_PAYLOAD,
@@ -252,8 +254,9 @@ impl LspFacade {
             "workspace/symbol" => QueryKind::WorkspaceSymbol,
             _ => QueryKind::Definition,
         };
+        let prog = crate::progressive_lsp::request_options_from_params(&req.params);
         let uri = uri_from_params(&req.params);
-        let q = if kind == QueryKind::WorkspaceSymbol {
+        let mut q = if kind == QueryKind::WorkspaceSymbol {
             ResolveQuery::workspace_symbol(req.params["query"].as_str().unwrap_or(""))
         } else {
             ResolveQuery::new(
@@ -262,6 +265,7 @@ impl LspFacade {
                 kind,
             )
         };
+        q.chain_policy = intel.effective_chain_policy(prog.chain);
         result_to_lsp(kind, &intel.resolve(&q))
     }
 

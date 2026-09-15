@@ -16,10 +16,13 @@ use progressive_lsp_types_cache::{CacheServeState, TypesCacheStack};
 use progressive_lsp_index::{
     IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex,
 };
-use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
+use progressive_lsp_protocol::{
+    progressive_lsp::{session_options_from_initialize, test_chain_policy_from_env, ProgressiveLspSessionOptions},
+    LspIntelligence, ProgressiveLspRequestOptions, WorkDoneProgress,
+};
 use progressive_lsp_resolve::{
-    QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy,
-    TreeSitterResolver,
+    ChainPolicy, QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, Resolver, ResolverChain,
+    T2Strategy, TreeSitterResolver,
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{
@@ -69,6 +72,7 @@ pub struct WorkspaceSession {
     pub(crate) types_cache: TypesCacheStack,
     log: Arc<dyn LogPort>,
     unknown_languages: Mutex<HashSet<String>>,
+    progressive_lsp: Mutex<ProgressiveLspSessionOptions>,
 }
 
 impl WorkspaceSession {
@@ -88,6 +92,7 @@ impl WorkspaceSession {
             types_cache,
             log: Arc::new(NullLog),
             unknown_languages: Mutex::new(HashSet::new()),
+            progressive_lsp: Mutex::new(ProgressiveLspSessionOptions::default()),
         }
     }
 
@@ -617,7 +622,8 @@ impl LspIntelligence for WorkspaceSession {
         );
         self.log.debug(&format!("{operation} start"));
         let started = Instant::now();
-        let result = match self.chain.resolve(q) {
+        let (outcome, _chain_steps) = self.chain.resolve_with_steps(q);
+        let result = match outcome {
             ResolveOutcome::Ready(r) => r,
             ResolveOutcome::NotReady => ResolveResult::empty(Tier::Syntax),
         };
@@ -677,6 +683,33 @@ impl LspIntelligence for WorkspaceSession {
             self.log.debug(operation);
         }
         result
+    }
+
+    fn effective_chain_policy(&self, per_request: ChainPolicy) -> ChainPolicy {
+        let session = self
+            .progressive_lsp
+            .lock()
+            .expect("progressive_lsp")
+            .chain_defaults;
+        let env = test_chain_policy_from_env();
+        ChainPolicy::merge(
+            ChainPolicy::merge(session, env),
+            per_request,
+        )
+    }
+
+    fn effective_emit_options(
+        &self,
+        per_request: &ProgressiveLspRequestOptions,
+    ) -> (bool, bool) {
+        let base = self.progressive_lsp.lock().expect("progressive_lsp");
+        let emit_meta = per_request
+            .emit_result_meta
+            .unwrap_or(base.emit_result_meta);
+        let emit_timing = per_request
+            .emit_timing
+            .unwrap_or(base.emit_timing);
+        (emit_meta, emit_timing)
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
@@ -822,6 +855,8 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn on_initialize(&self, params: &serde_json::Value) -> Result<(), InitializeFailed> {
+        *self.progressive_lsp.lock().expect("progressive_lsp") =
+            session_options_from_initialize(params);
         let scripts = params
             .get("initializationOptions")
             .and_then(|o| o.get("scripts"))

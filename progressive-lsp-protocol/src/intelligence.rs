@@ -1,8 +1,11 @@
 //! Domain queries out of the LSP facade. No watch internals.
 
 use progressive_lsp_resolve::{
-    DocumentSymbol, Hover, LspLocation, Position, QueryKind, ResolveQuery, ResolveResult,
+    ChainPolicy, DocumentSymbol, Hover, LspLocation, Position, QueryKind, ResolveQuery,
+    ResolveResult,
 };
+
+use crate::progressive_lsp::ProgressiveLspRequestOptions;
 use serde_json::{json, Value};
 
 /// Implemented by the composition root session — not a god LspServer.
@@ -20,6 +23,19 @@ pub trait LspIntelligence: Send + Sync {
         _params: &serde_json::Value,
     ) -> Result<(), progressive_lsp_core::InitializeFailed> {
         Ok(())
+    }
+
+    /// Merge session defaults, test env, and per-request `progressiveLsp` chain fields.
+    fn effective_chain_policy(&self, per_request: ChainPolicy) -> ChainPolicy {
+        let _ = per_request;
+        ChainPolicy::default()
+    }
+
+    fn effective_emit_options(
+        &self,
+        _per_request: &ProgressiveLspRequestOptions,
+    ) -> (bool, bool) {
+        (false, false)
     }
 }
 

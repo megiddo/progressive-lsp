@@ -58,15 +58,51 @@ impl ResolverChain {
     }
 }
 
-impl Resolver for ResolverChain {
-    fn resolve(&self, q: &ResolveQuery) -> ResolveOutcome {
+fn clamp_result_tier(result: &mut ResolveResult, ceiling: Tier) {
+    if result.tier.is_above(ceiling) {
+        result.tier = ceiling;
+    }
+    for loc in &mut result.locations {
+        if loc.tier.is_above(ceiling) {
+            loc.tier = ceiling;
+        }
+    }
+}
+
+impl ResolverChain {
+    /// Resolve with chain-step count (for progressive meta / tests).
+    pub fn resolve_with_steps(&self, q: &ResolveQuery) -> (ResolveOutcome, u8) {
+        let policy = q.chain_policy;
+        let iter_cap = policy.max_chain_iter.unwrap_or(u8::MAX);
+        let mut steps = 0u8;
         for step in &self.steps {
+            if steps >= iter_cap {
+                return (ResolveOutcome::NotReady, steps);
+            }
+            steps += 1;
             match step.resolve(q) {
-                ResolveOutcome::Ready(result) => return ResolveOutcome::Ready(result),
+                ResolveOutcome::Ready(mut result) => {
+                    if let Some(ceiling) = policy.max_tier {
+                        if result.tier.is_above(ceiling) {
+                            continue;
+                        }
+                        clamp_result_tier(&mut result, ceiling);
+                    }
+                    return (ResolveOutcome::Ready(result), steps);
+                }
                 ResolveOutcome::NotReady => continue,
             }
         }
-        ResolveOutcome::Ready(ResolveResult::empty(Tier::Syntax))
+        if policy.max_chain_iter.is_some() && steps >= iter_cap {
+            return (ResolveOutcome::NotReady, steps);
+        }
+        (ResolveOutcome::Ready(ResolveResult::empty(Tier::Syntax)), steps)
+    }
+}
+
+impl Resolver for ResolverChain {
+    fn resolve(&self, q: &ResolveQuery) -> ResolveOutcome {
+        self.resolve_with_steps(q).0
     }
 }
 
@@ -230,6 +266,78 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn max_chain_iter_stops_after_n_invocations() {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        use std::sync::Arc;
+
+        struct CountingResolver {
+            calls: Arc<AtomicU8>,
+        }
+
+        impl Resolver for CountingResolver {
+            fn resolve(&self, _q: &ResolveQuery) -> ResolveOutcome {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                ResolveOutcome::NotReady
+            }
+        }
+
+        let calls = Arc::new(AtomicU8::new(0));
+        let chain = ResolverChain::new(vec![
+            Box::new(CountingResolver {
+                calls: Arc::clone(&calls),
+            }),
+            Box::new(FakeResolver::graph("t2")),
+            Box::new(FakeResolver::syntax("t1")),
+        ]);
+        let mut q = def_query();
+        q.chain_policy.max_chain_iter = Some(1);
+        let (outcome, steps) = chain.resolve_with_steps(&q);
+        assert_eq!(steps, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(outcome, ResolveOutcome::NotReady));
+    }
+
+    #[test]
+    fn max_tier_graph_skips_types_ready() {
+        let chain = ResolverChain::with_tiers(
+            Some(Box::new(FakeResolver::types("t3").with_location(
+                LspLocation::new("file:///t3", Range::default(), Tier::Types),
+            ))),
+            Some(Box::new(FakeResolver::graph("t2").with_location(
+                LspLocation::new("file:///t2", Range::default(), Tier::Graph),
+            ))),
+            Box::new(FakeResolver::syntax("t1")),
+        );
+        let mut q = def_query();
+        q.chain_policy.max_tier = Some(Tier::Graph);
+        match chain.resolve(&q) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Graph);
+                assert_eq!(r.locations[0].uri, "file:///t2");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn max_tier_and_iter_combined() {
+        let chain = ResolverChain::with_tiers(
+            Some(Box::new(NotReadyResolver::new(
+                LanguageId::new("java"),
+                PackageId::new("p"),
+            ))),
+            Some(Box::new(FakeResolver::graph("t2").with_location(
+                LspLocation::new("file:///t2", Range::default(), Tier::Graph),
+            ))),
+            Box::new(FakeResolver::syntax("t1")),
+        );
+        let mut q = def_query();
+        q.chain_policy.max_chain_iter = Some(1);
+        q.chain_policy.max_tier = Some(Tier::Graph);
+        assert!(matches!(chain.resolve(&q), ResolveOutcome::NotReady));
     }
 
     #[test]
