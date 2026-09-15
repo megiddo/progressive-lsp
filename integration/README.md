@@ -1,5 +1,15 @@
 # Integration tests (design)
 
+**Operator entry (from repo root):**
+
+```text
+./build test     # unit tests
+./build integ    # docker smoke (auto-builds runtime image + plsp-it1)
+./build run ide --smoke   # manual poc-ide on in-tree Java fixture
+```
+
+Reports: `integration/out/`. Scripts bootstrap via `integration/harness/bootstrap.sh`.
+
 System-level tests for a **shipped** progressive-lsp: static Linux binaries + optional engine packs, run against real project trees and real distro userspaces.
 
 These are **not** the crate unit/mutation suite (`docs/testing.md` in the product repo). That suite forbids `sleep`, uses FakeClock, and never vendors clangd’s tests. This suite **does** use containers, wall time, and child engines. Keep the two harnesses separate so unit CI stays fast and hermetic.

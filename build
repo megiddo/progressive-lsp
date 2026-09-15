@@ -8,34 +8,30 @@ cd "$ROOT"
 usage() {
   cat <<'EOF'
 Usage:
-  ./build lsp {all|x86_64|aarch64} [--force]
+  ./build test
+  ./build integ
+  ./build lsp {all|x86_64|aarch64} [--force] [--flavor slim|dogfood]
   ./build ide
-  ./build run ide
-  ./build run ide --folder DIR
-  ./build run ide --folder DIR --container
+  ./build run ide [--smoke]
 
   ./build help
-  ./build help lsp
-  ./build help ide
-  ./build help run
 
-lsp     Linux static language server (musl controller + backends +
-        container image progressive-lsp-runtime:local). Needs Docker.
-        Architecture is required. Omit it to list valid arches.
-        Rebuilds artifacts whose inputs changed; skips dests that are
-        fresh. --force rebuilds controller, backends, and image.
+test    Unit tests (self-bootstrapping; see xtask help).
 
-ide     POC editor + native progressive-lsp. Does not start the window.
+integ   Integration smoke in Docker (builds image/harness if needed).
 
-run ide Start the POC editor (rebuilds native progressive-lsp first).
-        --folder must be absolute when using --container.
-        Container mode needs Docker Desktop and a prior ./build lsp <arch>.
+lsp     Linux musl server + engine packs + runtime image (Docker). See: ./build help lsp
+
+ide     POC editor + native progressive-lsp (does not open UI).
+
+run ide Rebuilds native serve, opens poc-ide. --smoke = in-tree Java
+        fixture + container on macOS/Windows. Image built if missing.
 EOF
 }
 
 print_lsp_arches() {
   cat <<'EOF'
-usage: ./build lsp {all|x86_64|aarch64} [--force]
+usage: ./build lsp {all|x86_64|aarch64} [--force] [--flavor slim|dogfood]
 
 Valid architectures:
   all       both Linux musl triples
@@ -44,6 +40,9 @@ Valid architectures:
 
   --force   rebuild controller, backends, and runtime image even when
             dest ELFs / image stamp are fresh
+  --flavor  slim (default): slim engine packs only. dogfood: slim + full
+            packs (clangd, tsgo, gopls, zls) required by the runtime image.
+            clangd needs pack-cache (--cache pull or --cache-fill; see docs/consumer.md).
 EOF
 }
 
@@ -58,13 +57,17 @@ EOF
 
 print_run_help() {
   cat <<'EOF'
-usage: ./build run ide [--folder DIR] [--file PATH] [--container] [--native]
+usage: ./build run ide [--smoke] [--folder DIR] [--file PATH] [--container] [--native]
 
 Start the POC IDE. Stays running until you quit the editor window.
 
   ./build run ide
+  ./build run ide --smoke
   ./build run ide --folder DIR
   ./build run ide --folder DIR --native
+
+--smoke   In-tree Java fixture; on macOS/Windows uses container mode and
+          builds the runtime image when missing (dogfood packs as needed).
 
 On macOS/Windows, --folder DIR defaults to container mode (absolute path
 required for bind-mount identity). Use --native for optional T1/T2-only
@@ -131,6 +134,9 @@ case "$cmd" in
       lsp) print_lsp_arches ;;
       ide) print_ide_help ;;
       run) print_run_help ;;
+      build)
+        run_xtask help build
+        ;;
       *)
         echo "unknown help topic: $topic" >&2
         echo "Try: ./build help" >&2
@@ -138,6 +144,12 @@ case "$cmd" in
         ;;
     esac
     exit 0
+    ;;
+  test)
+    run_xtask test "$@"
+    ;;
+  integ)
+    run_xtask integ "$@"
     ;;
   lsp)
     arch=${1:-}
