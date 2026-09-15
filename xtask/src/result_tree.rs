@@ -31,6 +31,8 @@ struct Line {
     depth: usize,
     name: String,
     outcome: Outcome,
+    passed: u32,
+    failed: u32,
     detail: Option<String>,
 }
 
@@ -48,7 +50,7 @@ impl ResultTree {
     }
 
     pub fn push(&mut self, depth: usize, name: impl Into<String>, outcome: Outcome) {
-        self.push_detail(depth, name, outcome, None);
+        self.push_counts(depth, name, outcome, 0, 0, None);
     }
 
     pub fn push_detail(
@@ -58,12 +60,39 @@ impl ResultTree {
         outcome: Outcome,
         detail: Option<String>,
     ) {
+        self.push_counts(depth, name, outcome, 0, 0, detail);
+    }
+
+    pub fn push_counts(
+        &mut self,
+        depth: usize,
+        name: impl Into<String>,
+        outcome: Outcome,
+        passed: u32,
+        failed: u32,
+        detail: Option<String>,
+    ) {
         self.lines.push(Line {
             depth,
             name: name.into(),
             outcome,
+            passed,
+            failed,
             detail,
         });
+    }
+
+    pub fn total_passed(&self) -> u32 {
+        let has_depth_2 = self.lines.iter().any(|l| l.depth == 2);
+        if has_depth_2 {
+            return self
+                .lines
+                .iter()
+                .filter(|l| l.depth == 2)
+                .map(|l| l.passed)
+                .sum();
+        }
+        self.lines.iter().map(|l| l.passed).sum()
     }
 
     pub fn root_outcome(&self) -> Outcome {
@@ -76,10 +105,24 @@ impl ResultTree {
 
     pub fn print(&self) {
         let root = self.root_outcome();
-        eprintln!("▸ {}: {}", self.root_name, root.label());
+        let total = self.total_passed();
+        if total > 0 {
+            eprintln!(
+                "▸ {}: {} ({} tests)",
+                self.root_name,
+                root.label(),
+                total
+            );
+        } else {
+            eprintln!("▸ {}: {}", self.root_name, root.label());
+        }
         for (idx, line) in self.lines.iter().enumerate() {
             let prefix = branch_prefix(&self.lines, idx);
-            eprintln!("{prefix}{}: {}", line.name, line.outcome.label());
+            eprintln!(
+                "{prefix}{}: {}",
+                line.display_name(),
+                line.outcome.label()
+            );
             if line.outcome == Outcome::Fail {
                 if let Some(ref detail) = line.detail {
                     let detail_prefix = detail_prefix(&self.lines, idx);
@@ -94,6 +137,47 @@ impl ResultTree {
     pub fn failed(&self) -> bool {
         self.root_outcome() == Outcome::Fail
     }
+}
+
+impl Line {
+    fn display_name(&self) -> String {
+        match self.outcome {
+            Outcome::Pass if self.passed > 0 => {
+                format!("{} ({} tests)", self.name, self.passed)
+            }
+            Outcome::Fail => format!(
+                "{} ({} passed, {} failed)",
+                self.name, self.passed, self.failed
+            ),
+            _ => self.name.clone(),
+        }
+    }
+}
+
+/// Sum `test result:` lines from `cargo test` (lib + integration + doc bins).
+pub fn parse_cargo_test_totals(text: &str) -> (u32, u32) {
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with("test result:") {
+            continue;
+        }
+        for segment in line.split(';') {
+            let seg = segment.trim();
+            if let Some(idx) = seg.find(" passed") {
+                if let Some(n) = seg[..idx].trim().split_whitespace().last() {
+                    passed += n.parse().unwrap_or(0);
+                }
+            }
+            if let Some(idx) = seg.find(" failed") {
+                if let Some(n) = seg[..idx].trim().split_whitespace().last() {
+                    failed += n.parse().unwrap_or(0);
+                }
+            }
+        }
+    }
+    (passed, failed)
 }
 
 /// `│  ├─` / `│  └─` / `   └─` style prefixes from flat depth-tagged lines.
@@ -179,6 +263,13 @@ mod tests {
         t.push(1, "ok", Outcome::Pass);
         assert_eq!(t.root_outcome(), Outcome::Skip);
         assert!(!t.failed());
+    }
+
+    #[test]
+    fn parse_cargo_test_totals_sums_bins() {
+        let sample = "test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\
+                      test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+        assert_eq!(parse_cargo_test_totals(sample), (45, 0));
     }
 
     #[test]
