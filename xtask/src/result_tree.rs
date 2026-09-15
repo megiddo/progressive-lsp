@@ -76,14 +76,15 @@ impl ResultTree {
 
     pub fn print(&self) {
         let root = self.root_outcome();
-        eprintln!("- {}: {}", self.root_name, root.label());
-        for line in &self.lines {
-            let indent = "  ".repeat(line.depth);
-            eprintln!("{indent}|- {}: {}", line.name, line.outcome.label());
+        eprintln!("▸ {}: {}", self.root_name, root.label());
+        for (idx, line) in self.lines.iter().enumerate() {
+            let prefix = branch_prefix(&self.lines, idx);
+            eprintln!("{prefix}{}: {}", line.name, line.outcome.label());
             if line.outcome == Outcome::Fail {
                 if let Some(ref detail) = line.detail {
+                    let detail_prefix = detail_prefix(&self.lines, idx);
                     for part in detail.lines().take(12) {
-                        eprintln!("{indent}    {part}");
+                        eprintln!("{detail_prefix}↳ {part}");
                     }
                 }
             }
@@ -93,6 +94,54 @@ impl ResultTree {
     pub fn failed(&self) -> bool {
         self.root_outcome() == Outcome::Fail
     }
+}
+
+/// `│  ├─` / `│  └─` / `   └─` style prefixes from flat depth-tagged lines.
+fn sibling_is_last(lines: &[Line], idx: usize, depth: usize) -> bool {
+    !lines[idx + 1..].iter().any(|l| l.depth == depth)
+}
+
+fn ancestor_continues(lines: &[Line], idx: usize, ancestor_depth: usize) -> bool {
+    lines[idx + 1..]
+        .iter()
+        .any(|l| l.depth <= ancestor_depth)
+}
+
+fn branch_prefix(lines: &[Line], idx: usize) -> String {
+    let depth = lines[idx].depth;
+    let mut s = String::new();
+    for d in 1..depth {
+        if ancestor_continues(lines, idx, d) {
+            s.push_str("│  ");
+        } else {
+            s.push_str("   ");
+        }
+    }
+    if sibling_is_last(lines, idx, depth) {
+        s.push('└');
+    } else {
+        s.push('├');
+    }
+    s.push_str("─ ");
+    s
+}
+
+fn detail_prefix(lines: &[Line], idx: usize) -> String {
+    let depth = lines[idx].depth;
+    let mut s = String::new();
+    for d in 1..depth {
+        if ancestor_continues(lines, idx, d) {
+            s.push_str("│  ");
+        } else {
+            s.push_str("   ");
+        }
+    }
+    if sibling_is_last(lines, idx, depth) {
+        s.push_str("   ");
+    } else {
+        s.push_str("│  ");
+    }
+    s
 }
 
 pub fn tail_output(stdout: &[u8], stderr: &[u8], max_lines: usize) -> String {
@@ -130,5 +179,18 @@ mod tests {
         t.push(1, "ok", Outcome::Pass);
         assert_eq!(t.root_outcome(), Outcome::Skip);
         assert!(!t.failed());
+    }
+
+    #[test]
+    fn branch_prefix_last_sibling_uses_corner() {
+        let mut t = ResultTree::new("test");
+        t.push(1, "a", Outcome::Pass);
+        t.push(2, "a1", Outcome::Pass);
+        t.push(2, "a2", Outcome::Pass);
+        t.push(1, "b", Outcome::Pass);
+        assert_eq!(branch_prefix(&t.lines, 0), "├─ ");
+        assert_eq!(branch_prefix(&t.lines, 1), "│  ├─ ");
+        assert_eq!(branch_prefix(&t.lines, 2), "│  └─ ");
+        assert_eq!(branch_prefix(&t.lines, 3), "└─ ");
     }
 }
