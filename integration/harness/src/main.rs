@@ -3,6 +3,7 @@
 
 mod discover_container;
 mod progressive;
+mod tam;
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -19,6 +20,8 @@ plsp-it1 backend --expected JSON --root DIR [--deadline-ms N] [--t3-pack NAME] -
 plsp-it1 fetch --pins JSON --cache DIR [--id ID]
 plsp-it1 progressive --backend ID --root DIR --expected JSON --prefix DIR --control-socket PATH [--deadline-ms N] [--mux] -- <server> [args...]
 plsp-it1 discover-container --root DIR --expected JSON [--docker PATH] [--image NAME] [--platform linux/arm64] [--wal PATH] [--init-deadline-ms N] [--discover-deadline-ms N] [--quiet]
+plsp-it1 tam-load --suite PATH
+plsp-it1 tam-run --suite PATH   (stub: load suite and emit empty report scaffold)
 ";
 
 fn main() {
@@ -75,8 +78,53 @@ fn run(args: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
+        "tam-load" => {
+            let path = parse_suite_path(&args[1..])?;
+            let suite = tam::load_suite(&path)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "suite": path.display().to_string(),
+                    "cases": suite.cases.len(),
+                    "result": "ok"
+                }))
+                .map_err(|e| e.to_string())?
+            );
+            Ok(())
+        }
+        "tam-run" => {
+            let path = parse_suite_path(&args[1..])?;
+            let suite = tam::load_suite(&path)?;
+            let report = json!({
+                "suite": path.display().to_string(),
+                "rows": [] as Vec<tam::TamReportRow>,
+                "cases": suite.cases.len(),
+                "notes": "tam-run stub: container matrix not wired yet",
+                "result": "skip"
+            });
+            println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+            Ok(())
+        }
         other => Err(format!("unknown command: {other}\n{USAGE}")),
     }
+}
+
+fn parse_suite_path(args: &[String]) -> Result<PathBuf, String> {
+    let mut path = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--suite" => {
+                i += 1;
+                path = Some(
+                    PathBuf::from(args.get(i).ok_or("--suite requires a path")?.clone()),
+                );
+            }
+            other => return Err(format!("unknown flag: {other}")),
+        }
+        i += 1;
+    }
+    path.ok_or("tam-load/tam-run require --suite PATH".into())
 }
 
 struct HandshakeOpts {
