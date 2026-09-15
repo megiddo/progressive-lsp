@@ -1,10 +1,57 @@
 //! Compact PASS/FAIL/SKIP tree for `./build test` and `./build integ`.
 
+use std::io::IsTerminal;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Pass,
     Fail,
     Skip,
+}
+
+#[derive(Clone, Copy)]
+struct Ansi {
+    blue: &'static str,
+    label: &'static str,
+    pass: &'static str,
+    fail: &'static str,
+    skip: &'static str,
+    reset: &'static str,
+}
+
+impl Ansi {
+    fn detect() -> Self {
+        if std::env::var("NO_COLOR").is_ok() || !std::io::stderr().is_terminal() {
+            return Self::plain();
+        }
+        Self {
+            blue: "\x1b[38;5;19m",
+            label: "\x1b[30m",
+            pass: "\x1b[38;5;28m",
+            fail: "\x1b[31m",
+            skip: "\x1b[38;5;130m",
+            reset: "\x1b[0m",
+        }
+    }
+
+    fn plain() -> Self {
+        Self {
+            blue: "",
+            label: "",
+            pass: "",
+            fail: "",
+            skip: "",
+            reset: "",
+        }
+    }
+
+    fn outcome(self, o: Outcome) -> &'static str {
+        match o {
+            Outcome::Pass => self.pass,
+            Outcome::Fail => self.fail,
+            Outcome::Skip => self.skip,
+        }
+    }
 }
 
 impl Outcome {
@@ -104,30 +151,42 @@ impl ResultTree {
     }
 
     pub fn print(&self) {
+        let ansi = Ansi::detect();
         let root = self.root_outcome();
         let total = self.total_passed();
-        if total > 0 {
-            eprintln!(
-                "▸ {}: {} ({} tests)",
-                self.root_name,
-                root.label(),
-                total
-            );
-        } else {
-            eprintln!("▸ {}: {}", self.root_name, root.label());
-        }
+        let root_label = format!(
+            "{}{}{}{}: {}{} {}",
+            ansi.label,
+            self.root_name,
+            ansi.reset,
+            ansi.outcome(root),
+            root.label(),
+            ansi.reset,
+            if total > 0 {
+                format!("({total} tests)")
+            } else {
+                String::new()
+            }
+        );
+        eprintln!("▸ {root_label}");
         for (idx, line) in self.lines.iter().enumerate() {
             let prefix = branch_prefix(&self.lines, idx);
+            let colored_prefix = format!("{}{}{}", ansi.blue, prefix, ansi.reset);
             eprintln!(
-                "{prefix}{}: {}",
+                "{colored_prefix}{}{}{}: {}{} {}",
+                ansi.label,
                 line.display_name(),
-                line.outcome.label()
+                ansi.reset,
+                ansi.outcome(line.outcome),
+                line.outcome.label(),
+                ansi.reset
             );
             if line.outcome == Outcome::Fail {
                 if let Some(ref detail) = line.detail {
                     let detail_prefix = detail_prefix(&self.lines, idx);
+                    let colored_dp = format!("{}{}{}", ansi.blue, detail_prefix, ansi.reset);
                     for part in detail.lines().take(12) {
-                        eprintln!("{detail_prefix}↳ {part}");
+                        eprintln!("{colored_dp}↳ {part}");
                     }
                 }
             }
@@ -144,6 +203,9 @@ impl Line {
         match self.outcome {
             Outcome::Pass if self.passed > 0 => {
                 format!("{} ({} tests)", self.name, self.passed)
+            }
+            Outcome::Fail if self.passed == 0 && self.failed == 0 => {
+                format!("{} (compile failed)", self.name)
             }
             Outcome::Fail => format!(
                 "{} ({} passed, {} failed)",
@@ -178,6 +240,47 @@ pub fn parse_cargo_test_totals(text: &str) -> (u32, u32) {
         }
     }
     (passed, failed)
+}
+
+pub fn cargo_failure_snippet(stdout: &[u8], stderr: &[u8], max_lines: usize) -> String {
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    );
+    let mut picked: Vec<&str> = combined
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            t.starts_with("error")
+                || t.contains(" error[E")
+                || t.starts_with("failures:")
+                || t.contains(" test ... FAILED")
+                || (t.starts_with("test result:") && t.contains("FAILED"))
+        })
+        .collect();
+    if picked.is_empty() {
+        return tail_output(stdout, stderr, max_lines);
+    }
+    if picked.len() > max_lines {
+        picked = picked[picked.len() - max_lines..].to_vec();
+    }
+    picked.join("\n").trim().to_string()
+}
+
+pub fn failed_crates_from_cargo_output(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if let Some(i) = line.find("could not compile `") {
+            let rest = &line[i + "could not compile `".len()..];
+            if let Some(j) = rest.find('`') {
+                out.push(rest[..j].to_string());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// `│  ├─` / `│  └─` / `   └─` style prefixes from flat depth-tagged lines.
@@ -283,5 +386,11 @@ mod tests {
         assert_eq!(branch_prefix(&t.lines, 1), "│  ├─ ");
         assert_eq!(branch_prefix(&t.lines, 2), "│  └─ ");
         assert_eq!(branch_prefix(&t.lines, 3), "└─ ");
+    }
+
+    #[test]
+    fn failed_crates_detects_compile_errors() {
+        let log = "error: could not compile `poc-ide` (lib test) due to 2 previous errors";
+        assert_eq!(failed_crates_from_cargo_output(log), vec!["poc-ide".to_string()]);
     }
 }

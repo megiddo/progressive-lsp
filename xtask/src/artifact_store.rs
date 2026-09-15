@@ -165,8 +165,44 @@ pub fn local_archive_path(
         .join(format!("{triple}.{}", format.file_suffix()))
 }
 
+fn percent_decode_path(path: &str) -> std::path::PathBuf {
+    let mut out = String::new();
+    let bytes = path.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
+                16,
+            ) {
+                out.push(v as char);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    std::path::PathBuf::from(out)
+}
+
 fn file_url(path: &Path) -> String {
-    format!("file://{}", path.display())
+    let path = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf());
+    let encoded: String = path
+        .display()
+        .to_string()
+        .chars()
+        .map(|c| match c {
+            ' ' => "%20".to_string(),
+            '#' => "%23".to_string(),
+            '?' => "%3F".to_string(),
+            '%' => "%25".to_string(),
+            _ => c.to_string(),
+        })
+        .collect();
+    format!("file://{encoded}")
 }
 
 fn load_manifest_file(path: &Path) -> Result<StoreManifest, String> {
@@ -210,7 +246,8 @@ impl ByteFetcher for NetworkFetcher {
 
 pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     if let Some(path) = url.strip_prefix("file://") {
-        return std::fs::read(path).map_err(|e| format!("read {url}: {e}"));
+        let path = percent_decode_path(path);
+        return std::fs::read(&path).map_err(|e| format!("read {url}: {e}"));
     }
     if url.starts_with("file:") {
         return Err(format!("unsupported file URL (use file://): {url}"));

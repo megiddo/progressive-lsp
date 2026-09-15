@@ -793,6 +793,8 @@ mod tests {
             cache_entries: 0,
             ingest: IngestState::Done.as_str().into(),
             engines: vec![],
+            tier_capabilities: vec![],
+            progressive_meta: None,
         });
         assert_eq!(map.ingest(), IngestState::Done);
         assert_eq!(map.tier_for_package("lib"), Some(WireTier::Syntax));
