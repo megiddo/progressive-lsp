@@ -323,6 +323,10 @@ llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
 | `BuildFlags` | Value object | `--full` / `--target` / `--both`; default docker args name this host’s musl triple (not both); `--full` is pack-only. |
 | `RunLaunch` | Value object | `./build run ide` then `--folder` / `--file` / `--container` / `--native` / `--control-socket`; non-Linux `--folder` defaults to `--container` via [`RunLaunch::apply_host_defaults`]; `--` still forwards; relative `--folder` + container fails closed (bind-mount identity). |
 
+## Planned types (TCACHE — merge when implemented)
+
+Rows defined in [types-cache/design-patterns-addendum.md](types-cache/design-patterns-addendum.md). Do not implement `TypesCache*` types until TC-2; merge addendum rows into this table on merge.
+
 ## Adding a type
 
 1. Name the pattern in this table (PR must update the table).

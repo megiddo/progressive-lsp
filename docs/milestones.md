@@ -1450,6 +1450,31 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 
 **Sign-off checklist (program):** all phase exit tables in productization-plan; no ELFs in git; PR CI still no `--cache-fill`.
 
+## TCACHE — Types cache overlay (T3′)
+
+**Status:** Not started. Stack on current `main` after productization sign-off. **Do not start TC-2 crates until TC-0 and TC-1 are signed off.**
+
+Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-cache/design.md](types-cache/design.md), [ADR 001](adr/001-types-cache-overlay.md). Orchestration: [types-cache/agent-context.md](types-cache/agent-context.md), checklist: [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md).
+
+| Milestone | Phase | Branch | Exit (summary) |
+|-----------|-------|--------|----------------|
+| **TCACHE-0** | TC-0 | `tcache-0` | Requirements, design, ADR, agent-context on disk |
+| **TCACHE-1** | TC-1 | `tcache-1` | [pattern-audit-report.md](types-cache/pattern-audit-report.md) complete |
+| **TCACHE-2** | TC-2 | `tcache-2` | `progressive-lsp-types-cache` stub; chain hook; tests |
+| **TCACHE-3** | TC-3 | `tcache-3` | Builder + engine off mux path; container 2nd-click hit |
+| **TCACHE-4** | TC-4 | `tcache-4` | P0 refactors from audit |
+| **TCACHE-5** | TC-5 | `tcache-5` | Graph layer + IT-discover-timing CI |
+
+**Sign-off checklist (each TCACHE-N)**
+
+- [ ] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [ ] Tests on branch (N/A for TCACHE-0 docs-only)
+- [ ] 95% llvm-cov / 80% mutants on crates touched (N/A for TCACHE-0/TCACHE-1)
+- [ ] No `sleep` in tests
+- [ ] `check-static` if ELF changed
+- [ ] [design-patterns.md](design-patterns.md) updated for new types
+- [ ] Timing requirements (TCACHE-5): mux discover p99 ≤ 20 ms on fixture per REQ-NFR-1
+
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 
 Drop aarch64 Java libc exception when Graal fully-static ARM ships. Dual-run PHP T3 if the other spike wins. oxc_type_checker as TS T3. Native macOS/Windows **server** hosts. WASM plugin ABI. HTTP/S3 transport in-tree. Buck2 if engine builds outgrow Docker cache. Watchman. `$/` JSON mirror of `progressive.v1` only if a real client cannot open a socket or mux. Read-only query of server logs from poc-ide (optional; do not merge schemas). C# T3 only if musl AOT `check-static` greens.
