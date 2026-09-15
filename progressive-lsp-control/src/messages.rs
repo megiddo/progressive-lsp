@@ -132,7 +132,12 @@ pub struct FilesSinceResponse {
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
-pub struct IndexStatusRequest {}
+pub struct IndexStatusRequest {
+    #[prost(bool, tag = "1")]
+    pub emit_result_meta: bool,
+    #[prost(bool, tag = "2")]
+    pub emit_timing: bool,
+}
 
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct IndexPackage {
@@ -185,6 +190,8 @@ pub struct IndexStatusResponse {
     pub engines: Vec<EngineStatusRow>,
     #[prost(message, repeated, tag = "6")]
     pub tier_capabilities: Vec<TierCapabilityRow>,
+    #[prost(message, optional, tag = "100")]
+    pub progressive_meta: Option<ProgressiveMeta>,
 }
 
 impl IndexStatusResponse {
@@ -505,6 +512,7 @@ mod tests {
             ingest: IngestState::Running.as_str().into(),
             engines: vec![],
             tier_capabilities: vec![],
+            progressive_meta: None,
         };
         assert_eq!(resp.ingest_state(), IngestState::Running);
         assert_eq!(

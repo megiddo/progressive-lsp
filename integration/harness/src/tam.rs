@@ -1,12 +1,24 @@
-//! IT-TAM suite YAML types (SEAMS-5). Runner wiring is TAM-2.
+//! IT-TAM suite YAML types and JSON report (SEAMS-5 / TAM-2).
 
 use serde::Deserialize;
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct TamSuite {
+    #[serde(default)]
+    pub id: Option<String>,
     pub session: Option<TamSession>,
+    pub server: Option<TamServer>,
+    #[serde(default)]
     pub cases: Vec<TamCase>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct TamServer {
+    pub docker_image: Option<String>,
+    pub platform: Option<String>,
+    #[serde(rename = "prefix_in_container")]
+    pub prefix_in_container: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -15,7 +27,7 @@ pub struct TamSession {
     pub progressive_lsp: Option<TamProgressiveLsp>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 pub struct TamProgressiveLsp {
     #[serde(rename = "emitResultMeta")]
     pub emit_result_meta: Option<bool>,
@@ -29,7 +41,16 @@ pub struct TamProgressiveLsp {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct TamCase {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub file: Option<String>,
+    pub anchor: Option<TamAnchor>,
     pub apis: Vec<TamApiCase>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct TamAnchor {
+    pub find: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -39,6 +60,7 @@ pub struct TamApiCase {
     pub progressive_lsp: Option<TamProgressiveLsp>,
     pub expect: Option<TamExpect>,
     pub trace: Option<TamTrace>,
+    pub query: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -46,6 +68,10 @@ pub struct TamExpect {
     #[serde(rename = "progressive_meta")]
     pub progressive_meta: Option<TamExpectMeta>,
     pub timing: Option<TamExpectTiming>,
+    #[serde(rename = "min_locations")]
+    pub min_locations: Option<usize>,
+    #[serde(rename = "non_empty")]
+    pub non_empty: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -74,6 +100,10 @@ pub struct TamReportRow {
     pub resolve_ms: Option<u64>,
     pub trace_row_count: Option<u32>,
     pub result: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_rows: Option<serde_json::Value>,
 }
 
 pub fn load_suite(path: &Path) -> Result<TamSuite, String> {

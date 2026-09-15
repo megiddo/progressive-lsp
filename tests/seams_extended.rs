@@ -84,3 +84,16 @@ fn definition_with_meta_wraps_value_and_meta() {
     assert_eq!(result["result"]["progressiveMeta"]["tier"], "graph");
     assert!(result["result"]["progressiveMeta"]["traceId"].is_string());
 }
+
+#[test]
+fn index_status_request_emit_flags_are_additive() {
+    use progressive_lsp_control::IndexStatusRequest;
+    let off = IndexStatusRequest::default();
+    assert!(!off.emit_result_meta);
+    assert!(!off.emit_timing);
+    let on = IndexStatusRequest {
+        emit_result_meta: true,
+        emit_timing: true,
+    };
+    assert!(on.emit_result_meta);
+}

@@ -241,6 +241,7 @@ impl ControlServer {
             ingest: IngestState::NotStarted.as_str().into(),
             engines: Vec::new(),
             tier_capabilities: Vec::new(),
+            progressive_meta: None,
         }
     }
 
@@ -517,6 +518,7 @@ mod tests {
                 ingest: IngestState::Done.as_str().into(),
                 engines: Vec::new(),
                 tier_capabilities: Vec::new(),
+                progressive_meta: None,
             }
         }
         fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {
@@ -575,7 +577,7 @@ mod tests {
         let fs = srv.files_since(&FilesSinceRequest { since: None });
         assert!(!fs.truncated);
         assert!(fs.paths.is_empty());
-        let idx = srv.index_status(&IndexStatusRequest {});
+        let idx = srv.index_status(&IndexStatusRequest::default());
         assert!(idx.packages.is_empty());
         assert_eq!(idx.cache_entries, 0);
         assert_eq!(idx.ingest_state(), IngestState::NotStarted);
@@ -648,7 +650,7 @@ mod tests {
                 METHOD_FILES_SINCE,
                 FilesSinceRequest { since: None }.encode_to_vec(),
             ),
-            (METHOD_INDEX_STATUS, IndexStatusRequest {}.encode_to_vec()),
+            (METHOD_INDEX_STATUS, IndexStatusRequest::default().encode_to_vec()),
             (METHOD_TIER_STATUS, TierStatusRequest {}.encode_to_vec()),
             (
                 METHOD_RELOAD_SCRIPTS,
@@ -753,7 +755,7 @@ mod tests {
             .status
             .unwrap()
             .is_ok());
-        let idx = srv.index_status(&IndexStatusRequest {});
+        let idx = srv.index_status(&IndexStatusRequest::default());
         assert_eq!(idx.packages[0].package_id, "lib");
         assert_eq!(idx.cache_entries, 4);
         assert_eq!(idx.ingest_state(), IngestState::Done);

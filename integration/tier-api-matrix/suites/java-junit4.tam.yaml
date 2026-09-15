@@ -1,4 +1,4 @@
-# POC suite — see tier-api-matrix/README.md. Not executed until TAM-2 runner lands.
+# POC suite — see tier-api-matrix/README.md. Executed via run-tam.sh / plsp-it1 tam-run (TAM-2).
 apiVersion: progressive-lsp/tam/v1
 id: java-junit4
 language: java

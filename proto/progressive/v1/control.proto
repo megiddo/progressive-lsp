@@ -71,7 +71,11 @@ message FilesSinceResponse {
   uint64 generation = 4;
 }
 
-message IndexStatusRequest {}
+message IndexStatusRequest {
+  // SEAMS: when true, response includes progressive_meta (additive).
+  bool emit_result_meta = 1;
+  bool emit_timing = 2;
+}
 
 message IndexPackage {
   string package_id = 1;
@@ -106,6 +110,8 @@ message IndexStatusResponse {
   repeated EngineStatusRow engines = 5;
   // Additive (ABS-3). Static tier descriptors + per-tier readiness snapshot.
   repeated TierCapabilityRow tier_capabilities = 6;
+  // SEAMS: present when request emit_result_meta is true.
+  ProgressiveMeta progressive_meta = 100;
 }
 
 message TierStatusRequest {}

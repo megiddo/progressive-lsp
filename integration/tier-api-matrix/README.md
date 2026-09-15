@@ -1,9 +1,28 @@
 # Tier API Matrix (IT-TAM) — integration framework plan
 
-**Status:** Planned (design). **POC language:** Java.  
+**Status:** TAM-2 landed (`tam-run`, `FetchTrace`, meta on discover-container). **POC language:** Java.  
 **Goal:** In a **real runtime container**, load a **pinned git corpus**, wait until each intelligence tier is available, and **exercise every supported public API** with **non-zero** results at **T1 (syntax)**, **T2 (graph)**, and **T3 (types)** — driven by **YAML** configs, not Rust-only golden tables.
 
-**Related:** [integration/README.md](../README.md), [integ-seams-plan.md](integ-seams-plan.md) (**SEAMS** — chain limits, response meta, `FetchTrace`), [progressive-lsp-apis.md](../../docs/progressive-lsp-apis.md), [02-lsp-backends.md](../02-lsp-backends.md), [corpora/pins.json](../corpora/pins.json), `harness/run-discover-container.sh`.
+**Related:** [integration/README.md](../README.md), [integ-seams-plan.md](integ-seams-plan.md) (**SEAMS** — chain limits, response meta, `FetchTrace`), [progressive-lsp-apis.md](../../docs/progressive-lsp-apis.md), [02-lsp-backends.md](../02-lsp-backends.md), [corpora/pins.json](../corpora/pins.json), `harness/run-discover-container.sh`, **`harness/run-tam.sh`**.
+
+### discover-container meta / trace (TAM-2)
+
+| Flag | Effect |
+|------|--------|
+| `--emit-result-meta` | `initializationOptions.progressiveLsp.emitResultMeta` + extended definition result |
+| `--emit-timing` | `emitTiming` on init and definition |
+| `--fetch-trace-on-fail` / `--no-fetch-trace-on-fail` | On definition **fail**, call mux `FetchTrace` when `traceId` present; JSON `trace_dump` |
+
+Report fields: `trace_id`, `trace_dump.trace_row_count`, capped `trace_dump.trace_rows`.
+
+### tam-run
+
+```bash
+./integration/harness/run-tam.sh hermetic-discover-java   # default fixture
+PLSP_TAM_ROOT=/path/to/junit4 ./integration/harness/run-tam.sh java-junit4
+```
+
+Hermetic suite: `suites/hermetic-discover-java.tam.yaml` (maps to `integration/fixtures/discover-java`). Docker/image missing → `result: skip` in report (exit 0 from wrapper).
 
 ---
 
@@ -370,7 +389,7 @@ Deliverable gate: **`./integration/harness/run-tam.sh java-junit4`** exits 0 on 
 | **SEAMS-1…6** | Product seams | [integ-seams-plan.md](integ-seams-plan.md): `maxChainIter`/`maxTier`, `progressiveMeta`, `FetchTrace`, unit tests | SERVE-ABS stack |
 | **TAM-0** | Docs + schema | This README, `apiVersion` struct in Rust, example `suites/java-junit4.tam.yaml` (no runner) | — |
 | **TAM-1** | Loader + report | `tam::Suite` serde, validation errors; JSON report schema | TAM-0 |
-| **TAM-2** | Container runner | `plsp-it1 tam-run`; reuse mux; meta + chain policy from SEAMS | TAM-1, **SEAMS-2+** |
+| **TAM-2** | Container runner | `plsp-it1 tam-run`; reuse mux; meta + chain policy from SEAMS | TAM-1, **SEAMS-2+** | **done** |
 | **TAM-3** | Java POC matrix | Full LSP battery + 1 ghost + control rows; calibrate → `expected/` sidecars; wired in `run-tam.sh` | TAM-2, corpora fetch |
 | **TAM-4** | CI + docs | Nightly job (not every PR); row in `integration/README.md`; link from [implementation-plan.md](../../docs/implementation-plan.md) | TAM-3 green on Linux |
 | **TAM-5** | Second language | Copy YAML template (e.g. Python `flask` pin + ty pack) | TAM-4 |

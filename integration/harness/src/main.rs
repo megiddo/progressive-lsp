@@ -2,8 +2,11 @@
 //! Integration only. No `$/` FilesSince. Not a workspace member.
 
 mod discover_container;
+mod mux_driver;
 mod progressive;
+mod progressive_harness;
 mod tam;
+mod tam_run;
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -21,7 +24,7 @@ plsp-it1 fetch --pins JSON --cache DIR [--id ID]
 plsp-it1 progressive --backend ID --root DIR --expected JSON --prefix DIR --control-socket PATH [--deadline-ms N] [--mux] -- <server> [args...]
 plsp-it1 discover-container --root DIR --expected JSON [--docker PATH] [--image NAME] [--platform linux/arm64] [--wal PATH] [--init-deadline-ms N] [--discover-deadline-ms N] [--quiet]
 plsp-it1 tam-load --suite PATH
-plsp-it1 tam-run --suite PATH   (stub: load suite and emit empty report scaffold)
+plsp-it1 tam-run --suite PATH --workspace-root DIR [--docker PATH] [--image NAME] [--platform linux/arm64] [--mount-serve-bin PATH] [--init-deadline-ms N] [--request-deadline-ms N] [--quiet]
 ";
 
 fn main() {
@@ -93,16 +96,15 @@ fn run(args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "tam-run" => {
-            let path = parse_suite_path(&args[1..])?;
-            let suite = tam::load_suite(&path)?;
-            let report = json!({
-                "suite": path.display().to_string(),
-                "rows": [] as Vec<tam::TamReportRow>,
-                "cases": suite.cases.len(),
-                "notes": "tam-run stub: container matrix not wired yet",
-                "result": "skip"
-            });
+            let opts = tam_run::parse_tam_run(&args[1..])?;
+            let report = tam_run::run_tam(&opts)?;
             println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+            if report["result"] == "fail" {
+                return Err(format!(
+                    "tam-run fail: {}",
+                    report["notes"].as_str().unwrap_or("see rows")
+                ));
+            }
             Ok(())
         }
         other => Err(format!("unknown command: {other}\n{USAGE}")),

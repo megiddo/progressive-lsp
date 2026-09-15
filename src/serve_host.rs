@@ -605,7 +605,8 @@ impl ControlPlane for ServeHost {
         std::mem::take(&mut *self.pending_batches.lock().expect("batches"))
     }
 
-    fn index_status(&self, _req: &IndexStatusRequest) -> IndexStatusResponse {
+    fn index_status(&self, req: &IndexStatusRequest) -> IndexStatusResponse {
+        let started = std::time::Instant::now();
         self.sync_types_tier_from_engines();
         let gen = self.session.index_generation();
         let package_ids = self.session.package_ids();
@@ -631,14 +632,50 @@ impl ControlPlane for ServeHost {
             &self.layout,
             package_ids.first().map(String::as_str).unwrap_or("."),
         );
-        IndexStatusResponse {
+        let ingest = self.session.ingest_state().as_str().to_string();
+        let mut resp = IndexStatusResponse {
             status: Some(Status::ok()),
             packages,
             cache_entries: self.session.cache_entries(),
-            ingest: self.session.ingest_state().as_str().into(),
+            ingest,
             engines,
             tier_capabilities,
+            progressive_meta: None,
+        };
+        if req.emit_result_meta {
+            use progressive_lsp_control::{ProgressiveMeta, Timing};
+            use progressive_lsp_core::{LogLevel, LogRecord};
+            use progressive_lsp_protocol::progressive_lsp::new_trace_id;
+
+            let trace_id = new_trace_id();
+            let handler_ms = started.elapsed().as_millis() as u64;
+            let workspace_tier = package_ids
+                .first()
+                .and_then(|id| self.session.package_tier(id))
+                .map(|t| t.as_str().to_string())
+                .unwrap_or_else(|| "syntax".into());
+            let mut rec = LogRecord::at_caller(LogLevel::Info, "IndexStatus");
+            rec.message = format!(
+                "IndexStatus packages={} ingest={} cache={}",
+                resp.packages.len(),
+                resp.ingest,
+                resp.cache_entries
+            );
+            self.trace_ring.append(&trace_id, &rec);
+            resp.progressive_meta = Some(ProgressiveMeta {
+                trace_id,
+                tier: workspace_tier,
+                backend_language: String::new(),
+                backend_version: String::new(),
+                timing: req.emit_timing.then(|| Timing {
+                    handler_ms,
+                    resolve_ms: 0,
+                    chain_steps: 0,
+                    cache_state: String::new(),
+                }),
+            });
         }
+        resp
     }
 
     fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {
@@ -1292,11 +1329,21 @@ mod tests {
                     .any(|p| p.contains("New.java") || p.contains("App.java")),
             "{batches:?}"
         );
-        let idx = host.index_status(&IndexStatusRequest {});
+        let idx = host.index_status(&IndexStatusRequest::default());
         assert!(idx.status.as_ref().unwrap().is_ok());
         assert_eq!(
             idx.ingest_state(),
             progressive_lsp_control::IngestState::Done
+        );
+        let idx_meta = host.index_status(&IndexStatusRequest {
+            emit_result_meta: true,
+            emit_timing: true,
+        });
+        assert!(
+            idx_meta
+                .progressive_meta
+                .as_ref()
+                .is_some_and(|m| !m.trace_id.is_empty())
         );
         let tiers = host.tier_status(&TierStatusRequest {});
         assert!(tiers.status.unwrap().is_ok());

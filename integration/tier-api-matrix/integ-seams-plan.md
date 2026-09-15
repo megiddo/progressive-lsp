@@ -221,7 +221,7 @@ Report columns: `trace_id`, `meta_tier`, `backend_version`, `resolve_ms`, `trace
 | **SEAMS-2** | LSP extended results + `ProgressiveLspCap.extendedResults` |
 | **SEAMS-3** | Control `ProgressiveMeta` + `FetchTrace` + ring buffer |
 | **SEAMS-4** | Docs: lsp-contract, control-protocol, progressive-lsp-apis, ADR 004 |
-| **SEAMS-5** | IT-TAM TAM-2 runner requires meta + uses `maxChainIter` / `maxTier` |
+| **SEAMS-5** | IT-TAM TAM-2 runner requires meta + uses `maxChainIter` / `maxTier` | **done (TAM-2)** |
 | **SEAMS-6** | Java matrix green in container; trace dump on failure |
 
 **Order:** SEAMS-1…3 before or in parallel with TAM-2; TAM-3 Java POC depends on SEAMS-5.

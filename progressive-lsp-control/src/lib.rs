@@ -77,7 +77,7 @@ mod tests {
             generation: 4,
         });
 
-        assert_round_trip(&IndexStatusRequest {});
+        assert_round_trip(&IndexStatusRequest::default());
         assert_round_trip(&IndexStatusResponse {
             status: Some(status.clone()),
             packages: vec![IndexPackage {
@@ -99,6 +99,7 @@ mod tests {
                 query_kinds: vec!["definition".into()],
                 readiness: "ready".into(),
             }],
+            progressive_meta: None,
         });
         assert_round_trip(&TierStatusRequest {});
         assert_round_trip(&TierStatusResponse {

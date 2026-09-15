@@ -1385,7 +1385,7 @@ mod tests {
             ),
             (
                 METHOD_INDEX_STATUS,
-                Envelope::request(METHOD_INDEX_STATUS, 7, IndexStatusRequest {}),
+                Envelope::request(METHOD_INDEX_STATUS, 7, IndexStatusRequest::default()),
             ),
             (
                 METHOD_TIER_STATUS,
