@@ -14,8 +14,7 @@ use progressive_lsp_engine::{
 };
 
 use crate::artifact_store::{
-    self, pull_cache_binary, push_cache_binary, ArtifactFormat, NetworkFetcher,
-    ARTIFACT_DEFAULT_FORMAT,
+    pull_cache_binary, push_cache_binary, ArtifactFormat, NetworkFetcher, ARTIFACT_DEFAULT_FORMAT,
 };
 use crate::check_static;
 use crate::musl::{triples, CommandDockerPort, DockerPort, AARCH64_MUSL, X86_64_MUSL};
@@ -1024,7 +1023,8 @@ fn check_static_dest(plan: &PackBuildPlan) -> Result<(), String> {
              unclosable clangd .so is a miss, do not ship dynamic)",
             plan.dest().display()
         )
-    })
+    })?;
+    check_static::ensure_executable(plan.dest())
 }
 
 fn refuse_unknown(pack: &str) -> Result<(), String> {

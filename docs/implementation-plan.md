@@ -901,6 +901,34 @@ Serve already holds `EngineSupervisor` and `try_spawn`s after initialize (LOG-6)
 
 Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stack new branches instead.
 
+## TCACHE (`tcache-*` branch stack)
+
+**Status:** **TCACHE-5 signed off** on `tcache-5` (stack `tcache-1` … `tcache-5`). Ready for human merge review. Meta-orchestrator: [types-cache/agent-context.md](types-cache/agent-context.md).
+
+**Milestone agents:** follow the **seven-step workflow** in [types-cache/agent-context.md](types-cache/agent-context.md) (branchless stack, coverage, mutation, checklist, commit, sign-off).
+
+```text
+pre-tcache-base   # base working branch — all pre-TCACHE local work committed here
+  └── tcache-1   # TCACHE-1 pattern audit spike (report only)
+        └── tcache-2   # TCACHE-2 types-cache crate skeleton
+              └── tcache-3   # TCACHE-3 builder + cutover
+                    └── tcache-4   # TCACHE-4 refactor from audit
+                          └── tcache-5   # TCACHE-5 graph + timing IT
+```
+
+(`tcache-0` is not a separate branch; TC-0 docs landed on `pre-tcache-base`.)
+
+| ID | Work package | Depends-on | Notes |
+|----|--------------|------------|-------|
+| TC-0.* | Documentation & ADR | — | See [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md) TC-0 |
+| TC-1.* | Design pattern audit spike | TC-0 signed | Output: [types-cache/pattern-audit-report.md](types-cache/pattern-audit-report.md) |
+| TC-2.* | `progressive-lsp-types-cache` skeleton | TC-0, TC-1 signed | Store, resolver, builder stubs |
+| TC-3.* | Builder + session wiring | TC-2 signed | Engine off mux chain |
+| TC-4.* | Refactor pass | TC-1.3, TC-3 signed | P0 from audit only unless human expands |
+| TC-5.* | Graph + timing CI | TC-3 signed | `IT-discover-timing` |
+
+Fine-grained WP rows: [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md). Milestone exits: [milestones.md](milestones.md) TCACHE section.
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |
@@ -910,6 +938,7 @@ Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stac
 | PHPantom vs static phpactor | `spike/` | no host `php`; no Node |
 | clangd static archive graph | notes | miss → document; do not ship `.so` |
 | T2 Strategy bake-off | [docs/spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md) | PD4; heuristics stay default until numbers |
+| Design pattern audit (TCACHE) | [docs/spikes/design-pattern-audit.md](spikes/design-pattern-audit.md) | TC-1; report only until TC-4 |
 
 ## Agent instructions
 
@@ -923,4 +952,6 @@ Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stac
 8. POC-proof orchestrators: pass [poc-ide/proof-agent-context.md](poc-ide/proof-agent-context.md) unchanged to every child. Stack `poc-proof-log` on current `main` (after log11 merge), not on `log11` history. The POC-proof stack is complete at `poc-no-stall`. Do not reopen POC-proof WPs. The allowed next stack is `host0`.
 9. HOST orchestrators: pass [host/agent-context.md](host/agent-context.md) unchanged. `host7` is the last numbered host slice — do not open `host8`.
 10. POC-tier orchestrators: pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. POC-tier merged (PR #8). Do not reopen POC-URI … POC-REST WPs.
-11. Post–POC-tier: meta-orchestrator passes [post-poc-tier/agent-context.md](post-poc-tier/agent-context.md) unchanged. Track order: POST-BUILD (`post-build`) → POST-ART (`post-artifacts`) → POST-IDE (`post-ide`). Skip POST-PROOF until human runs overnight clangd. Plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md).
+11. Post–POC-tier (historical): [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md) — POST-BUILD/ART/IDE merged; POST-PROOF.1 done by human cache-fill.
+12. Productization: meta-orchestrator passes [productization/agent-context.md](productization/agent-context.md) unchanged. Phase order PROD-1 … PROD-5 per [productization-plan.md](productization-plan.md).
+13. TCACHE: meta-orchestrator passes [types-cache/agent-context.md](types-cache/agent-context.md) unchanged. Phase order TC-0 … TC-5 per [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md). Do not start `tcache-2` until TC-0 and TC-1 signed off.

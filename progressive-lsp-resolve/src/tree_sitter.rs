@@ -5,7 +5,7 @@ use std::sync::Arc;
 use progressive_lsp_core::{FileId, Tier};
 
 use crate::query::{
-    DocumentSymbol, Hover, LspLocation, QueryKind, Range, ResolveOutcome, ResolveQuery,
+    DocumentSymbol, Hover, LspLocation, Position, QueryKind, Range, ResolveOutcome, ResolveQuery,
     ResolveResult, SymbolKind,
 };
 use crate::Resolver;
@@ -52,6 +52,22 @@ impl IndexedSymbol {
 pub trait SymbolIndex: Send + Sync {
     fn symbols_in(&self, file: &FileId) -> Vec<IndexedSymbol>;
     fn all_symbols(&self) -> Vec<IndexedSymbol>;
+
+    /// In-memory source when the index holds file text (serve session).
+    fn file_text(&self, _file: &FileId) -> Option<&str> {
+        None
+    }
+
+    fn indexed_files(&self) -> Vec<FileId> {
+        let mut files: Vec<FileId> = self
+            .all_symbols()
+            .into_iter()
+            .map(|s| s.file)
+            .collect();
+        files.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        files.dedup();
+        files
+    }
 }
 
 /// T1 handler. First capable after T3/T2 in the chain.
@@ -94,6 +110,45 @@ impl TreeSitterResolver {
             .collect()
     }
 
+    fn reference_name(&self, q: &ResolveQuery) -> Option<String> {
+        if let Some(at) = self.identifier_at(q) {
+            return Some(at.name);
+        }
+        self.index
+            .file_text(&q.file)
+            .and_then(|src| identifier_at_source(src, q.position))
+    }
+
+    fn reference_locations(&self, _q: &ResolveQuery, name: &str, tier: Tier) -> Vec<LspLocation> {
+        let mut locs: Vec<LspLocation> = Vec::new();
+        for file in self.index.indexed_files() {
+            let Some(src) = self.index.file_text(&file) else {
+                continue;
+            };
+            let uri = self
+                .index
+                .symbols_in(&file)
+                .first()
+                .map(|s| s.uri.clone())
+                .unwrap_or_else(|| format!("file:///{}", file.as_str()));
+            for pos in identifier_occurrences_in_source(src, name) {
+                locs.push(LspLocation::new(
+                    uri.clone(),
+                    Range::point(pos),
+                    tier,
+                ));
+            }
+        }
+        if locs.is_empty() {
+            locs = self
+                .lookup_name(name)
+                .into_iter()
+                .map(|s| s.to_location(tier))
+                .collect();
+        }
+        locs
+    }
+
     fn type_locations(&self, at: &IndexedSymbol, tier: Tier) -> Vec<LspLocation> {
         let mut locs: Vec<LspLocation> = self
             .lookup_name(&at.name)
@@ -105,6 +160,69 @@ impl TreeSitterResolver {
             locs.push(at.to_location(tier));
         }
         locs
+    }
+
+    fn definition_locations(
+        &self,
+        q: &ResolveQuery,
+        at: &IndexedSymbol,
+        tier: Tier,
+        type_definition: bool,
+    ) -> Vec<LspLocation> {
+        let mut hits: Vec<IndexedSymbol> = self
+            .lookup_name(&at.name)
+            .into_iter()
+            .filter(|s| {
+                if type_definition {
+                    s.kind.is_type()
+                } else {
+                    s.kind.is_declaration()
+                }
+            })
+            .collect();
+        if !type_definition && at.kind == SymbolKind::Variable {
+            let types: Vec<IndexedSymbol> = hits
+                .iter()
+                .filter(|s| s.kind.is_type())
+                .cloned()
+                .collect();
+            if !types.is_empty() {
+                hits = types;
+                hits.sort_by_key(|s| match s.kind {
+                    SymbolKind::Interface => 0,
+                    SymbolKind::Class => 1,
+                    SymbolKind::Enum => 2,
+                    _ => 3,
+                });
+            }
+        }
+        if hits.is_empty() {
+            if at.kind.is_declaration() {
+                hits.push(at.clone());
+            } else {
+                return vec![at.to_location(tier)];
+            }
+        }
+        if !type_definition && hits.len() > 1 {
+            let query_file = &q.file;
+            hits.sort_by_key(|s| {
+                let same_file = &s.file == query_file;
+                let type_rank = match s.kind {
+                    SymbolKind::Interface => 0,
+                    SymbolKind::Class => 1,
+                    SymbolKind::Enum => 2,
+                    _ => 3,
+                };
+                (
+                    !same_file,
+                    type_rank,
+                    s.selection_range.start.line,
+                    s.selection_range.start.character,
+                )
+            });
+            hits.truncate(1);
+        }
+        hits.into_iter().map(|s| s.to_location(tier)).collect()
     }
 }
 
@@ -156,35 +274,19 @@ impl Resolver for TreeSitterResolver {
                 let Some(at) = self.identifier_at(q) else {
                     return ResolveOutcome::Ready(ResolveResult::empty(tier));
                 };
-                let mut locs: Vec<LspLocation> = self
-                    .lookup_name(&at.name)
-                    .into_iter()
-                    .filter(|s| {
-                        if q.kind == QueryKind::TypeDefinition {
-                            matches!(
-                                s.kind,
-                                SymbolKind::Class | SymbolKind::Interface | SymbolKind::Enum
-                            )
-                        } else {
-                            true
-                        }
-                    })
-                    .map(|s| s.to_location(tier))
-                    .collect();
-                if locs.is_empty() {
-                    locs.push(at.to_location(tier));
-                }
+                let locs = self.definition_locations(
+                    q,
+                    &at,
+                    tier,
+                    q.kind == QueryKind::TypeDefinition,
+                );
                 ResolveOutcome::Ready(ResolveResult::locations(tier, locs))
             }
             QueryKind::References => {
-                let Some(at) = self.identifier_at(q) else {
+                let Some(name) = self.reference_name(q) else {
                     return ResolveOutcome::Ready(ResolveResult::empty(tier));
                 };
-                let locs = self
-                    .lookup_name(&at.name)
-                    .into_iter()
-                    .map(|s| s.to_location(tier))
-                    .collect();
+                let locs = self.reference_locations(q, &name, tier);
                 ResolveOutcome::Ready(ResolveResult::locations(tier, locs))
             }
             QueryKind::Implementation => {
@@ -198,6 +300,70 @@ impl Resolver for TreeSitterResolver {
             }
         }
     }
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Identifier under the caret when the index has no declaration span there.
+pub fn identifier_at_source(source: &str, pos: Position) -> Option<String> {
+    let mut line = 0u32;
+    let mut col = 0u32;
+    let mut idx = 0usize;
+    for (i, ch) in source.char_indices() {
+        if line == pos.line && col == pos.character {
+            idx = i;
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+            idx = i + ch.len_utf8();
+        }
+    }
+    let bytes = source.as_bytes();
+    if idx >= bytes.len() {
+        return None;
+    }
+    let mut start = idx;
+    while start > 0 && is_ident_byte(bytes[start - 1]) {
+        start -= 1;
+    }
+    let mut end = idx;
+    while end < bytes.len() && is_ident_byte(bytes[end]) {
+        end += 1;
+    }
+    if start >= end {
+        return None;
+    }
+    Some(source[start..end].to_string())
+}
+
+fn identifier_occurrences_in_source(source: &str, name: &str) -> Vec<Position> {
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let needle = name.as_bytes();
+    let mut out = Vec::new();
+    for (line_no, line) in source.lines().enumerate() {
+        let bytes = line.as_bytes();
+        let mut i = 0usize;
+        while i + needle.len() <= bytes.len() {
+            if &bytes[i..i + needle.len()] == needle {
+                let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
+                let after_i = i + needle.len();
+                let after_ok = after_i >= bytes.len() || !is_ident_byte(bytes[after_i]);
+                if before_ok && after_ok {
+                    out.push(Position::new(line_no as u32, i as u32));
+                }
+            }
+            i += 1;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -306,8 +472,8 @@ mod tests {
         match r.resolve(&q) {
             ResolveOutcome::Ready(res) => {
                 assert_eq!(res.tier, Tier::Syntax);
-                assert_eq!(res.locations.len(), 2);
-                assert!(res.locations.iter().any(|l| l.uri.ends_with("Lib.java")));
+                assert_eq!(res.locations.len(), 1);
+                assert!(res.locations[0].uri.ends_with("App.java"));
             }
             ResolveOutcome::NotReady => panic!("T1 is always ready"),
         }
@@ -441,6 +607,52 @@ mod tests {
             QueryKind::References,
         )) {
             ResolveOutcome::Ready(res) => assert!(res.locations.is_empty()),
+            ResolveOutcome::NotReady => panic!("ready"),
+        }
+    }
+
+    #[test]
+    fn definition_type_use_skips_cross_file_variable_occurrences() {
+        let usage = IndexedSymbol {
+            file: FileId::new("PDFLocalCache.java"),
+            uri: "file:///PDFLocalCache.java".into(),
+            name: "KvStoreRouter".into(),
+            kind: SymbolKind::Variable,
+            range: Range::new(Position::new(10, 4), Position::new(10, 18)),
+            selection_range: Range::new(Position::new(10, 4), Position::new(10, 18)),
+            arity: None,
+            fqn: "PDFLocalCache.KvStoreRouter".into(),
+            container: None,
+        };
+        let idx = MemIndex::new(vec![
+            sym(
+                "KvStoreRouter.java",
+                "KvStoreRouter",
+                0,
+                SymbolKind::Interface,
+                "com.KvStoreRouter",
+                None,
+            ),
+            sym(
+                "Factory.java",
+                "KvStoreRouter",
+                5,
+                SymbolKind::Variable,
+                "com.Factory.KvStoreRouter",
+                None,
+            ),
+            usage,
+        ]);
+        let r = TreeSitterResolver::new(idx);
+        match r.resolve(&ResolveQuery::new(
+            FileId::new("PDFLocalCache.java"),
+            Position::new(10, 10),
+            QueryKind::Definition,
+        )) {
+            ResolveOutcome::Ready(res) => {
+                assert_eq!(res.locations.len(), 1);
+                assert!(res.locations[0].uri.contains("KvStoreRouter.java"));
+            }
             ResolveOutcome::NotReady => panic!("ready"),
         }
     }

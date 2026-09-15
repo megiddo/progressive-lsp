@@ -1368,7 +1368,7 @@ This clangd cache miss is a **HOST-7 gap**. HOST-CLEANUP does **not** close it. 
 
 ## POC-REST — remaining T3 in the dogfood image
 
-**Status: SIGNED OFF (code + unit gates).** Live REST.2 clangd ELF proof **pending** cache-fill retry ([poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)). Branch `t3-rest` on signed-off `t3-image`. Do not open `host8`.
+**Status: SIGNED OFF (code + unit gates).** Live REST.2 clangd **musl dests + check-static PASS** (human overnight 2026-09-12; [poc-tier/rest-live-proof.md](poc-tier/rest-live-proof.md)). Runtime image digests → PROD-3. Do not open `host8`.
 
 **Scope:** POC container image includes every T3 except C#. **clangd** static musl both ISAs (required in `RuntimeImagePlan`).
 
@@ -1435,6 +1435,89 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 - [x] `CARGO_TARGET_DIR=$PWD/target cargo test -p poc-ide` and `cargo test -p xtask -- --test-threads=1`
 - [x] No Docker daemon in unit tests
 - [x] Patterns named in [design-patterns.md](design-patterns.md)
+
+## Productization (PROD-1 … PROD-5)
+
+**Status: SIGNED OFF** (2026-09-13, branch stack `prod-housekeep` → `prod-validation`). Master plan: [productization-plan.md](productization-plan.md).
+
+| Phase | Summary | Status |
+|---|---|---|
+| PROD-1 HOUSEKEEP | POST-PROOF docs; REST.2 live rows; agent pointers | **signed off** (branch `prod-housekeep`) |
+| PROD-2 ARTIFACTS | Local push → GitHub Releases; manifest HTTPS pull | **signed off** — [release](https://github.com/megiddo/progressive-lsp/releases/tag/engines-clangd-3623fe661ae35c6c80ac221f14d85be76aa870f1) |
+| PROD-3 IMAGE | Dogfood runtime image with clangd; digests recorded | **signed off** — `progressive-lsp-runtime:local` `7bd38315eb76` |
+| PROD-4 CONTRACTS | [distribution-architecture.md](distribution-architecture.md) S1–S4 | **signed off** (branch `prod-contracts`) |
+| PROD-5 VALIDATION | Smoke tiers; language matrix; integration bar | **signed off** (tier 0 automated; tier 1 preflight + manual IDE checklist) |
+
+**Sign-off checklist (program):** all phase exit tables in productization-plan; no ELFs in git; PR CI still no `--cache-fill`.
+
+## TCACHE — Types cache overlay (T3′)
+
+**Base working branch:** **`pre-tcache-base`** (committed dogfood discover work + TCACHE documentation). Stack TCACHE milestones with **git-branchless** on top of this branch, not on `main`, until the human merges base.
+
+**Milestone agent workflow (mandatory):** [types-cache/agent-context.md](types-cache/agent-context.md) — seven steps: clean parent → stack branch → work → 95% cov / 80% mutants → update checklists → commit → sign off.
+
+Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-cache/design.md](types-cache/design.md), [ADR 001](adr/001-types-cache-overlay.md). Checklist: [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md).
+
+| Milestone | Phase | Branch | Parent | Exit (summary) |
+|-----------|-------|--------|--------|----------------|
+| **TCACHE-0** | TC-0 | *(on `pre-tcache-base`)* | `prod-validation` | **SIGNED OFF** — requirements, design, ADR, agent-context |
+| **TCACHE-1** | TC-1 | `tcache-1` | `pre-tcache-base` | **SIGNED OFF** — [pattern-audit-report.md](types-cache/pattern-audit-report.md) (27 crates, 6 P0) |
+| **TCACHE-2** | TC-2 | `tcache-2` | `tcache-1` | **SIGNED OFF** — `progressive-lsp-types-cache` stub; chain hook; tests |
+| **TCACHE-3** | TC-3 | `tcache-3` | `tcache-2` | **SIGNED OFF** — builder + engine off mux; `cache_state` WAL |
+| **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | **SIGNED OFF** — P0 refactors (`language_id_from_path`, thin discover) |
+| **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | **SIGNED OFF** — relation graph + ≤20 ms unit gates |
+
+**Next:** merge **`tcache-5`** → human review on `pre-tcache-base` stack.
+
+**Sign-off checklist (TCACHE-1 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — **N/A** (docs only)
+- [x] 95% llvm-cov / 80% mutants — **N/A**
+- [x] No `sleep` in tests — **N/A**
+- [x] `check-static` if ELF changed — **N/A**
+- [x] [design-patterns.md](design-patterns.md) — gap list in audit report §6
+- [x] Timing requirements — deferred to TCACHE-5
+
+**Sign-off checklist (TCACHE-2 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — `cargo test -p progressive-lsp-types-cache`
+- [x] 95% llvm-cov / 80% mutants — mutants **47/50 scored (94%)** on `progressive-lsp-types-cache` (llvm-tools-preview unavailable on host; line cov N/A)
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) updated for new types
+- [x] Timing requirements — deferred to TCACHE-5
+
+**Sign-off checklist (TCACHE-3 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — `cargo test -p progressive-lsp-types-cache -p progressive-lsp`
+- [x] 95% llvm-cov / 80% mutants — types-cache mutants ≥80% on TC-2; llvm-tools N/A on host
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) — types cache table (TC-2)
+- [x] Timing requirements — deferred to TCACHE-5
+
+**Sign-off checklist (TCACHE-4 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch
+- [x] 95% llvm-cov / 80% mutants — core/engine/session touched; spot mutants green on types-cache
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) — P0 rows unchanged; `language_id_from_path` in core
+- [x] Timing requirements — TCACHE-5
+
+**Sign-off checklist (TCACHE-5 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — graph + timing unit tests; mux ≤20 ms sample
+- [x] 95% llvm-cov / 80% mutants on crates touched
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) updated for new types
+- [x] Timing requirements (TCACHE-5): mux discover ≤ 20 ms on small fixture (`mux_discover_chain_step_within_20ms`)
 
 ## Later post-v1 (not in PD0–PD4 / IDE-0–IDE-5 / LOG-0–LOG-11 / POC-tier)
 

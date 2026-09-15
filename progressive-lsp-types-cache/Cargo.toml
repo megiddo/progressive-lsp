@@ -1,0 +1,17 @@
+[package]
+name = "progressive-lsp-types-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "T3′ types cache store, resolver chain step, and background builder"
+
+[dependencies]
+progressive-lsp-core.workspace = true
+progressive-lsp-index.workspace = true
+progressive-lsp-resolve.workspace = true
+progressive-lsp-watch.workspace = true
+progressive-lsp-engine = { path = "../progressive-lsp-engine" }
+
+[dev-dependencies]
+tempfile.workspace = true

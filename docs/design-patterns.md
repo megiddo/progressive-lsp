@@ -323,6 +323,24 @@ llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
 | `BuildFlags` | Value object | `--full` / `--target` / `--both`; default docker args name this host’s musl triple (not both); `--full` is pack-only. |
 | `RunLaunch` | Value object | `./build run ide` then `--folder` / `--file` / `--container` / `--native` / `--control-socket`; non-Linux `--folder` defaults to `--container` via [`RunLaunch::apply_host_defaults`]; `--` still forwards; relative `--folder` + container fails closed (bind-mount identity). |
 
+## Types cache (T3′ — `progressive-lsp-types-cache`)
+
+| Type | Pattern | Invariant (testable) |
+|---|---|---|
+| `TypesCacheStore` | Repository + Facade | Generation-aware get/put/invalidate; engine restart drops stale engine-sourced entries |
+| `TypesCacheKey` | Value object | `(QueryKind, FileId, Position, CacheGeneration)` identity; generation mismatch → miss |
+| `TypesCacheEntry` | Value object | `ResolveResult` + `filled_at_unix_ms` + `source` + `engine_generation` |
+| `CacheGeneration` | Value object | Monotonic u64 from index dirty / global generation |
+| `TypesCacheResolver` | Chain of Responsibility step | Read path only; miss enqueues builder; never calls engine |
+| `TypesCacheBuilder` | Command + background worker | `on_miss` hook; engine fill in TC-3 |
+| `BuilderQueue` | Command queue | Dedupes misses by query identity (ignoring generation) |
+| `InvalidationPolicy` | Strategy | `on_file_dirty` / `on_engine_restart` → store eviction |
+| `GenerationPort` | Port | `file_generation` for keys; `IndexGenerationPort` reads `IndexService` |
+| `FakeTypesCacheStore` | Test double | Alias of prod store in tests |
+| `RecordingBuilder` | Test double | Captures enqueued keys without engine |
+
+Addendum reference: [types-cache/design-patterns-addendum.md](types-cache/design-patterns-addendum.md).
+
 ## Adding a type
 
 1. Name the pattern in this table (PR must update the table).

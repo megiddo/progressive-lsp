@@ -73,6 +73,20 @@ pub fn check_native_image_libc(path: &Path) -> Result<(), StaticLinkError> {
     check_path_with_policy(path, StaticCheckPolicy::NativeImageLibc)
 }
 
+/// Pack cache tarballs and `fs::copy` often land as `0644`; engines must be executable in the runtime image.
+pub fn ensure_executable(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = fs::metadata(path).map_err(|e| format!("metadata {}: {e}", path.display()))?;
+        let mut perms = meta.permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        fs::set_permissions(path, perms)
+            .map_err(|e| format!("chmod {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
 pub fn check_path_with_policy(
     path: &Path,
     policy: StaticCheckPolicy,

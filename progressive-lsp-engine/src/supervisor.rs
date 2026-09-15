@@ -113,6 +113,14 @@ impl EngineSupervisor {
         self.adapters.push(adapter);
     }
 
+    /// `(pack, language)` for each registered T3 adapter (control IndexStatus engines).
+    pub fn registered_packs(&self) -> Vec<(String, LanguageId)> {
+        self.adapters
+            .iter()
+            .map(|a| (a.pack_name().to_string(), a.language_id()))
+            .collect()
+    }
+
     pub fn prefix(&self) -> &PrefixLayout {
         &self.prefix
     }
@@ -148,6 +156,28 @@ impl EngineSupervisor {
         st.ready
             .contains(&(language.as_str().to_string(), package.as_str().to_string()))
             || st.ready_languages.contains(language.as_str())
+    }
+
+    /// T3 LSP session initialized (not merely spawned). Otherwise the chain should use T2/T1 now.
+    pub fn engine_session_warmed(&self, language: &LanguageId) -> bool {
+        self.poll_health();
+        let st = self.inner.lock().expect("sup");
+        st.children.values().any(|child| {
+            let serves = child.language == *language
+                || self
+                    .adapters
+                    .iter()
+                    .find(|a| a.language_id() == child.language)
+                    .map(|a| a.extra_languages().iter().any(|l| l == language))
+                    .unwrap_or(false);
+            if !serves {
+                return false;
+            }
+            match child.handle.lsp() {
+                None => true,
+                Some(lsp) => lsp.is_warmed(),
+            }
+        })
     }
 
     pub fn merged_capabilities(&self) -> EngineCapabilities {
@@ -260,8 +290,17 @@ impl EngineSupervisor {
             }
             SpawnHookResult::Proceed(tweak) => {
                 let ctx = apply_tweaks(ctx, &tweak, &self.prefix);
+                let workspace_root = workspace.to_path_buf();
                 match adapter.spawn(ctx) {
-                    Ok(handle) => {
+                    Ok(mut handle) => {
+                        if handle.lsp().is_none() {
+                            let _ = crate::lsp_child::attach_os_child(
+                                &mut handle,
+                                &workspace_root,
+                                language,
+                            );
+                        }
+                        handle.spawn_stderr_drain(Arc::clone(&self.log));
                         self.mark_ready(adapter.as_ref(), handle, language, package);
                         self.hooks
                             .notify_tier_ready(language.as_str(), package.as_str());
@@ -442,6 +481,33 @@ impl EngineSupervisor {
         self.note_crash_err(pack, EngineError::Crashed(pack.into()));
     }
 
+    /// Kill pack children for `language` after a resolve timeout (stuck LSP proxy).
+    pub fn abort_language(&self, language: &LanguageId) {
+        let packs: Vec<String> = {
+            let st = self.inner.lock().expect("sup");
+            st.children
+                .iter()
+                .filter_map(|(pack, child)| {
+                    if child.language == *language {
+                        return Some(pack.clone());
+                    }
+                    let adapter = self.adapters.iter().find(|a| a.pack_name() == pack.as_str())?;
+                    if adapter.extra_languages().iter().any(|l| l == language) {
+                        Some(pack.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        for pack in packs {
+            if let Some(child) = self.inner.lock().expect("sup").children.get(&pack) {
+                child.handle.terminate();
+            }
+            self.note_crash_err(&pack, EngineError::Crashed(format!("{pack}: resolve timeout")));
+        }
+    }
+
     fn note_crash_err(&self, pack: &str, err: EngineError) {
         let now = self.clock.unix_ms();
         {
@@ -532,26 +598,46 @@ impl EngineSupervisor {
         if !self.is_ready(language, package) {
             return ResolveOutcome::NotReady;
         }
-        let st = self.inner.lock().expect("sup");
-        for (pack, child) in &st.children {
-            let Some(adapter) = self
-                .adapters
+        let targets: Vec<(usize, ChildHandle)> = {
+            let st = self.inner.lock().expect("sup");
+            st.children
                 .iter()
-                .find(|a| a.pack_name() == pack.as_str())
-            else {
-                continue;
-            };
-            let serves = child.language == *language
-                || adapter.extra_languages().iter().any(|l| l == language);
-            if !serves {
-                continue;
-            }
-            match adapter.resolve_query(&child.handle, q) {
+                .filter_map(|(pack, child)| {
+                    let idx = self
+                        .adapters
+                        .iter()
+                        .position(|a| a.pack_name() == pack.as_str())?;
+                    let adapter = &self.adapters[idx];
+                    let serves = child.language == *language
+                        || adapter.extra_languages().iter().any(|l| l == language);
+                    if !serves {
+                        return None;
+                    }
+                    Some((idx, child.handle.clone()))
+                })
+                .collect()
+        };
+        for (idx, handle) in targets {
+            match self.adapters[idx].resolve_query(&handle, q) {
                 ResolveOutcome::Ready(r) => return ResolveOutcome::Ready(r),
                 ResolveOutcome::NotReady => continue,
             }
         }
         ResolveOutcome::NotReady
+    }
+
+    pub fn forward_did_open(&self, uri: &str, language_id: &str, text: &str) {
+        self.poll_health();
+        let st = self.inner.lock().expect("sup");
+        for (pack, child) in &st.children {
+            if let Some(adapter) = self
+                .adapters
+                .iter()
+                .find(|a| a.pack_name() == pack.as_str())
+            {
+                adapter.forward_did_open(&child.handle, uri, language_id, text);
+            }
+        }
     }
 
     pub fn forward_did_change(&self, uri: &str, text: &str) {

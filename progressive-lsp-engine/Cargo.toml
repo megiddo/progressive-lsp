@@ -11,7 +11,10 @@ progressive-lsp-core.workspace = true
 progressive-lsp-install.workspace = true
 progressive-lsp-log.workspace = true
 progressive-lsp-resolve.workspace = true
+progressive-lsp-protocol.workspace = true
 progressive-lsp-script.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -14,11 +14,13 @@ This directory is the **source of truth** for the product. Implement from these 
 | Types, traits, errors | [detailed-design.md](detailed-design.md) |
 | Pattern map (mandatory) | [design-patterns.md](design-patterns.md) |
 | Coverage, mutants, alloc matrix | [testing.md](testing.md) |
-| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-11; host HOST-0–HOST-7; POC tier POC-URI–POC-REST | [milestones.md](milestones.md) |
+| Product exits M0–M6; post-dev PD0–PD4; POC IDE IDE-0–IDE-5; logging LOG-0–LOG-11; host HOST-0–HOST-7; POC tier POC-URI–POC-REST; types cache TCACHE-0–TCACHE-5 | [milestones.md](milestones.md) |
 | Global logging (`LogPort`, sqlite WAL) | [logging.md](logging.md), [plan](logging-plan.md), [agent context](logging/agent-context.md) |
 | Host stack (`host0`–`host7`; native vs container open) | [host/agent-context.md](host/agent-context.md) |
 | POC tier stack (T1/T2 complete + container T3) | [poc-tier-plan.md](poc-tier-plan.md), [poc-tier/agent-context.md](poc-tier/agent-context.md) |
 | After POC-tier PR (build, artifacts, IDE) | [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md), [post-poc-tier/agent-context.md](post-poc-tier/agent-context.md) |
+| Productization (releases, contracts, smoke) | [productization-plan.md](productization-plan.md), [productization/agent-context.md](productization/agent-context.md), [productization/release-runbook.md](productization/release-runbook.md), [productization/validation-matrix.md](productization/validation-matrix.md), [distribution-architecture.md](distribution-architecture.md) |
+| Types cache overlay (T3′, TCACHE milestones) | [types-cache/requirements.md](types-cache/requirements.md), [types-cache/design.md](types-cache/design.md), [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md), [types-cache/agent-context.md](types-cache/agent-context.md), [ADR 001](adr/001-types-cache-overlay.md) |
 | Work packages and sign-off | [implementation-plan.md](implementation-plan.md) |
 | Stacked branches | [branching.md](branching.md) |
 
@@ -37,6 +39,7 @@ This directory is the **source of truth** for the product. Implement from these 
 | Extended protocol API | [user/progressive-v1-api.md](user/progressive-v1-api.md) |
 | Integration test designs | [../integration/README.md](../integration/README.md) |
 | T2 bake-off spike | [spikes/t2-strategy-bakeoff.md](spikes/t2-strategy-bakeoff.md) |
+| Design pattern audit (TCACHE TC-1) | [spikes/design-pattern-audit.md](spikes/design-pattern-audit.md) → [types-cache/pattern-audit-report.md](types-cache/pattern-audit-report.md) |
 | T2 heuristics for every v1 language | [t2-heuristic-coverage.md](t2-heuristic-coverage.md) |
 | T3 Linux container = production; URIs; Java ISA | [t3-linux-hosts.md](t3-linux-hosts.md) |
 | POC tier completion (milestones + checklist) | [poc-tier-plan.md](poc-tier-plan.md) |
@@ -52,3 +55,5 @@ This directory is the **source of truth** for the product. Implement from these 
 6. LOG orchestrators pass [logging/agent-context.md](logging/agent-context.md) unchanged to every child. poc-ide `RunLog` is a separate schema.
 7. HOST orchestrators pass [host/agent-context.md](host/agent-context.md) unchanged to every child. Stack `host0` on `poc-no-stall`. Do not open `host8`.
 8. POC-tier orchestrators pass [poc-tier/agent-context.md](poc-tier/agent-context.md) unchanged. Stack `poc-uri` on current `main` (`host-cleanup` merged). Plan: [poc-tier-plan.md](poc-tier-plan.md).
+9. Productization meta-orchestrator passes [productization/agent-context.md](productization/agent-context.md) unchanged. Phase order: PROD-1 → PROD-2 → PROD-3 → PROD-5; PROD-4 may overlap PROD-1 docs-only. Plan: [productization-plan.md](productization-plan.md).
+10. TCACHE meta-orchestrator passes [types-cache/agent-context.md](types-cache/agent-context.md) unchanged. Phase order TC-0 … TC-5. Do not start implementation crates until TC-0 and TC-1 signed off.

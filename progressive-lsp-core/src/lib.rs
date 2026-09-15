@@ -20,7 +20,9 @@ pub use file_uri::{path_from_file_uri, path_to_file_uri};
 pub use git_exclude::{
     apply_worktree_excludes, belt_gitignore_body, git_exclude_lines, OVERLAY_DIR_NAME,
 };
-pub use ids::{FileId, LanguageId, LanguageVersion, PackageId, Tier, WorkspaceId};
+pub use ids::{
+    language_id_from_path, FileId, LanguageId, LanguageVersion, PackageId, Tier, WorkspaceId,
+};
 pub use log::{
     message_from_bytes, sanitize_extras, FakeLog, LevelFilter, LogComponent, LogLevel, LogOrigin,
     LogPort, LogRecord, LogScope, LogScopeGuard, LogSink, MemoryLog, NeverFailLog, NullLog,

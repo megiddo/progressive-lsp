@@ -166,6 +166,7 @@ mod tests {
             88,
             Some(0),
             None,
+            Some(42),
         );
         log.log_discover(
             "textDocument/implementation",
@@ -174,6 +175,7 @@ mod tests {
             1,
             2,
             Some(4),
+            None,
             None,
         );
         let from_log = ProofStatus::last_discover_from_rows(&log.rows().unwrap());

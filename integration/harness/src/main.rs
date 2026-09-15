@@ -1,6 +1,7 @@
 //! Tiny stdio LSP driver for IT-1 handshake, IT-2 stock backends, and IT-3 Envelope.
 //! Integration only. No `$/` FilesSince. Not a workspace member.
 
+mod discover_container;
 mod progressive;
 
 use std::io::{self, BufRead, Write};
@@ -17,6 +18,7 @@ plsp-it1 handshake [--root-uri URI] [--deadline-ms N] [--assert-stock] -- <serve
 plsp-it1 backend --expected JSON --root DIR [--deadline-ms N] [--t3-pack NAME] -- <server> [args...]
 plsp-it1 fetch --pins JSON --cache DIR [--id ID]
 plsp-it1 progressive --backend ID --root DIR --expected JSON --prefix DIR --control-socket PATH [--deadline-ms N] [--mux] -- <server> [args...]
+plsp-it1 discover-container --root DIR --expected JSON [--docker PATH] [--image NAME] [--platform linux/arm64] [--wal PATH] [--init-deadline-ms N] [--discover-deadline-ms N] [--quiet]
 ";
 
 fn main() {
@@ -61,6 +63,15 @@ fn run(args: Vec<String>) -> Result<(), String> {
             println!("{}", serde_json::to_string_pretty(&row).map_err(|e| e.to_string())?);
             if row["result"] == "fail" {
                 return Err(format!("progressive fail: {}", row["notes"]));
+            }
+            Ok(())
+        }
+        "discover-container" => {
+            let opts = discover_container::parse_discover_container(&args[1..])?;
+            let row = discover_container::run_discover_container(&opts)?;
+            println!("{}", serde_json::to_string_pretty(&row).map_err(|e| e.to_string())?);
+            if row["result"] == "fail" {
+                return Err(format!("discover-container fail: {}", row["notes"]));
             }
             Ok(())
         }
@@ -314,7 +325,7 @@ fn assert_stock_caps(result: &Value) -> Result<(), String> {
 
 pub(crate) struct ExpectedGolden {
     pub(crate) corpus: String,
-    language: String,
+    pub(crate) language: String,
     pub(crate) language_id: String,
     pub(crate) entry: String,
     pub(crate) find: String,

@@ -198,27 +198,17 @@ impl EngineAdapter for FakeEngineAdapter {
         }
         let a = self.answers.lock().expect("ans");
         match q.kind {
-            QueryKind::Definition | QueryKind::TypeDefinition => {
-                if a.definition.is_empty() {
-                    return ResolveOutcome::NotReady;
-                }
-                ResolveOutcome::Ready(ResolveResult::locations(Tier::Types, a.definition.clone()))
-            }
-            QueryKind::References => {
-                if a.references.is_empty() {
-                    return ResolveOutcome::NotReady;
-                }
-                ResolveOutcome::Ready(ResolveResult::locations(Tier::Types, a.references.clone()))
-            }
-            QueryKind::Implementation => {
-                if a.implementation.is_empty() {
-                    return ResolveOutcome::NotReady;
-                }
-                ResolveOutcome::Ready(ResolveResult::locations(
-                    Tier::Types,
-                    a.implementation.clone(),
-                ))
-            }
+            QueryKind::Definition | QueryKind::TypeDefinition => ResolveOutcome::Ready(
+                ResolveResult::locations(Tier::Types, a.definition.clone()),
+            ),
+            QueryKind::References => ResolveOutcome::Ready(ResolveResult::locations(
+                Tier::Types,
+                a.references.clone(),
+            )),
+            QueryKind::Implementation => ResolveOutcome::Ready(ResolveResult::locations(
+                Tier::Types,
+                a.implementation.clone(),
+            )),
             QueryKind::Hover => {
                 let Some(h) = a.hover.clone() else {
                     return ResolveOutcome::NotReady;
@@ -340,7 +330,10 @@ mod tests {
         fake.set_crash_after_ready(false);
         fake.set_answers(FakeAnswers::default());
         let h2 = fake.spawn(spawn_ctx("python")).unwrap();
-        assert!(!fake.resolve_query(&h2, &q).is_ready());
+        match fake.resolve_query(&h2, &q) {
+            ResolveOutcome::Ready(r) => assert!(r.locations.is_empty()),
+            ResolveOutcome::NotReady => panic!("ready engine returns empty definition"),
+        }
         fake.set_ready_kind(ReadyKind::IndexedPackage(PackageId::new("pkg")));
         assert_eq!(
             fake.ready_signal(),

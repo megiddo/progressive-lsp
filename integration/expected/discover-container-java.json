@@ -1,0 +1,9 @@
+{
+  "corpus": "discover-container-java",
+  "language": "java",
+  "language_id": "java",
+  "entry": "src/main/java/com/example/app/App.java",
+  "find": "Lib",
+  "workspace_symbol": "App",
+  "corpus_sha": "in-tree"
+}

@@ -102,6 +102,19 @@ main   # after POC-tier merge
 
 Agent policy: [post-poc-tier/agent-context.md](post-poc-tier/agent-context.md). Plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.md).
 
+TCACHE stack (git-branchless) starts from the **base working branch**, not `main`:
+
+```text
+pre-tcache-base   # dogfood discover + TCACHE docs (committed before TCACHE work)
+  └── tcache-1    # TCACHE-1 pattern audit
+        └── tcache-2
+              └── tcache-3
+                    └── tcache-4
+                          └── tcache-5
+```
+
+Milestone agents: [types-cache/agent-context.md](types-cache/agent-context.md) (seven-step workflow).
+
 ## Rules
 
 1. **Scope:** a branch contains that milestone’s work packages only ([implementation-plan.md](implementation-plan.md)). No extra language packs on `m1`.

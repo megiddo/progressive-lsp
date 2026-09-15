@@ -37,6 +37,7 @@ impl TierCellKind {
 pub enum TierCellState {
     InProgress,
     Done,
+    Failed,
     NotSupported,
     Skipped,
     Na,
@@ -47,6 +48,7 @@ impl TierCellState {
         match self {
             Self::InProgress => "processing",
             Self::Done => "done",
+            Self::Failed => "failed",
             Self::NotSupported => "not supported",
             Self::Skipped => "skipped",
             Self::Na => "n/a",
@@ -98,7 +100,7 @@ impl TierStrip {
         ingest: IngestState,
         current: Option<WireTier>,
     ) -> Self {
-        Self::paint_for_open(catalog, language_id, ingest, current, T3HostOffer::Offered)
+        Self::paint_for_open(catalog, language_id, ingest, current, T3HostOffer::Offered, None)
     }
 
     pub fn paint_for_open(
@@ -107,6 +109,7 @@ impl TierStrip {
         ingest: IngestState,
         current: Option<WireTier>,
         t3_host: T3HostOffer,
+        engine: Option<&EngineSnap>,
     ) -> Self {
         if !catalog.is_known(language_id) {
             let indexing = ingest.is_running() || ingest.is_done();
@@ -124,7 +127,7 @@ impl TierStrip {
             ),
             t3: TierCell::new(
                 TierCellKind::T3,
-                t3_state(catalog, language_id, ingest, current, t3_host),
+                t3_state(catalog, language_id, ingest, current, t3_host, engine),
             ),
         }
     }
@@ -190,6 +193,7 @@ fn t3_state(
     ingest: IngestState,
     current: Option<WireTier>,
     t3_host: T3HostOffer,
+    engine: Option<&EngineSnap>,
 ) -> TierCellState {
     if !catalog.t3_supported(language_id) {
         return TierCellState::NotSupported;
@@ -200,18 +204,44 @@ fn t3_state(
     if current == Some(WireTier::Types) {
         return TierCellState::Done;
     }
-    if ingest.is_done() {
-        return TierCellState::Skipped;
-    }
     let prior_ready = if catalog.has_t2(language_id) {
         current.is_some_and(|t| t.meets(WireTier::Graph))
     } else {
         current.is_some_and(|t| t.meets(WireTier::Syntax))
     };
     if prior_ready {
-        TierCellState::InProgress
-    } else {
-        TierCellState::Na
+        if engine.is_some_and(|e| e.is_blocked()) {
+            return TierCellState::Failed;
+        }
+        return TierCellState::InProgress;
+    }
+    if ingest.is_done() {
+        return TierCellState::Skipped;
+    }
+    if ingest.is_running() {
+        return TierCellState::Na;
+    }
+    TierCellState::Na
+}
+
+/// Last IndexStatus engine row for one language (control plane).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineSnap {
+    state: String,
+    detail: String,
+}
+
+impl EngineSnap {
+    pub fn is_blocked(&self) -> bool {
+        matches!(self.state.as_str(), "error" | "missing")
+    }
+
+    pub fn fail_detail(&self) -> &str {
+        if self.detail.is_empty() {
+            self.state.as_str()
+        } else {
+            self.detail.as_str()
+        }
     }
 }
 
@@ -220,6 +250,7 @@ fn t3_state(
 pub struct PackageTierMap {
     ingest: IngestState,
     packages: BTreeMap<String, WireTier>,
+    engines: BTreeMap<String, EngineSnap>,
 }
 
 impl PackageTierMap {
@@ -252,6 +283,19 @@ impl PackageTierMap {
                 .entry(pkg.package_id.clone())
                 .or_insert(WireTier::Syntax);
         }
+        for row in &resp.engines {
+            self.engines.insert(
+                row.language.clone(),
+                EngineSnap {
+                    state: row.state.clone(),
+                    detail: row.detail.clone(),
+                },
+            );
+        }
+    }
+
+    pub fn engine_for_language(&self, language_id: &str) -> Option<&EngineSnap> {
+        self.engines.get(language_id)
     }
 
     pub fn apply_tier_status(&mut self, resp: &TierStatusResponse) {
@@ -292,6 +336,70 @@ impl PackageTierMap {
 
     pub fn package_count(&self) -> usize {
         self.packages.len()
+    }
+
+    /// Short wire summary for the readiness line (e.g. `src@graph, app@types`).
+    pub fn tier_summary(&self) -> String {
+        if self.packages.is_empty() {
+            return "no packages on control plane".into();
+        }
+        self.packages
+            .iter()
+            .map(|(id, t)| format!("{id}@{}", t.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// One-line server/index readiness for the POC shell (footer-adjacent).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadinessLine {
+    text: String,
+}
+
+impl ReadinessLine {
+    pub fn paint(
+        lsp: LspSessionState,
+        control_connected: bool,
+        control_error: Option<&str>,
+        tiers: &PackageTierMap,
+        ingest: IngestState,
+        progress: Option<&str>,
+        focus_language: Option<&str>,
+    ) -> Self {
+        let mut parts = Vec::new();
+        parts.push(format!("LSP: {}", lsp.as_str()));
+        if let Some(e) = control_error.filter(|s| !s.is_empty()) {
+            parts.push(format!("control: error ({e})"));
+        } else if control_connected {
+            parts.push("control: connected".into());
+        } else if lsp.is_ready() {
+            parts.push("control: waiting".into());
+        } else {
+            parts.push("control: —".into());
+        }
+        parts.push(format!("ingest: {}", ingest.as_str()));
+        parts.push(format!("tiers: {}", tiers.tier_summary()));
+        if let Some(lang) = focus_language.filter(|s| !s.is_empty()) {
+            if let Some(e) = tiers.engine_for_language(lang) {
+                let tail = if e.detail.is_empty() {
+                    e.state.clone()
+                } else {
+                    format!("{} ({})", e.state, e.detail)
+                };
+                parts.push(format!("engine {lang}: {tail}"));
+            }
+        }
+        if let Some(p) = progress.filter(|s| !s.is_empty()) {
+            parts.push(format!("progress: {p}"));
+        }
+        Self {
+            text: parts.join(" · "),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.text
     }
 }
 
@@ -481,9 +589,7 @@ fn item_for(
     if !ingest.is_done() {
         return DiscoverMenuItem::disabled(kind, MenuDisableReason::BuildingT1);
     }
-    if !flight.can_submit() {
-        return DiscoverMenuItem::disabled(kind, MenuDisableReason::WaitingForServer);
-    }
+    let _ = flight;
     let Some(offer) = catalog.offer(language_id, kind) else {
         return DiscoverMenuItem::disabled(kind, MenuDisableReason::NotSupported);
     };
@@ -552,8 +658,8 @@ mod tests {
         let java = TierStrip::paint(&c, "java", IngestState::Done, Some(WireTier::Graph));
         assert_eq!(java.t1().state(), TierCellState::Done);
         assert_eq!(java.t2().state(), TierCellState::Done);
-        assert_eq!(java.t3().state(), TierCellState::Skipped);
-        assert_eq!(java.t3().status(), "skipped");
+        assert_eq!(java.t3().state(), TierCellState::InProgress);
+        assert_eq!(java.t3().status(), "processing");
         assert_eq!(java.t1().label(), "T1");
         assert_eq!(TierCellKind::T2.as_str(), "T2");
         assert_eq!(TierCellKind::T3.as_str(), "T3");
@@ -659,6 +765,7 @@ mod tests {
             }],
             cache_entries: 0,
             ingest: IngestState::Done.as_str().into(),
+            engines: vec![],
         });
         assert_eq!(map.ingest(), IngestState::Done);
         assert_eq!(map.tier_for_package("lib"), Some(WireTier::Syntax));
@@ -760,17 +867,11 @@ mod tests {
             LspSessionState::Ready,
             DiscoverFlight::idle().begin(DiscoverKind::Definition),
             IngestState::Done,
-            Some(WireTier::Syntax),
+            Some(WireTier::Types),
         );
-        assert_eq!(
-            waiting
-                .item(DiscoverKind::Definition)
-                .label("Find Definition"),
-            "waiting for server"
-        );
-        assert_eq!(
-            waiting.item(DiscoverKind::Definition).reason(),
-            Some(MenuDisableReason::WaitingForServer)
+        assert!(
+            waiting.item(DiscoverKind::Definition).can_submit(),
+            "in-flight discover must not disable the menu"
         );
 
         let t1 = menu(
@@ -988,6 +1089,7 @@ mod tests {
             IngestState::Done,
             Some(WireTier::Syntax),
             T3HostOffer::NeedsContainer,
+            None,
         );
         assert_eq!(python.t3().state(), TierCellState::Skipped);
         let java = TierStrip::paint_for_open(
@@ -996,6 +1098,7 @@ mod tests {
             IngestState::Done,
             Some(WireTier::Graph),
             T3HostOffer::NeedsContainer,
+            None,
         );
         assert_eq!(java.t3().state(), TierCellState::Skipped);
 
@@ -1020,6 +1123,31 @@ mod tests {
     }
 
     #[test]
+    fn readiness_line_value_object_summarizes_control_ingest_and_tiers() {
+        let mut map = PackageTierMap::new();
+        map.apply_tier_status(&TierStatusResponse {
+            status: Some(Status::ok()),
+            rows: vec![TierRow {
+                package_id: "lib".into(),
+                tier: "graph".into(),
+            }],
+        });
+        let line = ReadinessLine::paint(
+            LspSessionState::Ready,
+            true,
+            None,
+            &map,
+            IngestState::Done,
+            Some("ingest-lib"),
+            None,
+        );
+        assert!(line.as_str().contains("control: connected"));
+        assert!(line.as_str().contains("ingest: done"));
+        assert!(line.as_str().contains("lib@graph"));
+        assert!(line.as_str().contains("progress: ingest-lib"));
+    }
+
+    #[test]
     fn container_open_offers_t3_strip_and_discover_honest_per_language() {
         let c = catalog();
         let python = TierStrip::paint_for_open(
@@ -1028,6 +1156,7 @@ mod tests {
             IngestState::Running,
             Some(WireTier::Graph),
             T3HostOffer::Offered,
+            None,
         );
         assert_eq!(python.t3().state(), TierCellState::InProgress);
         assert_eq!(python.t3().status(), "processing");
@@ -1038,6 +1167,7 @@ mod tests {
             IngestState::Running,
             Some(WireTier::Graph),
             T3HostOffer::NeedsContainer,
+            None,
         );
         assert_eq!(python_native.t3().state(), TierCellState::Skipped);
         assert_eq!(python.t3().state(), TierCellState::InProgress);

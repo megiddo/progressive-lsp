@@ -26,6 +26,14 @@ impl SymbolIndex for IndexService {
     fn all_symbols(&self) -> Vec<IndexedSymbol> {
         self.all_indexed_symbols()
     }
+
+    fn file_text(&self, file: &FileId) -> Option<&str> {
+        self.source(std::path::Path::new(file.as_str()))
+    }
+
+    fn indexed_files(&self) -> Vec<FileId> {
+        self.indexed_file_ids()
+    }
 }
 
 #[cfg(test)]

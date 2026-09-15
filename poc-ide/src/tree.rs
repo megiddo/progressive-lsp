@@ -9,6 +9,55 @@ use std::path::{Path, PathBuf};
 use crate::error::IdeError;
 use crate::ports::{require_absolute, DialogPort, DirEntry, FsPort};
 
+/// Marker files [`WorkspaceSource`] adapters look for (Maven, Gradle, …).
+const WORKSPACE_MARKERS: &[&str] = &[
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "go.mod",
+    "Cargo.toml",
+    "package.json",
+    "composer.json",
+    "build.zig",
+    "pyproject.toml",
+    "compile_commands.json",
+    ".project",
+];
+
+fn has_workspace_marker(path: &Path, fs: &(impl FsPort + ?Sized)) -> bool {
+    WORKSPACE_MARKERS.iter().any(|name| {
+        let p = path.join(name);
+        !fs.is_dir(&p) && fs.read(&p).is_ok()
+    })
+}
+
+/// Walk up from a directory; prefer the nearest ancestor with a workspace marker.
+fn workspace_root_for_folder(
+    folder: &Path,
+    fs: &(impl FsPort + ?Sized),
+) -> Result<PathBuf, IdeError> {
+    let mut cur = fs.canonicalize(folder)?;
+    for _ in 0..32 {
+        if has_workspace_marker(&cur, fs) {
+            return Ok(cur);
+        }
+        let Some(up) = cur.parent() else {
+            break;
+        };
+        cur = fs.canonicalize(up)?;
+    }
+    Ok(fs.canonicalize(folder)?)
+}
+
+/// Same elevation starting at the file's parent directory.
+fn workspace_root_for_file(
+    parent: &Path,
+    fs: &(impl FsPort + ?Sized),
+) -> Result<PathBuf, IdeError> {
+    workspace_root_for_folder(parent, fs)
+}
+
 /// Canonical absolute workspace path. Equality is path equality.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WorkspaceRoot {
@@ -30,7 +79,8 @@ impl WorkspaceRoot {
         if !fs.is_dir(&canon) {
             return Err(IdeError::NotADirectory(canon));
         }
-        Self::from_canonical(canon)
+        let root = workspace_root_for_folder(&canon, fs)?;
+        Self::from_canonical(root)
     }
 
     pub fn from_file_path(
@@ -41,7 +91,7 @@ impl WorkspaceRoot {
         let parent = file
             .parent()
             .ok_or_else(|| IdeError::NoParent(file.clone()))?;
-        let root = Self::from_folder_path(parent, fs)?;
+        let root = Self::from_folder_path(&workspace_root_for_file(parent, fs)?, fs)?;
         Ok((root, file))
     }
 
@@ -840,6 +890,35 @@ mod tests {
         fs.add_dir("/").unwrap();
         let err = WorkspaceRoot::from_file_path(Path::new("/"), &fs).unwrap_err();
         assert!(err.is_no_parent() || err.is_not_a_directory());
+    }
+
+    #[test]
+    fn workspace_root_from_folder_path_elevates_to_maven_root() {
+        let mut fs = MemFs::new();
+        fs.add_file(
+            "/proj/pom.xml",
+            b"<project><artifactId>proj</artifactId></project>\n",
+        )
+        .unwrap();
+        fs.add_dir("/proj/src/main").unwrap();
+        let root = WorkspaceRoot::from_folder_path(Path::new("/proj/src"), &fs).unwrap();
+        assert_eq!(root.as_path(), Path::new("/proj"));
+    }
+
+    #[test]
+    fn workspace_root_from_file_path_elevates_to_maven_root() {
+        let mut fs = MemFs::new();
+        let pom = "/proj/pom.xml";
+        let java = "/proj/src/test/com/example/CacheTest.java";
+        fs.add_file(
+            pom,
+            b"<project><artifactId>proj</artifactId></project>\n",
+        )
+        .unwrap();
+        fs.add_file(java, b"class CacheTest {}\n").unwrap();
+        let (root, file) = WorkspaceRoot::from_file_path(Path::new(java), &fs).unwrap();
+        assert_eq!(root.as_path(), Path::new("/proj"));
+        assert_eq!(file, PathBuf::from(java));
     }
 
     #[test]

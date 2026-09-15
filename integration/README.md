@@ -35,6 +35,7 @@ integration/
   artifacts/            # CI drops the musl ELF here (not committed)
   corpora/              # pins.json + fetch-at-SHA (PD2); csharp-mini snippet
   expected/             # golden find / ghost siblings per corpus
+  fixtures/smoke-python/  # PROD-5 tier-1 minimal tree for manual container smoke
 ```
 
 **Darwin:** `harness/run-it1.sh auto` is host_smoke + a gap note when Docker or a musl ELF is missing. Do not treat that as IT-1.1. Linux CI bind-mounts a `check-static` musl ELF and runs the four distros. After LOG-4, that ELF is rusqlite-linked: Linux CI must `check-static` it (no `DT_NEEDED` / `libdl`). Do not run `check-static` on a Darwin Mach-O and call it green. IT-1.1 also asserts a `serve-*.sqlite` WAL under `$PREFIX/log/` after handshake (Linux CI / Docker only).
@@ -44,6 +45,16 @@ integration/
 **IT-3 Darwin:** `harness/run-it3.sh auto` runs P-java / P-py / P-ts against native Mach-O with `--control-socket` and Envelope dispatch. T3 types rows are `skip_pack_missing` on stubs. `--mux` is `pending_mux` — do not silently retest the socket. Linux CI with real musl packs is the T3 gate.
 
 **Client:** a tiny stdio LSP driver (initialize → didOpen → request → shutdown). Progressive tests add a Unix-socket protobuf client using `progressive-lsp-control`. Do not use Neovim as the only gate; a headless driver is reproducible.
+
+**POC IDE container discover (dogfood):** `harness/run-discover-container.sh` runs `docker … serve --mux` and sends the same LSP sequence as the editor **Find Definition** context menu (`textDocument/definition` on mux channel 0, 15s deadline). Verbose steps go to stderr; JSON report + serve WAL path under `integration/out/`. Override workspace:
+
+```bash
+PLSP_DISCOVER_ROOT="/Users/you/…/supplytech-pdf-client/src" \
+PLSP_DISCOVER_EXPECTED="$PWD/integration/expected/discover-container-java.json" \
+./integration/harness/run-discover-container.sh
+```
+
+(Customize `entry` / `find` in a golden JSON copied from `expected/discover-container-java.json`.)
 
 **Clock:** integration tests may wait on `workDoneProgress` / `TierReady` with a **deadline** (e.g. 60s), not `sleep(5)` loops. Poll the protocol, not the wall.
 

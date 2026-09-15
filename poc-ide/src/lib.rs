@@ -23,6 +23,7 @@ pub mod mux;
 pub mod open_mode;
 pub mod ports;
 pub mod proof;
+pub mod references;
 pub mod runtime;
 pub mod runtime_io;
 pub mod tabs;
@@ -40,7 +41,7 @@ pub use control::{
     spawn_control_io, spawn_mux_control_io, ControlAttach, ControlClient, ControlIoEvent,
     ControlIoHandle, ControlPush, ControlPushInbox, UnixControl, CONTROL_UNARY_METHODS,
 };
-pub use discover::{DiscoverCommand, DiscoverKind, PendingDiscover};
+pub use discover::{DiscoverApplyPlan, DiscoverCommand, DiscoverKind, PendingDiscover};
 pub use edit::EditCommand;
 pub use error::IdeError;
 pub use highlight::{HighlightCache, HighlightKey, HighlightSpan, Highlighter, PLAIN_TEXT_RGB};
@@ -71,6 +72,7 @@ pub use ports::{
     LspTransport, MemFs, StdFs, SystemClock, WatchPort,
 };
 pub use proof::ProofStatus;
+pub use references::ReferencesModal;
 pub use runtime::{
     run_launch, run_launch_reporting, DockerRunPlan, DockerRuntime, FakeRuntime, LaunchJournal,
     LaunchStep, RuntimeInfo, RuntimePort, RuntimeSession, StatusModal, StatusModalKind, StepState,
@@ -82,8 +84,8 @@ pub use runtime_io::{
 };
 pub use tabs::{TabId, TabStrip};
 pub use tier::{
-    DiscoverMenu, DiscoverMenuItem, MenuDisableReason, PackageTierMap, TierCell, TierCellKind,
-    TierCellState, TierStrip,
+    DiscoverMenu, DiscoverMenuItem, MenuDisableReason, PackageTierMap, ReadinessLine, TierCell,
+    TierCellKind, TierCellState, TierStrip,
 };
 pub use tree::{
     CompactChain, CompactChainListing, DialogAction, DialogOutcome, ExpandChainCommand, FileTree,

@@ -485,7 +485,11 @@ impl LspTransport for StdioLsp {
                 self.notifications.push(v);
                 continue;
             }
-            if v.get("id") != Some(&json!(id)) {
+            if let Some(got) = v.get("id") {
+                if !progressive_lsp_protocol::rpc::id_matches(id, got) {
+                    continue;
+                }
+            } else {
                 continue;
             }
             if let Some(err) = v.get("error") {

@@ -13,23 +13,36 @@ use progressive_lsp_engine::{
     binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK, GOPLS_PACK, TSGO_PACK,
     ZLS_PACK,
 };
+use progressive_lsp_install::{hex_encode, sha256, Manifest, ManifestArtifact};
 
+use crate::check_static;
 use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
+use crate::pack::host_native_docker_platform;
 use crate::workspace_root;
 
-/// Locked in poc-ide `RUNTIME_IMAGE`. Do not invent a second name.
+/// Locked in poc-ide `RUNTIME_IMAGE`. Tagged for the **host Docker platform** when building both triples.
 pub const IMAGE_TAG: &str = "progressive-lsp-runtime:local";
+
+pub const IMAGE_TAG_AARCH64: &str = "progressive-lsp-runtime:local-aarch64";
+pub const IMAGE_TAG_X86_64: &str = "progressive-lsp-runtime:local-x86_64";
+
+pub fn image_tag_for_triple(triple: &str) -> Result<&'static str, String> {
+    match triple {
+        X86_64_MUSL => Ok(IMAGE_TAG_X86_64),
+        AARCH64_MUSL => Ok(IMAGE_TAG_AARCH64),
+        _ => Err(format!(
+            "unknown triple {triple}; expected {X86_64_MUSL} or {AARCH64_MUSL}"
+        )),
+    }
+}
 
 /// Prefix inside the image — not Mac `~/.progressivelsp`.
 pub const IMAGE_PREFIX: &str = "/opt/plsp";
 
 pub const DOCKERFILE_X86_REL: &str = "docker/runtime.Dockerfile";
 pub const DOCKERFILE_AARCH64_REL: &str = "docker/runtime-aarch64.Dockerfile";
-
-/// x86_64 scratch dockerfile (legacy name for freshness stamps).
-pub const DOCKERFILE_REL: &str = DOCKERFILE_X86_REL;
 
 pub fn runtime_dockerfile_rel(triple: &str) -> Result<&'static str, String> {
     match triple {
@@ -192,18 +205,24 @@ impl RuntimeImagePlan {
         &self.staging
     }
 
-    /// `docker` argv (without the program name). Tests assert `-t` and platform.
-    pub fn docker_build_args(&self) -> Vec<String> {
-        vec![
+    /// `docker build` argv (without the program name). Always tags per-triple; also `:local` on host platform.
+    pub fn docker_build_args(&self) -> Result<Vec<String>, String> {
+        let triple_tag = image_tag_for_triple(&self.triple)?;
+        let mut args = vec![
             "build".into(),
             "--platform".into(),
             self.docker_platform.clone(),
             "-f".into(),
             self.dockerfile.display().to_string(),
             "-t".into(),
-            self.image_tag.clone(),
-            ".".into(),
-        ]
+            triple_tag.into(),
+        ];
+        if host_native_docker_platform()? == self.docker_platform {
+            args.push("-t".into());
+            args.push(self.image_tag.clone());
+        }
+        args.push(".".into());
+        Ok(args)
     }
 
     /// Copy prebuilt ELFs into a PrefixLayout-shaped staging tree.
@@ -263,6 +282,7 @@ impl RuntimeImagePlan {
                     .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
             }
             copy_file(&pack.src, &dest)?;
+            write_pack_manifest(&dest, &pack.binary)?;
         }
         let tmp = self.staging.join("tmp");
         fs::create_dir_all(&tmp).map_err(|e| format!("mkdir {}: {e}", tmp.display()))?;
@@ -278,6 +298,34 @@ fn touch_keep(dir: &Path) -> Result<(), String> {
 fn copy_file(src: &Path, dest: &Path) -> Result<(), String> {
     fs::copy(src, dest)
         .map_err(|e| format!("copy {} -> {}: {e}", src.display(), dest.display()))?;
+    check_static::ensure_executable(dest)?;
+    Ok(())
+}
+
+/// Runtime image stages ELFs only; serve discovers packs via `manifest.json` + sha256.
+fn write_pack_manifest(dest_elf: &Path, binary: &str) -> Result<(), String> {
+    let dir = dest_elf.parent().ok_or_else(|| {
+        format!(
+            "pack ELF has no parent dir: {}",
+            dest_elf.display()
+        )
+    })?;
+    let bytes = fs::read(dest_elf)
+        .map_err(|e| format!("read {} for manifest: {e}", dest_elf.display()))?;
+    let manifest = Manifest {
+        version: "1".into(),
+        artifacts: vec![ManifestArtifact {
+            name: binary.into(),
+            rel_path: binary.into(),
+            sha256: hex_encode(&sha256(&bytes)),
+            executable: true,
+        }],
+    };
+    fs::write(
+        dir.join("manifest.json"),
+        manifest.to_json().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write {}: {e}", dir.join("manifest.json").display()))?;
     Ok(())
 }
 
@@ -293,10 +341,16 @@ pub fn run_at(root: &Path, args: &[String], docker: &dyn DockerPort) -> Result<(
         for note in &omitted {
             eprintln!("xtask runtime-image: {note}");
         }
-        docker.tag_image(plan.context(), &plan.docker_build_args())?;
+        let build_args = plan.docker_build_args()?;
+        docker.tag_image(plan.context(), &build_args)?;
         eprintln!(
-            "xtask runtime-image: tagged {} ({})",
-            plan.image_tag(),
+            "xtask runtime-image: tagged {} + {} ({})",
+            image_tag_for_triple(triple)?,
+            if host_native_docker_platform()? == plan.docker_platform() {
+                plan.image_tag()
+            } else {
+                "(not host :local)"
+            },
             plan.docker_platform()
         );
     }
@@ -508,12 +562,15 @@ mod tests {
     fn runtime_image_plan_docker_args_tag_locked_name() {
         let root = fixture_root();
         let plan = RuntimeImagePlan::for_triple(root.path(), AARCH64_MUSL).unwrap();
-        let args = plan.docker_build_args();
+        let args = plan.docker_build_args().unwrap();
         assert_eq!(args[0], "build");
         assert!(args.contains(&"--platform".to_string()));
         assert!(args.contains(&"linux/arm64".to_string()));
         assert!(args.contains(&"-t".to_string()));
-        assert!(args.contains(&IMAGE_TAG.to_string()));
+        assert!(args.contains(&IMAGE_TAG_AARCH64.to_string()));
+        if host_native_docker_platform().unwrap() == "linux/arm64" {
+            assert!(args.contains(&IMAGE_TAG.to_string()));
+        }
         assert!(!args.iter().any(|a| a.contains("--output")));
         assert!(!args.iter().any(|a| a.contains("RUST_TARGET")));
         assert_eq!(args.last().map(String::as_str), Some("."));
@@ -529,7 +586,7 @@ mod tests {
         assert!(omitted.is_empty(), "{omitted:?}");
         let docker = RecordingDockerPort::new();
         docker
-            .tag_image(plan.context(), &plan.docker_build_args())
+            .tag_image(plan.context(), &plan.docker_build_args().unwrap())
             .unwrap();
         let recorded = docker.recorded_dests();
         assert_eq!(recorded.len(), 1);
@@ -552,6 +609,7 @@ mod tests {
         assert!(prefix.engines_dir().join("phpantom/phpantom").is_file());
         assert!(prefix.engines_dir().join("biome/biome").is_file());
         assert!(prefix.engines_dir().join("java/javacs").is_file());
+        assert!(prefix.engines_dir().join("java/manifest.json").is_file());
         assert!(prefix.engines_dir().join("superhtml/superhtml").is_file());
         for dir in [
             prefix.cache_dir(),

@@ -8,11 +8,12 @@ use std::io::{Read, Write};
 use std::process::{Child, Command};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use progressive_lsp_control::{decode_frame, encode_frame, DecodeOutcome, Envelope};
 use progressive_lsp_protocol::{
-    encode_mux_frame, read_mux_frame, write_mux_frame, MuxError, CHANNEL_CONTROL, CHANNEL_LSP,
-    MAX_MUX_PAYLOAD,
+    encode_mux_frame, read_mux_frame, rpc, write_mux_frame, MuxError, CHANNEL_CONTROL,
+    CHANNEL_LSP, MAX_MUX_PAYLOAD,
 };
 use serde_json::{json, Value};
 
@@ -22,6 +23,22 @@ use crate::lsp::StdioLsp;
 use crate::ports::{ControlTransport, LspTransport};
 
 const METHOD_NOT_FOUND: i64 = -32601;
+const DISCOVER_REQUEST_DEADLINE: Duration = Duration::from_secs(15);
+const DEFAULT_REQUEST_DEADLINE: Duration = Duration::from_secs(120);
+
+fn request_deadline(method: &str) -> Instant {
+    let cap = if matches!(
+        method,
+        "textDocument/definition"
+            | "textDocument/implementation"
+            | "textDocument/references"
+    ) {
+        DISCOVER_REQUEST_DEADLINE
+    } else {
+        DEFAULT_REQUEST_DEADLINE
+    };
+    Instant::now() + cap
+}
 
 fn map_mux(err: MuxError) -> IdeError {
     IdeError::lsp(err.to_string())
@@ -139,6 +156,10 @@ impl MuxInner {
     }
 
     fn read_channel(&self, want: u8) -> Result<Vec<u8>, IdeError> {
+        self.read_channel_until(want, Instant::now() + DEFAULT_REQUEST_DEADLINE)
+    }
+
+    fn read_channel_until(&self, want: u8, deadline: Instant) -> Result<Vec<u8>, IdeError> {
         let mut st = self
             .state
             .lock()
@@ -153,10 +174,15 @@ impl MuxInner {
             if st.reader_done {
                 return Err(IdeError::lsp("eof waiting for mux frame"));
             }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(IdeError::lsp("timed out waiting for language server response"));
+            }
             st = self
                 .parked
-                .wait(st)
-                .map_err(|_| IdeError::lsp("mux lock poisoned"))?;
+                .wait_timeout(st, remaining)
+                .map_err(|_| IdeError::lsp("mux lock poisoned"))?
+                .0;
         }
     }
 
@@ -342,15 +368,20 @@ impl LspTransport for MuxLsp {
             "params": params,
         });
         self.write_json(&msg)?;
+        let deadline = request_deadline(method);
         loop {
-            let body = self.inner.read_channel(CHANNEL_LSP)?;
+            let body = self.inner.read_channel_until(CHANNEL_LSP, deadline)?;
             let v: Value =
                 serde_json::from_slice(&body).map_err(|e| IdeError::lsp(e.to_string()))?;
             if v.get("id").is_none() {
                 self.notifications.push(v);
                 continue;
             }
-            if v.get("id") != Some(&json!(id)) {
+            if let Some(got) = v.get("id") {
+                if !rpc::id_matches(id, got) {
+                    continue;
+                }
+            } else {
                 continue;
             }
             if let Some(err) = v.get("error") {

@@ -184,6 +184,11 @@ impl SymbolKind {
     pub fn is_type(self) -> bool {
         matches!(self, Self::Class | Self::Interface | Self::Enum)
     }
+
+    /// Tree-sitter T1 indexes identifier/type_identifier uses as `Variable`; not a declaration site.
+    pub fn is_declaration(self) -> bool {
+        !matches!(self, Self::Variable)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +339,8 @@ mod tests {
         assert!(SymbolKind::Enum.is_type());
         assert!(!SymbolKind::Method.is_type());
         assert!(!SymbolKind::Variable.is_type());
+        assert!(!SymbolKind::Variable.is_declaration());
+        assert!(SymbolKind::Interface.is_declaration());
     }
 
     #[test]

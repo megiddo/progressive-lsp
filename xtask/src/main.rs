@@ -11,6 +11,7 @@ mod pack;
 mod perf;
 mod poc;
 mod runtime_image;
+mod smoke;
 mod tarball;
 
 use std::env;

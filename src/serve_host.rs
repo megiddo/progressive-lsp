@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use progressive_lsp_control::{
     files_since_request, ControlPlane, FilesSinceRequest, FilesSinceResponse, GetConfigRequest,
-    GetConfigResponse, IndexPackage, IndexStatusRequest, IndexStatusResponse, InstallPacksRequest,
+    EngineStatusRow, GetConfigResponse, IndexPackage, IndexStatusRequest, IndexStatusResponse,
+    InstallPacksRequest,
     InstallPacksResponse, ReloadConfigRequest, ReloadConfigResponse, ReloadScriptsRequest,
     ReloadScriptsResponse, SetConfigRequest, SetConfigResponse, Status, TierReady, TierRow,
     TierStatusRequest, TierStatusResponse, WatchBatch, WatchEvent, WatchSubscribeRequest,
@@ -14,10 +15,11 @@ use progressive_lsp_control::{
 };
 use progressive_lsp_core::{
     apply_worktree_excludes, path_from_file_uri, Config, ConfigError, ConfigLoad, ConfigOverlay,
-    FakeClock, InitializeFailed, LogComponent, LogPort, LogScope, NullLog, PackageId, PrefixLayout,
+    FakeClock, InitializeFailed, LanguageId, LogComponent, LogPort, LogScope, NullLog, PackageId,
+    PrefixLayout, Tier,
     OVERLAY_DIR_NAME,
 };
-use progressive_lsp_engine::{binary_name_for_pack, stub_pack_bytes, EngineSupervisor};
+use progressive_lsp_engine::{binary_name_for_pack, discover_pack, stub_pack_bytes, EngineSupervisor};
 use progressive_lsp_install::{hex_encode, sha256, Installer, LocalFs, Manifest, ManifestArtifact};
 use progressive_lsp_log::ConfigWarnAdapter;
 use progressive_lsp_protocol::LspIntelligence;
@@ -25,7 +27,6 @@ use progressive_lsp_resolve::{ResolveQuery, ResolveResult};
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{FilesSinceJournal, FilesSinceQuery};
 use serde_json::Value;
-use std::sync::Arc;
 
 use crate::session::collect_sources;
 use crate::WorkspaceSession;
@@ -157,6 +158,7 @@ impl ServeHost {
 
     /// Diff on-disk sources vs last snapshot. Queues WatchBatch when subscribed.
     pub fn poll_disk_watch(&self) -> usize {
+        self.sync_types_tier_from_engines();
         let Some(root) = self.workspace.lock().expect("ws").clone() else {
             return self.disk_watch.poll(&self.session);
         };
@@ -284,17 +286,53 @@ impl ServeHost {
             tier: tier.into(),
         });
     }
+
+    /// Javacs (and other T3 engines) often become ready after initialize returns.
+    /// Promote graph → types and queue `TierReady` pushes for the control plane.
+    fn sync_types_tier_from_engines(&self) {
+        let Some(sup) = &self.supervisor else {
+            return;
+        };
+        for id in self.session.package_ids() {
+            if self.session.package_tier(&id) != Some(Tier::Graph) {
+                continue;
+            }
+            let pkg = PackageId::new(id.as_str());
+            for (_, language) in sup.registered_packs() {
+                if sup.is_ready(&language, &pkg) {
+                    self.session.mark_package_tier(&id, Tier::Types);
+                    self.note_tier_ready(&id, "types");
+                    break;
+                }
+            }
+        }
+    }
 }
 
 impl LspIntelligence for ServeHost {
     fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+        let operation = match q.kind {
+            progressive_lsp_resolve::QueryKind::Definition => "textDocument/definition",
+            progressive_lsp_resolve::QueryKind::Implementation => "textDocument/implementation",
+            progressive_lsp_resolve::QueryKind::References => "textDocument/references",
+            progressive_lsp_resolve::QueryKind::TypeDefinition => "textDocument/typeDefinition",
+            progressive_lsp_resolve::QueryKind::Hover => "textDocument/hover",
+            progressive_lsp_resolve::QueryKind::DocumentSymbol => "textDocument/documentSymbol",
+            progressive_lsp_resolve::QueryKind::WorkspaceSymbol => "workspace/symbol",
+        };
         let _g = LogScope::enter(
             LogScope::new()
                 .path(q.file.as_str())
                 .line(q.position.line)
-                .operation("textDocument/definition"),
+                .operation(operation),
         );
-        self.poll_disk_watch();
+        let discover = matches!(
+            q.kind,
+            progressive_lsp_resolve::QueryKind::Definition
+                | progressive_lsp_resolve::QueryKind::Implementation
+                | progressive_lsp_resolve::QueryKind::References
+                | progressive_lsp_resolve::QueryKind::TypeDefinition
+        );
         self.session.resolve(q)
     }
 
@@ -354,6 +392,7 @@ impl LspIntelligence for ServeHost {
             for (id, tier) in self.session.drain_index_tier_ready() {
                 self.note_tier_ready(id, tier);
             }
+            self.sync_types_tier_from_engines();
             self.disk_watch.snapshot_root(&self.session);
             let _ = self.poll_disk_watch();
         }
@@ -489,21 +528,31 @@ impl ControlPlane for ServeHost {
     }
 
     fn index_status(&self, _req: &IndexStatusRequest) -> IndexStatusResponse {
+        self.sync_types_tier_from_engines();
         let gen = self.session.index_generation();
-        let packages = self
-            .session
-            .package_ids()
-            .into_iter()
+        let package_ids = self.session.package_ids();
+        let packages = package_ids
+            .iter()
             .map(|package_id| IndexPackage {
-                package_id,
+                package_id: package_id.clone(),
                 generation: gen,
             })
             .collect();
+        let package = package_ids
+            .first()
+            .map(|id| PackageId::new(id))
+            .unwrap_or_else(|| PackageId::new("."));
+        let engines = self
+            .supervisor
+            .as_ref()
+            .map(|sup| index_engine_rows(sup, &self.layout, &package))
+            .unwrap_or_default();
         IndexStatusResponse {
             status: Some(Status::ok()),
             packages,
             cache_entries: self.session.cache_entries(),
             ingest: self.session.ingest_state().as_str().into(),
+            engines,
         }
     }
 
@@ -668,6 +717,34 @@ fn parse_sha256_hex(hex: &str) -> Result<[u8; 32], String> {
 }
 
 /// Inbox: `$PREFIX/inbox/<pack>/payload` + `expected.sha256`. Else stub bytes (CLI install).
+fn index_engine_rows(
+    sup: &EngineSupervisor,
+    layout: &PrefixLayout,
+    package: &PackageId,
+) -> Vec<EngineStatusRow> {
+    sup.registered_packs()
+        .into_iter()
+        .map(|(pack, language)| {
+            let (state, detail) = if sup.is_ready(&language, package) {
+                ("ready".into(), String::new())
+            } else if let Some(err) = sup.last_error(&pack) {
+                ("error".into(), err.to_string())
+            } else {
+                match discover_pack(layout, &pack) {
+                    Ok(_) => ("pending".into(), "discovered; waiting for engine".into()),
+                    Err(e) => ("missing".into(), e.to_string()),
+                }
+            };
+            EngineStatusRow {
+                language: language.as_str().to_string(),
+                pack,
+                state,
+                detail,
+            }
+        })
+        .collect()
+}
+
 fn install_pack_from_inbox_or_stub(
     layout: &PrefixLayout,
     raw: &str,
