@@ -87,14 +87,16 @@ Fine-grained work packages for **TCACHE** orchestration. Depends-on is strict: d
 
 ## Phase TC-4 — Refactor pass (from audit)
 
+**Status: SIGNED OFF** on `tcache-4` (2026-09-14).
+
 **Exit:** P0 audit items resolved or explicitly deferred with ADR note.
 
-| ID | Work package | Depends-on | Exit criteria |
-|----|--------------|------------|---------------|
-| TC-4.1 | Execute P0 refactors from pattern-audit-report | TC-1.3, TC-3 | No new ad-hoc layers in touched files |
-| TC-4.2 | Thin `ServeHost` / `WorkspaceSession` boundaries per audit | TC-4.1 | discover path documented in design-patterns |
-| TC-4.3 | Consolidate duplicated identifier/resolve helpers (if audit lists) | TC-4.1 | Single module or port |
-| TC-4.4 | Deferred P1/P2 logged in audit report | TC-4.1 | Status column updated |
+| ID | Work package | Depends-on | Exit criteria | Done |
+|----|--------------|------------|---------------|------|
+| TC-4.1 | Execute P0 refactors from pattern-audit-report | TC-1.3, TC-3 | No new ad-hoc layers in touched files | [x] |
+| TC-4.2 | Thin `ServeHost` / `WorkspaceSession` boundaries per audit | TC-4.1 | discover path documented in design-patterns | [x] |
+| TC-4.3 | Consolidate duplicated identifier/resolve helpers (if audit lists) | TC-4.1 | Single module or port | [x] `language_id_from_path` in core |
+| TC-4.4 | Deferred P1/P2 logged in audit report | TC-4.1 | Status column updated | [x] |
 
 **Phase exit:** TC-4.1 complete or waived by human in ADR.
 

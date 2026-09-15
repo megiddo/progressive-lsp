@@ -573,22 +573,9 @@ impl LspIntelligence for WorkspaceSession {
                 result.locations.len()
             ));
             let path = Path::new(q.file.as_str());
-            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-            let language_id = match ext {
-                "java" => "java",
-                "php" => "php",
-                "html" | "htm" => "html",
-                "css" => "css",
-                "js" | "mjs" | "cjs" | "ts" => "javascript",
-                "go" => "go",
-                "zig" => "zig",
-                "py" => "python",
-                "rs" => "rust",
-                "c" | "h" => "c",
-                "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
-                "cs" => "csharp",
-                _ => "",
-            };
+            let language_id = progressive_lsp_core::language_id_from_path(path)
+                .map(|id| id.as_str().to_string())
+                .unwrap_or_default();
             let package_id = self
                 .model
                 .lock()
@@ -1508,7 +1495,7 @@ mod tests {
             ("page.htm", "html"),
             ("site.css", "css"),
             ("a.js", "javascript"),
-            ("a.ts", "javascript"),
+            ("a.ts", "typescript"),
             ("main.go", "go"),
             ("main.zig", "zig"),
             ("app.py", "python"),
@@ -1585,6 +1572,21 @@ mod tests {
         assert_eq!(extras.get("location_count").map(String::as_str), Some("1"));
         assert!(extras.contains_key("resolve_ms"));
         assert_eq!(extras.get("cache_state").map(String::as_str), Some("miss"));
+    }
+
+    #[test]
+    fn mux_discover_chain_step_within_20ms() {
+        let session = WorkspaceSession::java_default();
+        let q = ResolveQuery::new(
+            FileId::new("Fast.java"),
+            Position::new(0, 0),
+            QueryKind::Definition,
+        );
+        let start = Instant::now();
+        let _ = session.resolve(&q);
+        assert!(
+            start.elapsed().as_millis() <= progressive_lsp_types_cache::timing::CHAIN_STEP_BUDGET_MS as u128
+        );
     }
 
     #[test]

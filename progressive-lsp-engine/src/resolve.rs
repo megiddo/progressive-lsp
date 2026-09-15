@@ -172,27 +172,7 @@ impl EngineResolver {
 }
 
 fn language_from_file(path: &str) -> Option<LanguageId> {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    let id = match ext {
-        "java" => "java",
-        "php" => "php",
-        "html" | "htm" => "html",
-        "css" => "css",
-        "js" | "mjs" | "cjs" => "javascript",
-        "ts" => "typescript",
-        "go" => "go",
-        "zig" => "zig",
-        "py" => "python",
-        "rs" => "rust",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
-        "cs" => "csharp",
-        _ => return None,
-    };
-    Some(LanguageId::new(id))
+    progressive_lsp_core::language_id_from_path(path)
 }
 
 impl Resolver for EngineResolver {

@@ -42,6 +42,32 @@ impl fmt::Display for LanguageId {
     }
 }
 
+/// Map a file path extension to LSP `languageId` (canonical for cache keys + WAL).
+pub fn language_id_from_path(path: impl AsRef<Path>) -> Option<LanguageId> {
+    let ext = path
+        .as_ref()
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let id = match ext {
+        "java" => "java",
+        "php" => "php",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" => "typescript",
+        "go" => "go",
+        "zig" => "zig",
+        "py" => "python",
+        "rs" => "rust",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
+        "cs" => "csharp",
+        _ => return None,
+    };
+    Some(LanguageId::new(id))
+}
+
 /// Interned package id. Equality is id equality.
 #[derive(Clone, Debug, Eq)]
 pub struct PackageId(Arc<str>);
@@ -249,6 +275,18 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn language_id_from_path_maps_typescript() {
+        assert_eq!(
+            language_id_from_path("src/App.ts").unwrap().as_str(),
+            "typescript"
+        );
+        assert_eq!(
+            language_id_from_path("x.js").unwrap().as_str(),
+            "javascript"
+        );
+    }
 
     #[test]
     fn language_id_equality_is_value() {
