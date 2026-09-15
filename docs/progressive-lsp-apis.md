@@ -1,7 +1,7 @@
 # progressive-lsp — public APIs (current)
 
 Catalog of **what clients can call today** when talking to `progressive-lsp serve`.  
-**Planned API additions (ABS program):** [architecture/abstraction-targets-plan.md](architecture/abstraction-targets-plan.md) (`CacheReady`, tier capabilities). Internal Rust traits and crates are out of scope; see [detailed-design.md](detailed-design.md).
+**Planned API additions:** ABS — [architecture/abstraction-targets-plan.md](architecture/abstraction-targets-plan.md) (`CacheReady`, tier capabilities). **SEAMS / IT-TAM** — [integration/tier-api-matrix/integ-seams-plan.md](../integration/tier-api-matrix/integ-seams-plan.md) (`maxChainIter`, `maxTier`, optional `progressiveMeta`, `FetchTrace`); [ADR 004](adr/004-progressive-result-meta-and-trace.md). Internal Rust traits and crates are out of scope; see [detailed-design.md](detailed-design.md).
 
 **Normative detail:** [lsp-contract.md](lsp-contract.md), [control-protocol.md](control-protocol.md), [user/progressive-v1-api.md](user/progressive-v1-api.md), [`proto/progressive/v1/control.proto`](../proto/progressive/v1/control.proto).
 
@@ -78,6 +78,8 @@ All map to internal `ResolveQuery` → **T3′ → T2 → T1** chain (see [types
 **Response shape:** Standard LSP location arrays / hover / symbols / token data.
 
 **Progressive extension (locations):** Optional `Location.data.tier` = `"syntax"` \| `"graph"` \| `"types"` ([lsp-contract.md](lsp-contract.md)).
+
+**Planned (SEAMS, opt-in):** When `initializationOptions.progressiveLsp.emitResultMeta` is true, intelligence results wrap as `{ "value": <stock LSP>, "progressiveMeta": { traceId, tier, backendLanguage, backendVersion, timing } }`. Request overrides: `progressiveLsp.maxChainIter`, `progressiveLsp.maxTier`. Control: optional `ProgressiveMeta` on unary RPCs; **`FetchTrace(trace_id)`** returns log rows for that operation ([integ-seams-plan.md](../integration/tier-api-matrix/integ-seams-plan.md)).
 
 **Not implemented (v1):** `workspace/filesSince`, `$/progressive/filesSince`, `textDocument/codeAction` (rejected if sent).
 

@@ -11,6 +11,7 @@ These are **not** the crate unit/mutation suite (`docs/testing.md` in the produc
 | IT-1 | [01-deploy-config.md](01-deploy-config.md) | Drop a binary on Arch / RHEL-family / Debian / Ubuntu; prefix + `config.toml` just work; no host Node/JVM/CPython |
 | IT-2 | [02-lsp-backends.md](02-lsp-backends.md) | Each language backend answers vanilla LSP on a **real** codebase |
 | IT-3 | [03-extended-protocol.md](03-extended-protocol.md) | A **few** backends plus a progressive client: FilesSince, WatchBatch, config, tiers |
+| IT-TAM | [tier-api-matrix/README.md](tier-api-matrix/README.md) | **Planned:** YAML-driven **API × tier** matrix in Docker (POC: Java); pinned git corpora |
 
 ## When they run
 
