@@ -61,7 +61,7 @@ Names are proto service methods. Unary unless marked push.
 | `WatchSubscribe` | req/resp | Start coalesced watch pushes to this client |
 | `WatchBatch` | **push** | create/modify/delete + `overflow` / `need_rescan` |
 | `FilesSince` | req/resp | Catch-up since generation N or unix ms; `truncated` flag |
-| `IndexStatus` | req/resp | Packages, generations, cache stats, additive `ingest` (`not_started` \| `running` \| `done`), additive `engines[]` (T3 pack `ready` \| `error` \| `missing` \| `pending`) |
+| `IndexStatus` | req/resp | Packages, generations, cache stats, additive `ingest` (`not_started` \| `running` \| `done`), additive `engines[]` (T3 pack `ready` \| `error` \| `missing` \| `pending`), additive `tier_capabilities[]` (tier id, latency/quality class, query kinds, per-tier `readiness`) |
 | `TierStatus` | req/resp | Per-package current `Tier` |
 | `TierReady` | **push** | Package upgraded tier |
 | `CacheReady` | **push** | T3′ query became ready after `inflight` (`file`, `query_kind`, `location_count`) |

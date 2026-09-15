@@ -77,10 +77,10 @@ Fine-grained work packages for **ABS-0 … ABS-4**. Depends-on is strict.
 
 | ID | Work package | Depends-on | Exit criteria | Done |
 |----|--------------|------------|---------------|------|
-| ABS-3.1 | `TierDescriptor` value object (id, latency class, quality class, query kinds) | ABS-1 | Unit: sort order | [ ] |
-| ABS-3.2 | Static registry for syntax / graph / types tiers | ABS-3.1 | Matches T1/T2/T3′ today | [ ] |
-| ABS-3.3 | Extend `IndexStatus` or add `TierCapabilities` RPC (additive proto) | ABS-3.2 | progressive-lsp-apis.md updated | [ ] |
-| ABS-3.4 | Per-tier FSM exposed in control snapshot | ABS-1, ABS-3.2 | Harness reads capabilities | [ ] |
+| ABS-3.1 | `TierDescriptor` value object (id, latency class, quality class, query kinds) | ABS-1 | Unit: sort order | [x] |
+| ABS-3.2 | Static registry for syntax / graph / types tiers | ABS-3.1 | Matches T1/T2/T3′ today | [x] |
+| ABS-3.3 | Extend `IndexStatus` or add `TierCapabilities` RPC (additive proto) | ABS-3.2 | progressive-lsp-apis.md updated | [x] |
+| ABS-3.4 | Per-tier FSM exposed in control snapshot | ABS-1, ABS-3.2 | Harness reads capabilities | [x] |
 
 **Phase exit:** ABS-3.3 documented in control-protocol + APIs catalog.
 

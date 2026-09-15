@@ -156,6 +156,21 @@ pub struct EngineStatusRow {
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
+pub struct TierCapabilityRow {
+    #[prost(string, tag = "1")]
+    pub tier_id: String,
+    #[prost(string, tag = "2")]
+    pub latency_class: String,
+    #[prost(string, tag = "3")]
+    pub quality_class: String,
+    #[prost(string, repeated, tag = "4")]
+    pub query_kinds: Vec<String>,
+    /// `ready` | `pending` | `not_applicable`
+    #[prost(string, tag = "5")]
+    pub readiness: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
 pub struct IndexStatusResponse {
     #[prost(message, optional, tag = "1")]
     pub status: Option<Status>,
@@ -168,6 +183,8 @@ pub struct IndexStatusResponse {
     pub ingest: String,
     #[prost(message, repeated, tag = "5")]
     pub engines: Vec<EngineStatusRow>,
+    #[prost(message, repeated, tag = "6")]
+    pub tier_capabilities: Vec<TierCapabilityRow>,
 }
 
 impl IndexStatusResponse {
@@ -400,6 +417,7 @@ mod tests {
             cache_entries: 0,
             ingest: IngestState::Running.as_str().into(),
             engines: vec![],
+            tier_capabilities: vec![],
         };
         assert_eq!(resp.ingest_state(), IngestState::Running);
         assert_eq!(

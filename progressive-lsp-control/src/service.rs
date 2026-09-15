@@ -233,6 +233,7 @@ impl ControlServer {
             cache_entries: 0,
             ingest: IngestState::NotStarted.as_str().into(),
             engines: Vec::new(),
+            tier_capabilities: Vec::new(),
         }
     }
 
@@ -490,6 +491,7 @@ mod tests {
                 cache_entries: 4,
                 ingest: IngestState::Done.as_str().into(),
                 engines: Vec::new(),
+                tier_capabilities: Vec::new(),
             }
         }
         fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {

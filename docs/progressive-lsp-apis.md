@@ -109,7 +109,7 @@ Standard LSP `$/progress` / `window/workDoneProgress` during workspace ingest (n
 | `InstallPacks` | Hash-gated pack install under prefix |
 | `WatchSubscribe` | Subscribe to watch pushes on this connection |
 | `FilesSince` | Catch-up paths since generation or unix ms |
-| `IndexStatus` | Packages, generations, **ingest** state, **engines[]**, **cache_entries** |
+| `IndexStatus` | Packages, generations, **ingest** state, **engines[]**, **cache_entries**, additive **tier_capabilities[]** (ABS-3) |
 | `TierStatus` | Per-package current tier (`syntax` / `graph` / `types`) |
 | `ReloadScripts` | Reload Rhai script hooks |
 

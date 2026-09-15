@@ -90,6 +90,13 @@ mod tests {
                 state: "ready".into(),
                 detail: String::new(),
             }],
+            tier_capabilities: vec![TierCapabilityRow {
+                tier_id: "syntax".into(),
+                latency_class: "low".into(),
+                quality_class: "syntax".into(),
+                query_kinds: vec!["definition".into()],
+                readiness: "ready".into(),
+            }],
         });
         assert_round_trip(&TierStatusRequest {});
         assert_round_trip(&TierStatusResponse {

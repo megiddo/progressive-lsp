@@ -1471,7 +1471,7 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 
 ## SERVE-ABS — N-tier readiness + file event hub
 
-**Status:** **ABS-2 SIGNED OFF** on `serve-abs-2`. Next: **`serve-abs-3`** (tier registry).
+**Status:** **ABS-3 SIGNED OFF** on `serve-abs-3`. Next: **`serve-abs-4`** (TierPort).
 
 Plan: [serve-abs/README.md](serve-abs/README.md) · [requirements](serve-abs/requirements.md) · [design](serve-abs/design.md) · [implementation-checklist](serve-abs/implementation-checklist.md). APIs: [progressive-lsp-apis.md](progressive-lsp-apis.md).
 

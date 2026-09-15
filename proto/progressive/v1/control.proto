@@ -86,6 +86,15 @@ message EngineStatusRow {
   string detail = 4;
 }
 
+message TierCapabilityRow {
+  string tier_id = 1;
+  string latency_class = 2;
+  string quality_class = 3;
+  repeated string query_kinds = 4;
+  // ready | pending | not_applicable
+  string readiness = 5;
+}
+
 message IndexStatusResponse {
   Status status = 1;
   repeated IndexPackage packages = 2;
@@ -95,6 +104,8 @@ message IndexStatusResponse {
   string ingest = 4;
   // Additive. T3 engine discovery/readiness per registered pack.
   repeated EngineStatusRow engines = 5;
+  // Additive (ABS-3). Static tier descriptors + per-tier readiness snapshot.
+  repeated TierCapabilityRow tier_capabilities = 6;
 }
 
 message TierStatusRequest {}

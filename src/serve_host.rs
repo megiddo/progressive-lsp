@@ -615,14 +615,21 @@ impl ControlPlane for ServeHost {
         let engines = self
             .supervisor
             .as_ref()
-            .map(|sup| index_engine_rows(sup, &self.layout, &package))
+            .map(|sup| crate::tier_registry::index_engine_rows(sup, &self.layout, &package))
             .unwrap_or_default();
+        let tier_capabilities = crate::tier_registry::tier_capability_rows(
+            &self.session,
+            self.supervisor.as_deref(),
+            &self.layout,
+            package_ids.first().map(String::as_str).unwrap_or("."),
+        );
         IndexStatusResponse {
             status: Some(Status::ok()),
             packages,
             cache_entries: self.session.cache_entries(),
             ingest: self.session.ingest_state().as_str().into(),
             engines,
+            tier_capabilities,
         }
     }
 
@@ -791,34 +798,6 @@ fn parse_sha256_hex(hex: &str) -> Result<[u8; 32], String> {
 }
 
 /// Inbox: `$PREFIX/inbox/<pack>/payload` + `expected.sha256`. Else stub bytes (CLI install).
-fn index_engine_rows(
-    sup: &EngineSupervisor,
-    layout: &PrefixLayout,
-    package: &PackageId,
-) -> Vec<EngineStatusRow> {
-    sup.registered_packs()
-        .into_iter()
-        .map(|(pack, language)| {
-            let (state, detail) = if sup.is_ready(&language, package) {
-                ("ready".into(), String::new())
-            } else if let Some(err) = sup.last_error(&pack) {
-                ("error".into(), err.to_string())
-            } else {
-                match discover_pack(layout, &pack) {
-                    Ok(_) => ("pending".into(), "discovered; waiting for engine".into()),
-                    Err(e) => ("missing".into(), e.to_string()),
-                }
-            };
-            EngineStatusRow {
-                language: language.as_str().to_string(),
-                pack,
-                state,
-                detail,
-            }
-        })
-        .collect()
-}
-
 fn install_pack_from_inbox_or_stub(
     layout: &PrefixLayout,
     raw: &str,
