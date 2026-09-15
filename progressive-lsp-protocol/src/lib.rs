@@ -4,6 +4,7 @@ pub mod framing;
 pub mod intelligence;
 pub mod mux;
 pub mod progress;
+pub mod progressive_lsp;
 pub mod rpc;
 
 use std::io::{BufRead, Write};
@@ -19,7 +20,8 @@ use crate::intelligence::{
 };
 use crate::rpc::{JsonRpcError, JsonRpcRequest};
 
-pub use intelligence::LspIntelligence;
+pub use intelligence::{LspIntelligence, ResolveReport};
+pub use progressive_lsp::{ProgressiveLspRequestOptions, ProgressiveLspSessionOptions};
 pub use mux::{
     decode_mux_frame, encode_mux_frame, read_mux_frame, write_mux_frame, MuxError, MuxFrame,
     CHANNEL_CONTROL, CHANNEL_LSP, MAX_MUX_PAYLOAD,
@@ -164,7 +166,22 @@ impl LspFacade {
                         ));
                     }
                 }
-                Some(rpc::success(req.id.clone(), self.initialize_result()))
+                let mut init = self.initialize_result();
+                if let Some(intel) = &self.intelligence {
+                    if let Some(ext) = intel.progressive_cap_extension() {
+                        if let Some(cap) = init
+                            .pointer_mut("/capabilities/experimental/progressiveLsp")
+                        {
+                            if let (Some(base), Some(extra)) = (cap.as_object_mut(), ext.as_object())
+                            {
+                                for (k, v) in extra {
+                                    base.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(rpc::success(req.id.clone(), init))
             }
             "shutdown" => {
                 let _g = LogScope::enter(
@@ -238,9 +255,26 @@ impl LspFacade {
                 json!([])
             };
         };
+        let prog = crate::progressive_lsp::request_options_from_params(&req.params);
+        let (emit_meta, emit_timing) = intel.effective_emit_options(&prog);
         if req.method == "textDocument/semanticTokens/full" {
             let uri = uri_from_params(&req.params);
-            return json!({ "data": intel.semantic_tokens(&uri) });
+            let started = std::time::Instant::now();
+            let data = intel.semantic_tokens(&uri);
+            let value = json!({ "data": data });
+            if emit_meta {
+                let meta = crate::progressive_lsp::ProgressiveResultMeta {
+                    trace_id: crate::progressive_lsp::new_trace_id(),
+                    tier: "syntax".into(),
+                    backend_language: String::new(),
+                    backend_version: format!("tree-sitter@{}", SERVER_VERSION),
+                    resolve_ms: Some(started.elapsed().as_millis() as u64),
+                    chain_steps: None,
+                    cache_state: None,
+                };
+                return crate::progressive_lsp::wrap_extended_result(value, &meta, emit_timing);
+            }
+            return value;
         }
         let kind = match req.method.as_str() {
             "textDocument/definition" => QueryKind::Definition,
@@ -253,7 +287,7 @@ impl LspFacade {
             _ => QueryKind::Definition,
         };
         let uri = uri_from_params(&req.params);
-        let q = if kind == QueryKind::WorkspaceSymbol {
+        let mut q = if kind == QueryKind::WorkspaceSymbol {
             ResolveQuery::workspace_symbol(req.params["query"].as_str().unwrap_or(""))
         } else {
             ResolveQuery::new(
@@ -262,7 +296,14 @@ impl LspFacade {
                 kind,
             )
         };
-        result_to_lsp(kind, &intel.resolve(&q))
+        q.chain_policy = intel.effective_chain_policy(prog.chain);
+        let report = intel.resolve_report(&q);
+        let value = result_to_lsp(kind, &report.result);
+        if emit_meta {
+            crate::progressive_lsp::wrap_extended_result(value, &report.meta, emit_timing)
+        } else {
+            value
+        }
     }
 
     fn write_json<W: Write>(writer: &mut W, value: &Value) -> Result<(), InitializeFailed> {
@@ -637,29 +678,43 @@ mod tests {
     struct StubIntel;
 
     impl LspIntelligence for StubIntel {
-        fn resolve(
+        fn resolve_report(
             &self,
             q: &progressive_lsp_resolve::ResolveQuery,
-        ) -> progressive_lsp_resolve::ResolveResult {
+        ) -> crate::ResolveReport {
+            use crate::progressive_lsp::{new_trace_id, ProgressiveResultMeta};
             use progressive_lsp_core::Tier;
             use progressive_lsp_resolve::{LspLocation, Range, ResolveResult};
-            if q.kind == progressive_lsp_resolve::QueryKind::Hover {
+            let result = if q.kind == progressive_lsp_resolve::QueryKind::Hover {
                 let mut r = ResolveResult::empty(Tier::Syntax);
                 r.hover = Some(progressive_lsp_resolve::Hover {
                     name: "n".into(),
                     arity: Some(0),
                     type_info: None,
                 });
-                return r;
-            }
-            ResolveResult::locations(
-                Tier::Syntax,
-                vec![LspLocation::new(
-                    "file:///z",
-                    Range::default(),
+                r
+            } else {
+                ResolveResult::locations(
                     Tier::Syntax,
-                )],
-            )
+                    vec![LspLocation::new(
+                        "file:///z",
+                        Range::default(),
+                        Tier::Syntax,
+                    )],
+                )
+            };
+            crate::ResolveReport {
+                result: result.clone(),
+                meta: ProgressiveResultMeta {
+                    trace_id: new_trace_id(),
+                    tier: result.tier.as_str().into(),
+                    backend_language: "java".into(),
+                    backend_version: "stub".into(),
+                    resolve_ms: Some(0),
+                    chain_steps: Some(1),
+                    cache_state: None,
+                },
+            }
         }
         fn did_open(&self, _uri: &str, _language_id: &str, _text: &str) {}
         fn did_change(&self, _uri: &str, _text: &str) {}
@@ -1075,8 +1130,26 @@ mod tests {
 
         struct FailInit;
         impl LspIntelligence for FailInit {
-            fn resolve(&self, _q: &ResolveQuery) -> progressive_lsp_resolve::ResolveResult {
-                progressive_lsp_resolve::ResolveResult::empty(progressive_lsp_core::Tier::Syntax)
+            fn resolve_report(
+                &self,
+                _q: &ResolveQuery,
+            ) -> crate::ResolveReport {
+                use crate::progressive_lsp::{new_trace_id, ProgressiveResultMeta};
+                let result = progressive_lsp_resolve::ResolveResult::empty(
+                    progressive_lsp_core::Tier::Syntax,
+                );
+                crate::ResolveReport {
+                    meta: ProgressiveResultMeta {
+                        trace_id: new_trace_id(),
+                        tier: "syntax".into(),
+                        backend_language: String::new(),
+                        backend_version: String::new(),
+                        resolve_ms: None,
+                        chain_steps: None,
+                        cache_state: None,
+                    },
+                    result,
+                }
             }
             fn did_open(&self, _uri: &str, _language_id: &str, _text: &str) {}
             fn did_change(&self, _uri: &str, _text: &str) {}

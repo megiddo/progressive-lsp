@@ -3,11 +3,13 @@
 pub mod codec;
 pub mod messages;
 pub mod service;
+pub mod trace_ring;
 
 pub use codec::{decode_frame, encode_frame, CodecError, DecodeOutcome, MAX_PAYLOAD_BYTES};
 pub use messages::*;
 pub use prost;
 pub use service::{ControlPlane, ControlServer, FilesSincePort};
+pub use trace_ring::TraceRing;
 
 #[cfg(test)]
 mod tests {
@@ -75,7 +77,7 @@ mod tests {
             generation: 4,
         });
 
-        assert_round_trip(&IndexStatusRequest {});
+        assert_round_trip(&IndexStatusRequest::default());
         assert_round_trip(&IndexStatusResponse {
             status: Some(status.clone()),
             packages: vec![IndexPackage {
@@ -90,6 +92,14 @@ mod tests {
                 state: "ready".into(),
                 detail: String::new(),
             }],
+            tier_capabilities: vec![TierCapabilityRow {
+                tier_id: "syntax".into(),
+                latency_class: "low".into(),
+                quality_class: "syntax".into(),
+                query_kinds: vec!["definition".into()],
+                readiness: "ready".into(),
+            }],
+            progressive_meta: None,
         });
         assert_round_trip(&TierStatusRequest {});
         assert_round_trip(&TierStatusResponse {
@@ -102,6 +112,11 @@ mod tests {
         assert_round_trip(&TierReady {
             package_id: "p".into(),
             tier: "graph".into(),
+        });
+        assert_round_trip(&CacheReady {
+            file: "App.java".into(),
+            query_kind: "definition".into(),
+            location_count: 2,
         });
         assert_round_trip(&ReloadScriptsRequest {});
         assert_round_trip(&ReloadScriptsResponse { status: None });

@@ -775,6 +775,7 @@ impl FakeControl {
                     cache_entries: 0,
                     ingest: progressive_lsp_control::IngestState::Done.as_str().into(),
                     engines: Vec::new(),
+                    tier_capabilities: Vec::new(),
                 },
             ),
             METHOD_TIER_STATUS => Envelope::reply(
@@ -1384,7 +1385,7 @@ mod tests {
             ),
             (
                 METHOD_INDEX_STATUS,
-                Envelope::request(METHOD_INDEX_STATUS, 7, IndexStatusRequest {}),
+                Envelope::request(METHOD_INDEX_STATUS, 7, IndexStatusRequest::default()),
             ),
             (
                 METHOD_TIER_STATUS,

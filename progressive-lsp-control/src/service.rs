@@ -30,7 +30,17 @@ pub trait ControlPlane: Send + Sync {
     fn index_status(&self, req: &IndexStatusRequest) -> IndexStatusResponse;
     fn tier_status(&self, req: &TierStatusRequest) -> TierStatusResponse;
     fn take_tier_ready(&self) -> Vec<TierReady>;
+    fn take_cache_ready(&self) -> Vec<CacheReady> {
+        Vec::new()
+    }
     fn reload_scripts(&self, req: &ReloadScriptsRequest) -> ReloadScriptsResponse;
+    fn fetch_trace(&self, req: &FetchTraceRequest) -> FetchTraceResponse {
+        let _ = req;
+        FetchTraceResponse {
+            status: Some(Status::error(404, "trace not found")),
+            rows: vec![],
+        }
+    }
 }
 
 /// Same domain services as LSP, different encoding.
@@ -230,6 +240,8 @@ impl ControlServer {
             cache_entries: 0,
             ingest: IngestState::NotStarted.as_str().into(),
             engines: Vec::new(),
+            tier_capabilities: Vec::new(),
+            progressive_meta: None,
         }
     }
 
@@ -249,6 +261,16 @@ impl ControlServer {
         }
         ReloadScriptsResponse {
             status: Some(Status::ok()),
+        }
+    }
+
+    pub fn fetch_trace(&self, req: &FetchTraceRequest) -> FetchTraceResponse {
+        if let Some(plane) = &self.plane {
+            return plane.fetch_trace(req);
+        }
+        FetchTraceResponse {
+            status: Some(Status::error(404, "trace not found")),
+            rows: vec![],
         }
     }
 
@@ -311,6 +333,14 @@ impl ControlServer {
                     self.reload_scripts(&req),
                 )
             }
+            METHOD_FETCH_TRACE => {
+                let req = env.decode_body::<FetchTraceRequest>().unwrap_or_default();
+                Envelope::reply(
+                    METHOD_FETCH_TRACE,
+                    env.request_id,
+                    self.fetch_trace(&req),
+                )
+            }
             other => {
                 self.emit_control_info(&format!("unknown method: {other}"));
                 Envelope::reply(
@@ -340,6 +370,11 @@ impl ControlServer {
         }
         for ready in self.take_tier_ready() {
             out.push(Envelope::push(METHOD_TIER_READY, ready));
+        }
+        if let Some(plane) = &self.plane {
+            for ready in plane.take_cache_ready() {
+                out.push(Envelope::push(METHOD_CACHE_READY, ready));
+            }
         }
         out
     }
@@ -482,6 +517,8 @@ mod tests {
                 cache_entries: 4,
                 ingest: IngestState::Done.as_str().into(),
                 engines: Vec::new(),
+                tier_capabilities: Vec::new(),
+                progressive_meta: None,
             }
         }
         fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {
@@ -540,7 +577,7 @@ mod tests {
         let fs = srv.files_since(&FilesSinceRequest { since: None });
         assert!(!fs.truncated);
         assert!(fs.paths.is_empty());
-        let idx = srv.index_status(&IndexStatusRequest {});
+        let idx = srv.index_status(&IndexStatusRequest::default());
         assert!(idx.packages.is_empty());
         assert_eq!(idx.cache_entries, 0);
         assert_eq!(idx.ingest_state(), IngestState::NotStarted);
@@ -613,7 +650,7 @@ mod tests {
                 METHOD_FILES_SINCE,
                 FilesSinceRequest { since: None }.encode_to_vec(),
             ),
-            (METHOD_INDEX_STATUS, IndexStatusRequest {}.encode_to_vec()),
+            (METHOD_INDEX_STATUS, IndexStatusRequest::default().encode_to_vec()),
             (METHOD_TIER_STATUS, TierStatusRequest {}.encode_to_vec()),
             (
                 METHOD_RELOAD_SCRIPTS,
@@ -718,7 +755,7 @@ mod tests {
             .status
             .unwrap()
             .is_ok());
-        let idx = srv.index_status(&IndexStatusRequest {});
+        let idx = srv.index_status(&IndexStatusRequest::default());
         assert_eq!(idx.packages[0].package_id, "lib");
         assert_eq!(idx.cache_entries, 4);
         assert_eq!(idx.ingest_state(), IngestState::Done);

@@ -198,6 +198,19 @@ impl Tier {
             _ => None,
         }
     }
+
+    /// Quality ordering for chain ceilings (`syntax` < `graph` < `types`).
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Syntax => 0,
+            Self::Graph => 1,
+            Self::Types => 2,
+        }
+    }
+
+    pub fn is_above(self, ceiling: Self) -> bool {
+        self.rank() > ceiling.rank()
+    }
 }
 
 /// Effective supported version = `min(window, grammar, engine)`.

@@ -1,8 +1,9 @@
 //! T3′ chain step: read cache only; never calls engine.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
-use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery, Resolver};
+use progressive_lsp_core::Tier;
+use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery, ResolveResult, Resolver};
 
 use crate::builder::TypesCacheBuilder;
 use crate::key::TypesCacheKey;
@@ -14,7 +15,7 @@ use crate::store::TypesCacheStore;
 pub struct TypesCacheResolver {
     store: Arc<TypesCacheStore>,
     generation: Arc<dyn GenerationPort>,
-    builder: Arc<dyn TypesCacheBuilder>,
+    builder: Arc<RwLock<Arc<dyn TypesCacheBuilder>>>,
     serve_state: Arc<Mutex<Option<CacheServeState>>>,
 }
 
@@ -22,7 +23,7 @@ impl TypesCacheResolver {
     pub fn new(
         store: Arc<TypesCacheStore>,
         generation: Arc<dyn GenerationPort>,
-        builder: Arc<dyn TypesCacheBuilder>,
+        builder: Arc<RwLock<Arc<dyn TypesCacheBuilder>>>,
         serve_state: Arc<Mutex<Option<CacheServeState>>>,
     ) -> Self {
         Self {
@@ -50,8 +51,17 @@ impl Resolver for TypesCacheResolver {
             self.note_state(CacheServeState::Hit);
             return ResolveOutcome::Ready(entry.result);
         }
-        self.note_state(CacheServeState::Miss);
-        self.builder.on_miss(key);
+        let builder = self.builder.read().expect("builder");
+        let state = if builder.is_inflight(&key) {
+            CacheServeState::Inflight
+        } else {
+            CacheServeState::Miss
+        };
+        self.note_state(state);
+        builder.on_miss(key);
+        if builder.terminal_miss_at_types() {
+            return ResolveOutcome::Ready(ResolveResult::empty(Tier::Types));
+        }
         ResolveOutcome::NotReady
     }
 }
@@ -70,13 +80,19 @@ mod tests {
         fake::FakeResolver, LspLocation, Position, QueryKind, Range, ResolveQuery, ResolverChain,
     };
 
+    fn shared_builder(
+        builder: Arc<dyn TypesCacheBuilder>,
+    ) -> Arc<RwLock<Arc<dyn TypesCacheBuilder>>> {
+        Arc::new(RwLock::new(builder))
+    }
+
     #[test]
     fn t3_prime_resolve_within_20ms_on_small_fixture() {
         let store = Arc::new(TypesCacheStore::new());
         let resolver = TypesCacheResolver::new(
             store,
             Arc::new(FixedGenerationPort::new(CacheGeneration::zero())),
-            Arc::new(RecordingBuilder::new()),
+            shared_builder(Arc::new(RecordingBuilder::new())),
             Arc::new(Mutex::new(None)),
         );
         let q = ResolveQuery::new(
@@ -92,12 +108,11 @@ mod tests {
     #[test]
     fn stub_miss_falls_through_to_fake_t2() {
         let store = Arc::new(TypesCacheStore::new());
-        let builder = Arc::new(RecordingBuilder::new());
         let serve_state = Arc::new(Mutex::new(None));
         let resolver = TypesCacheResolver::new(
             Arc::clone(&store),
             Arc::new(FixedGenerationPort::new(CacheGeneration::zero())),
-            Arc::clone(&builder) as Arc<dyn TypesCacheBuilder>,
+            shared_builder(Arc::new(RecordingBuilder::new())),
             Arc::clone(&serve_state),
         );
         let chain = chain_with_types_cache_and_t2(resolver);
@@ -113,7 +128,10 @@ mod tests {
             }
             ResolveOutcome::NotReady => panic!("T2 must answer after cache miss"),
         }
-        assert_eq!(builder.recorded_misses().len(), 1);
+        assert_eq!(
+            *serve_state.lock().expect("serve_state"),
+            Some(CacheServeState::Miss)
+        );
     }
 
     #[test]
@@ -144,7 +162,7 @@ mod tests {
         let resolver = TypesCacheResolver::new(
             Arc::clone(&store),
             Arc::new(FixedGenerationPort::new(gen)),
-            Arc::new(RecordingBuilder::new()),
+            shared_builder(Arc::new(RecordingBuilder::new())),
             Arc::new(Mutex::new(None)),
         );
         let chain = ResolverChain::new(vec![

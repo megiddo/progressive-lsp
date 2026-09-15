@@ -52,10 +52,17 @@ Related: [design.md](design.md), [ADR 001](../adr/001-types-cache-overlay.md), [
 - **FR-5.1** v1 builder/read path **MUST** cover: `Definition`, `Implementation`, `References`, `TypeDefinition`.
 - **FR-5.2** Hover **MAY** be deferred to a later WP; if not cached, existing chain behavior applies.
 
-### FR-6 Control / IDE (optional v1)
+### FR-6 Control / readiness API
 
-- **FR-6.1** The system **MAY** push control notification when a cache region or query key becomes ready (similar in spirit to `TierReady`), so the IDE can refresh without user repeating the same slow miss.
-- **FR-6.2** POC IDE **MUST NOT** block the UI thread on builder completion; RunLog **SHOULD** record cache hit/miss and timings (see REQ-NFR-3).
+- **FR-6.1** Serve **MUST** expose subsystem readiness through the **control plane** ([ADR 002](../adr/002-serve-readiness-fsm.md)): `IndexStatus`, `TierStatus`, push `TierReady`, and (additive) **`CacheReady`** or equivalent when a T3′ key leaves `inflight`.
+- **FR-6.2** Clients **MAY** poll or subscribe; serve **MUST NOT** require client-side wall-clock timeouts for correct tier or cache state.
+- **FR-6.3** POC IDE timing is UX-only; RunLog **SHOULD** record cache hit/miss and timings (see REQ-NFR-3).
+
+### FR-7 Serve readiness FSM
+
+- **FR-7.1** `ServeHost` / `WorkspaceSession` **MUST** maintain deterministic states for workspace ingest, package tier, engine pack, document generation, and T3′ query keys ([ADR 002](../adr/002-serve-readiness-fsm.md)).
+- **FR-7.2** Background threads (ingest, engine supervisor, types-cache builder, watch poll) **MUST** only **transition** FSM and enqueue work — not block mux discover waiting for completion.
+- **FR-7.3** Mux discover **MUST NOT** call synchronous `EngineSupervisor::resolve` or blocking `lsp_child` I/O.
 
 ---
 
@@ -66,6 +73,7 @@ Related: [design.md](design.md), [ADR 001](../adr/001-types-cache-overlay.md), [
 - **REQ-NFR-1.1** **Liveness budget** for each of T3′, T2, and T1 on the request path: **≤ 20 ms** wall time (p99 on fixture corpora in CI — see [implementation-checklist.md](implementation-checklist.md) TC-5).
 - **REQ-NFR-1.2** Exceeding the budget **MUST** be treated as **`NotReady`** for that step, not a blocking wait.
 - **REQ-NFR-1.3** Arbitrary multi-second **recv timeouts** on the request path **MUST NOT** be used as a UX strategy (remove/replace legacy budgets in `EngineResolver` when T3′ lands).
+- **REQ-NFR-1.4** **Serve** **MUST NOT** use wall-clock I/O timeouts as tier or discover semantics; use FSM **`NotReady`** and control-plane state instead ([ADR 002](../adr/002-serve-readiness-fsm.md)). Client UX timeouts are non-normative. Inventory: [runtime-timeout-inventory.md](../spikes/runtime-timeout-inventory.md).
 
 ### REQ-NFR-2 Eventual consistency
 

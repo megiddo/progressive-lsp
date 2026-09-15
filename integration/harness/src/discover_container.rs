@@ -2,28 +2,25 @@
 //! same LSP sequence as **Find Definition** (initialize → initialized → didOpen →
 //! `textDocument/definition` on channel 0). Verbose trace on stderr; JSON report on stdout.
 
-use std::collections::VecDeque;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
-use progressive_lsp_control::{
-    decode_frame, encode_frame, DecodeOutcome, Envelope, IndexStatusRequest,
-    IndexStatusResponse, METHOD_INDEX_STATUS, METHOD_TIER_STATUS, TierStatusRequest,
-    TierStatusResponse,
-};
-use progressive_lsp_protocol::{read_mux_frame, rpc, write_mux_frame, CHANNEL_CONTROL, CHANNEL_LSP};
+use progressive_lsp_core::path_to_file_uri;
 use serde_json::{json, Value};
 
-use crate::{find_position, load_golden};
+use crate::mux_driver::{
+    init_params_with_progressive, progressive_lsp_json, spawn_mux_docker, trace_rows_to_json,
+    truncate_json, DockerMuxOpts, MuxDriver,
+};
+use crate::progressive_harness::{
+    parse_progressive_meta, should_fetch_trace, TRACE_ROW_CAP,
+};
+use crate::tam::TamProgressiveLsp;
 
 pub const DISCOVER_CONTAINER_USAGE: &str = "\
 plsp-it1 discover-container --root DIR --expected JSON [--docker PATH] [--image NAME] \
   [--platform linux/arm64] [--wal PATH] [--init-deadline-ms N] [--discover-deadline-ms N] \
-  [--verbose]
+  [--emit-result-meta] [--emit-timing] [--fetch-trace-on-fail] [--verbose]
 ";
 
 #[derive(Debug, Clone)]
@@ -34,18 +31,13 @@ pub struct DiscoverContainerOpts {
     pub image: String,
     pub platform: Option<String>,
     pub wal: Option<PathBuf>,
-    /// Host Linux musl `progressive-lsp` bind-mounted over `/opt/plsp/bin/progressive-lsp`.
     pub mount_serve_bin: Option<PathBuf>,
     pub init_deadline: Duration,
     pub discover_deadline: Duration,
+    pub emit_result_meta: bool,
+    pub emit_timing: bool,
+    pub fetch_trace_on_fail: bool,
     pub verbose: bool,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TraceStep {
-    phase: String,
-    elapsed_ms: u64,
-    detail: String,
 }
 
 pub fn parse_discover_container(args: &[String]) -> Result<DiscoverContainerOpts, String> {
@@ -58,6 +50,9 @@ pub fn parse_discover_container(args: &[String]) -> Result<DiscoverContainerOpts
     let mut mount_serve_bin = None;
     let mut init_deadline = Duration::from_secs(600);
     let mut discover_deadline = Duration::from_secs(15);
+    let mut emit_result_meta = false;
+    let mut emit_timing = false;
+    let mut fetch_trace_on_fail = true;
     let mut verbose = true;
     let mut i = 0;
     while i < args.len() {
@@ -113,6 +108,10 @@ pub fn parse_discover_container(args: &[String]) -> Result<DiscoverContainerOpts
                     .map_err(|_| "discover-deadline-ms must be integer")?;
                 discover_deadline = Duration::from_millis(ms);
             }
+            "--emit-result-meta" => emit_result_meta = true,
+            "--emit-timing" => emit_timing = true,
+            "--fetch-trace-on-fail" => fetch_trace_on_fail = true,
+            "--no-fetch-trace-on-fail" => fetch_trace_on_fail = false,
             "--verbose" => verbose = true,
             "--quiet" => verbose = false,
             other => return Err(format!("unknown flag: {other}\n{DISCOVER_CONTAINER_USAGE}")),
@@ -129,267 +128,15 @@ pub fn parse_discover_container(args: &[String]) -> Result<DiscoverContainerOpts
         mount_serve_bin,
         init_deadline,
         discover_deadline,
+        emit_result_meta,
+        emit_timing,
+        fetch_trace_on_fail,
         verbose,
     })
 }
 
-struct MuxInbox {
-    lsp: VecDeque<Vec<u8>>,
-    control: VecDeque<Vec<u8>>,
-    failed: Option<String>,
-    reader_done: bool,
-}
-
-struct MuxDriver {
-    writer: Mutex<Box<dyn Write + Send>>,
-    inbox: Arc<(Mutex<MuxInbox>, Condvar)>,
-    start: Instant,
-    verbose: bool,
-    trace: Mutex<Vec<TraceStep>>,
-    _child: Child,
-    _stderr: Option<thread::JoinHandle<()>>,
-    _reader: thread::JoinHandle<()>,
-}
-
-impl MuxDriver {
-    fn trace(&self, phase: &str, detail: impl Into<String>) {
-        let elapsed_ms = self.start.elapsed().as_millis() as u64;
-        let detail = detail.into();
-        if self.verbose {
-            eprintln!("[discover-container +{elapsed_ms}ms] {phase}: {detail}");
-        }
-        if let Ok(mut t) = self.trace.lock() {
-            t.push(TraceStep {
-                phase: phase.to_string(),
-                elapsed_ms,
-                detail,
-            });
-        }
-    }
-
-    fn write_channel(&self, channel: u8, payload: &[u8]) -> Result<(), String> {
-        let mut w = self
-            .writer
-            .lock()
-            .map_err(|_| "writer lock poisoned".to_string())?;
-        write_mux_frame(&mut *w, channel, payload).map_err(|e| e.to_string())?;
-        w.flush().map_err(|e| e.to_string())
-    }
-
-    fn read_channel_until(&self, channel: u8, deadline: Instant) -> Result<Vec<u8>, String> {
-        let (lock, cv) = &*self.inbox;
-        let mut guard = lock
-            .lock()
-            .map_err(|_| "inbox lock poisoned".to_string())?;
-        loop {
-            if let Some(msg) = guard.failed.clone() {
-                return Err(msg);
-            }
-            let q = if channel == CHANNEL_LSP {
-                &mut guard.lsp
-            } else {
-                &mut guard.control
-            };
-            if let Some(p) = q.pop_front() {
-                return Ok(p);
-            }
-            if guard.reader_done {
-                return Err("mux peer eof".into());
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(format!(
-                    "deadline waiting for mux channel {channel} (cap {:?})",
-                    deadline.saturating_duration_since(self.start)
-                ));
-            }
-            let wait = deadline.saturating_duration_since(now);
-            guard = cv
-                .wait_timeout(guard, wait)
-                .map_err(|_| "condvar poisoned".to_string())?
-                .0;
-        }
-    }
-
-    fn request_lsp(
-        &self,
-        id: i64,
-        method: &str,
-        params: Value,
-        deadline: Instant,
-    ) -> Result<Value, String> {
-        self.trace("lsp_request", format!("id={id} method={method}"));
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        let body = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.write_channel(CHANNEL_LSP, &body)?;
-        loop {
-            let raw = self.read_channel_until(CHANNEL_LSP, deadline)?;
-            let v: Value = serde_json::from_slice(&raw).map_err(|e| format!("json: {e}"))?;
-            if v.get("method").is_some() && v.get("id").is_none() {
-                let m = v.get("method").and_then(|x| x.as_str()).unwrap_or("?");
-                self.trace("lsp_notification", m.to_string());
-                continue;
-            }
-            if let Some(got) = v.get("id") {
-                if !rpc::id_matches(id, got) {
-                    self.trace(
-                        "lsp_skip_id",
-                        format!("want {id} got {got} body={}", truncate_json(&v, 200)),
-                    );
-                    continue;
-                }
-            } else {
-                continue;
-            }
-            if let Some(err) = v.get("error") {
-                return Err(format!("LSP error on {method}: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
-        }
-    }
-
-    fn notify_lsp(&self, method: &str, params: Value) -> Result<(), String> {
-        self.trace("lsp_notify", method.to_string());
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
-        let body = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.write_channel(CHANNEL_LSP, &body)
-    }
-
-    fn control_rpc<Req, Resp>(
-        &self,
-        method: &str,
-        request_id: u64,
-        req: Req,
-        deadline: Instant,
-    ) -> Result<Resp, String>
-    where
-        Req: progressive_lsp_control::prost::Message,
-        Resp: progressive_lsp_control::prost::Message + Default,
-    {
-        self.trace("control_request", format!("id={request_id} method={method}"));
-        let env = Envelope::request(method, request_id, req);
-        let frame = encode_frame(&env.to_bytes()).map_err(|e| e.to_string())?;
-        self.write_channel(CHANNEL_CONTROL, &frame)?;
-        loop {
-            if Instant::now() >= deadline {
-                return Err("control rpc deadline exceeded".into());
-            }
-            let raw = self.read_channel_until(CHANNEL_CONTROL, deadline)?;
-            let env = decode_envelope_payload(&raw)?;
-            if env.request_id == 0 {
-                self.trace("control_push", env.method.clone());
-                continue;
-            }
-            if env.request_id == request_id && env.method == method {
-                return env.decode_body::<Resp>().map_err(|e| e.to_string());
-            }
-            self.trace(
-                "control_skip",
-                format!("id={} method={}", env.request_id, env.method),
-            );
-        }
-    }
-
-    fn take_trace(&self) -> Vec<TraceStep> {
-        self.trace.lock().map(|t| t.clone()).unwrap_or_default()
-    }
-}
-
-fn decode_envelope_payload(raw: &[u8]) -> Result<Envelope, String> {
-    match decode_frame(raw) {
-        Ok(DecodeOutcome::Complete { payload, .. }) => {
-            Envelope::from_bytes(&payload).map_err(|e| e.to_string())
-        }
-        Ok(DecodeOutcome::Incomplete { .. }) => Err("incomplete control frame in mux payload".into()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-fn truncate_json(v: &Value, max: usize) -> String {
-    let s = v.to_string();
-    if s.len() <= max {
-        s
-    } else {
-        format!("{}…", &s[..max])
-    }
-}
-
-fn docker_argv(opts: &DiscoverContainerOpts) -> Result<Vec<String>, String> {
-    let root = opts
-        .root
-        .canonicalize()
-        .map_err(|e| format!("root {}: {e}", opts.root.display()))?;
-    if !root.is_absolute() {
-        return Err("root must be absolute".into());
-    }
-    let ws = root.to_string_lossy().into_owned();
-    let mut argv = vec!["run".into(), "-i".into(), "--rm".into()];
-    if let Some(p) = &opts.platform {
-        argv.push("--platform".into());
-        argv.push(p.clone());
-    }
-    argv.extend(["-v".into(), format!("{ws}:{ws}"), "-w".into(), ws.clone()]);
-    if let Some(bin) = &opts.mount_serve_bin {
-        if bin.is_file() {
-            let b = bin
-                .canonicalize()
-                .map_err(|e| format!("mount-serve-bin {}: {e}", bin.display()))?
-                .to_string_lossy()
-                .into_owned();
-            argv.extend([
-                "-v".into(),
-                format!("{b}:/opt/plsp/bin/progressive-lsp:ro"),
-            ]);
-        }
-    }
-    if let Some(wal) = &opts.wal {
-        if wal.is_absolute() {
-            if let Some(dir) = wal.parent() {
-                let dir_s = dir.to_string_lossy().into_owned();
-                if dir_s != ws {
-                    argv.extend(["-v".into(), format!("{dir_s}:{dir_s}")]);
-                }
-            }
-            argv.extend([
-                "-e".into(),
-                format!("PROGRESSIVE_LSP_LOG={}", wal.display()),
-                "-e".into(),
-                "PROGRESSIVE_LSP_LOG_LEVEL=debug".into(),
-            ]);
-        }
-    }
-    argv.extend([
-        opts.image.clone(),
-        "serve".into(),
-        "--prefix".into(),
-        "/opt/plsp".into(),
-        "--mux".into(),
-    ]);
-    Ok(argv)
-}
-
-fn language_id(path: &Path) -> &'static str {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("java") => "java",
-        Some("py") => "python",
-        Some("rs") => "rust",
-        Some("js" | "mjs" | "cjs") => "javascript",
-        Some("ts") => "typescript",
-        _ => "plaintext",
-    }
-}
-
 pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, String> {
-    let golden = load_golden(&opts.expected)?;
+    let golden = crate::load_golden(&opts.expected)?;
     let entry = opts
         .root
         .canonicalize()
@@ -403,122 +150,49 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
         }));
     }
     let src = std::fs::read_to_string(&entry).map_err(|e| e.to_string())?;
-    let (line, character) = find_position(&src, &golden.find)?;
+    let (line, character) = crate::find_position(&src, &golden.find)?;
     let file_path = entry.clone();
-    let uri = progressive_lsp_core::path_to_file_uri(&file_path);
+    let uri = path_to_file_uri(&file_path);
     let root = opts.root.canonicalize().map_err(|e| e.to_string())?;
-    let root_uri = progressive_lsp_core::path_to_file_uri(&root);
+    let root_uri = path_to_file_uri(&root);
 
-    let docker_argv = docker_argv(opts)?;
-    opts.verbose.then(|| {
-        eprintln!(
-            "[discover-container] docker {} …",
-            docker_argv[..docker_argv.len().min(8)].join(" ")
-        );
-    });
-
-    let mut cmd = Command::new(&opts.docker);
-    for arg in &docker_argv {
-        cmd.arg(arg);
-    }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("docker spawn: {e}"))?;
-
-    let stdin = child.stdin.take().ok_or("stdin")?;
-    let stdout = child.stdout.take().ok_or("stdout")?;
-    let stderr = child.stderr.take().ok_or("stderr")?;
-
-    let inbox = Arc::new((
-        Mutex::new(MuxInbox {
-            lsp: VecDeque::new(),
-            control: VecDeque::new(),
-            failed: None,
-            reader_done: false,
-        }),
-        Condvar::new(),
-    ));
-
-    let reader_inbox = Arc::clone(&inbox);
-    let reader = thread::spawn(move || {
-        let mut reader = stdout;
-        loop {
-            match read_mux_frame(&mut reader) {
-                Ok(Some(frame)) => {
-                    let (lock, cv) = &*reader_inbox;
-                    if let Ok(mut st) = lock.lock() {
-                        if frame.channel == CHANNEL_LSP {
-                            st.lsp.push_back(frame.payload);
-                        } else if frame.channel == CHANNEL_CONTROL {
-                            st.control.push_back(frame.payload);
-                        }
-                        cv.notify_all();
-                    }
-                }
-                Ok(None) => {
-                    let (lock, cv) = &*reader_inbox;
-                    if let Ok(mut st) = lock.lock() {
-                        st.reader_done = true;
-                    }
-                    cv.notify_all();
-                    break;
-                }
-                Err(e) => {
-                    let (lock, cv) = &*reader_inbox;
-                    if let Ok(mut st) = lock.lock() {
-                        st.failed = Some(e.to_string());
-                    }
-                    cv.notify_all();
-                    break;
-                }
-            }
-        }
-    });
-
-    let stderr_thread = thread::spawn(move || {
-        let mut r = stderr;
-        let mut buf = [0u8; 4096];
-        loop {
-            match r.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let _ = std::io::stderr().write_all(&buf[..n]);
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    let start = Instant::now();
-    let driver = MuxDriver {
-        writer: Mutex::new(Box::new(stdin)),
-        inbox,
-        start,
-        verbose: opts.verbose,
-        trace: Mutex::new(Vec::new()),
-        _child: child,
-        _stderr: Some(stderr_thread),
-        _reader: reader,
+    let docker_mux = DockerMuxOpts {
+        docker: opts.docker.clone(),
+        image: opts.image.clone(),
+        platform: opts.platform.clone(),
+        wal: opts.wal.clone(),
+        mount_serve_bin: opts.mount_serve_bin.clone(),
+        prefix: "/opt/plsp".into(),
     };
 
-    driver.trace("setup", format!("root={root_uri} entry={uri} find={} @ {line}:{character}", golden.find));
+    let driver = spawn_mux_docker(&root, &docker_mux, opts.verbose)?;
+    driver.trace(
+        "setup",
+        format!(
+            "root={root_uri} entry={uri} find={} @ {line}:{character}",
+            golden.find
+        ),
+    );
 
-    let init_deadline = start + opts.init_deadline;
+    let session_plsp = if opts.emit_result_meta || opts.emit_timing {
+        Some(TamProgressiveLsp {
+            emit_result_meta: Some(opts.emit_result_meta),
+            emit_timing: Some(opts.emit_timing),
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+
+    let init_deadline = driver.start + opts.init_deadline;
     let init_result = driver.request_lsp(
         1,
         "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": root_uri,
-            "capabilities": {},
-        }),
+        init_params_with_progressive(&root_uri, session_plsp.as_ref()),
         init_deadline,
     );
 
-    let result = match init_result {
+    let init_result = match init_result {
         Ok(r) => {
             driver.trace("initialize_ok", truncate_json(&r, 300));
             let mux = &r["capabilities"]["experimental"]["progressiveLsp"]["mux"];
@@ -528,6 +202,11 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
                     opts,
                     "fail",
                     format!("expected progressiveLsp.mux true, got {mux}"),
+                    None,
+                    None,
+                    0,
+                    false,
+                    None,
                     None,
                     &golden,
                     line,
@@ -544,6 +223,11 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
                 "fail",
                 format!("initialize: {e}"),
                 None,
+                None,
+                0,
+                false,
+                None,
+                None,
                 &golden,
                 line,
                 character,
@@ -554,27 +238,32 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
 
     driver.notify_lsp("initialized", json!({}))?;
 
-    if let Ok(idx) = driver.control_rpc::<IndexStatusRequest, IndexStatusResponse>(
-        METHOD_INDEX_STATUS,
-        10,
-        IndexStatusRequest {},
-        init_deadline,
-    ) {
-        let tiers = driver
-            .control_rpc::<TierStatusRequest, TierStatusResponse>(
-                METHOD_TIER_STATUS,
-                11,
-                TierStatusRequest {},
-                init_deadline,
-            )
-            .ok();
+    if opts.emit_result_meta {
+        if let Ok(idx) = driver.index_status_with_meta(
+            opts.emit_result_meta,
+            opts.emit_timing,
+            10,
+            init_deadline,
+        ) {
+            let tiers = driver.tier_status(11, init_deadline).ok();
+            driver.trace(
+                "control_snapshot",
+                format!(
+                    "packages={} tier_rows={} trace_id={}",
+                    idx.packages.len(),
+                    tiers.as_ref().map(|t| t.rows.len()).unwrap_or(0),
+                    idx.progressive_meta
+                        .as_ref()
+                        .map(|m| m.trace_id.as_str())
+                        .unwrap_or(""),
+                ),
+            );
+        }
+    } else if let Ok(idx) = driver.index_status_with_meta(false, false, 10, init_deadline) {
+        let _ = driver.tier_status(11, init_deadline);
         driver.trace(
             "control_snapshot",
-            format!(
-                "packages={} tier_rows={}",
-                idx.packages.len(),
-                tiers.as_ref().map(|t| t.rows.len()).unwrap_or(0),
-            ),
+            format!("packages={}", idx.packages.len()),
         );
     }
 
@@ -595,51 +284,212 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
         "discover_start",
         "textDocument/definition (context menu Find Definition)".to_string(),
     );
+
+    let mut def_progressive = TamProgressiveLsp {
+        emit_result_meta: Some(opts.emit_result_meta),
+        emit_timing: Some(opts.emit_timing),
+        ..Default::default()
+    };
+    let mut def_params = json!({
+        "textDocument": { "uri": uri },
+        "position": { "line": line, "character": character },
+    });
+    if opts.emit_result_meta || opts.emit_timing {
+        def_params["progressiveLsp"] = progressive_lsp_json(&def_progressive);
+    }
+
     let def_result = driver.request_lsp(
         2,
         "textDocument/definition",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-        }),
+        def_params,
         discover_deadline,
     );
 
-    let _init_caps = result;
-    match def_result {
+    let (def_value, def_trace_id, def_fetch) = match def_result {
         Ok(loc) => {
             let count = location_count(&loc);
             driver.trace(
                 "discover_ok",
-                format!("locations={count} raw={}", truncate_json(&loc, 400)),
+                format!(
+                    "definition locations={count} raw={}",
+                    truncate_json(&loc, 400)
+                ),
             );
-            Ok(finish_report(
+            let meta = parse_progressive_meta(&loc);
+            let fetch = attach_fetch_trace(
                 &driver,
                 opts,
-                if count > 0 { "pass" } else { "pass_empty" },
-                format!("definition returned {count} location(s)"),
-                Some(loc),
+                meta.trace_id.as_deref(),
+                "pass",
+                false,
+                20,
+                discover_deadline,
+            );
+            (Some(loc), meta.trace_id, fetch)
+        }
+        Err(e) => {
+            let fetch = if opts.fetch_trace_on_fail {
+                attach_fetch_trace(
+                    &driver,
+                    opts,
+                    None,
+                    "fail",
+                    true,
+                    21,
+                    discover_deadline,
+                )
+            } else {
+                (None, None)
+            };
+            return Ok(finish_report(
+                &driver,
+                opts,
+                "fail",
+                format!("definition: {e}"),
+                None,
+                None,
+                0,
+                false,
+                fetch.0,
+                fetch.1,
                 &golden,
                 line,
                 character,
                 &uri,
-            ))
+            ));
         }
-        Err(e) => Ok(finish_report(
+    };
+
+    let def_count = def_value.as_ref().map(location_count).unwrap_or(0);
+    let _init_caps = init_result;
+
+    driver.trace(
+        "references_start",
+        "textDocument/references (Find References)".to_string(),
+    );
+    let refs_result = driver.request_lsp(
+        3,
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true },
+        }),
+        discover_deadline,
+    );
+    let (refs_value, refs_count) = match refs_result {
+        Ok(v) => {
+            let n = location_count(&v);
+            driver.trace(
+                "references_ok",
+                format!("references locations={n} raw={}", truncate_json(&v, 400)),
+            );
+            (Some(v), n)
+        }
+        Err(e) => {
+            driver.trace("references_fail", e.clone());
+            (None, 0)
+        }
+    };
+
+    let min_refs = golden.min_references.unwrap_or(1);
+    let refs_ok = refs_count >= min_refs;
+    let result_tag = if def_count > 0 && refs_ok {
+        "pass"
+    } else if def_count > 0 {
+        "fail"
+    } else {
+        "pass_empty"
+    };
+    let notes = if refs_ok {
+        format!("definition={def_count} references={refs_count}")
+    } else {
+        format!("definition={def_count} references={refs_count} (want >={min_refs})")
+    };
+
+    let want_trace = should_fetch_trace(None, result_tag)
+        || (opts.fetch_trace_on_fail && result_tag == "fail");
+    let fetch = if want_trace {
+        attach_fetch_trace(
             &driver,
             opts,
-            "fail",
-            e,
-            None,
-            &golden,
-            line,
-            character,
-            &uri,
-        )),
+            def_trace_id.as_deref(),
+            result_tag,
+            opts.fetch_trace_on_fail,
+            22,
+            discover_deadline,
+        )
+    } else {
+        (None, None)
+    };
+
+    Ok(finish_report(
+        &driver,
+        opts,
+        result_tag,
+        notes,
+        def_value,
+        refs_value,
+        refs_count,
+        refs_ok,
+        def_trace_id.or(fetch.0),
+        fetch.1,
+        &golden,
+        line,
+        character,
+        &uri,
+    ))
+}
+
+fn attach_fetch_trace(
+    driver: &MuxDriver,
+    opts: &DiscoverContainerOpts,
+    trace_id: Option<&str>,
+    result_tag: &str,
+    on_fail: bool,
+    control_id: u64,
+    deadline: Instant,
+) -> (Option<String>, Option<Value>) {
+    if !on_fail && result_tag == "fail" {
+        // caller handles fail path
+    }
+    if !should_fetch_trace(None, if result_tag == "fail" { "fail" } else { "pass" })
+        && !(opts.fetch_trace_on_fail && result_tag == "fail")
+    {
+        return (trace_id.map(str::to_string), None);
+    }
+    let Some(tid) = trace_id.filter(|s| !s.is_empty()) else {
+        return (None, None);
+    };
+    match driver.fetch_trace(tid, 500, control_id, deadline) {
+        Ok(resp) => (
+            Some(tid.to_string()),
+            Some(json!({
+                "trace_id": tid,
+                "trace_row_count": resp.rows.len(),
+                "trace_rows": trace_rows_to_json(&resp.rows, TRACE_ROW_CAP),
+            })),
+        ),
+        Err(e) => (
+            Some(tid.to_string()),
+            Some(json!({ "trace_id": tid, "fetch_error": e })),
+        ),
+    }
+}
+
+fn language_id(path: &Path) -> &'static str {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("java") => "java",
+        Some("py") => "python",
+        Some("rs") => "rust",
+        Some("js" | "mjs" | "cjs") => "javascript",
+        Some("ts") => "typescript",
+        _ => "plaintext",
     }
 }
 
 fn location_count(v: &Value) -> usize {
+    let v = crate::progressive_harness::lsp_result_value(v);
     match v {
         Value::Array(a) => a.len(),
         Value::Null => 0,
@@ -654,6 +504,11 @@ fn finish_report(
     result: &str,
     notes: impl Into<String>,
     definition: Option<Value>,
+    references: Option<Value>,
+    references_count: usize,
+    references_ok: bool,
+    trace_id: Option<String>,
+    trace_dump: Option<Value>,
     golden: &crate::ExpectedGolden,
     line: u32,
     character: u32,
@@ -667,6 +522,13 @@ fn finish_report(
         "language": golden.language,
         "result": result,
         "notes": notes,
+        "definition_ok": definition.as_ref().map(location_count).unwrap_or(0) > 0,
+        "references_ok": references_ok,
+        "references_count": references_count,
+        "emit_result_meta": opts.emit_result_meta,
+        "emit_timing": opts.emit_timing,
+        "trace_id": trace_id,
+        "trace_dump": trace_dump,
         "request": {
             "method": "textDocument/definition",
             "uri": uri,
@@ -675,6 +537,7 @@ fn finish_report(
             "find_needle": golden.find,
         },
         "definition": definition,
+        "references": references,
         "serve_wal": opts.wal.as_ref().map(|p| p.display().to_string()),
         "serve_wal_definition_ops": wal_tail,
         "trace": driver.take_trace(),

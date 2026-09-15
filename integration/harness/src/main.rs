@@ -2,7 +2,11 @@
 //! Integration only. No `$/` FilesSince. Not a workspace member.
 
 mod discover_container;
+mod mux_driver;
 mod progressive;
+mod progressive_harness;
+mod tam;
+mod tam_run;
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -19,6 +23,8 @@ plsp-it1 backend --expected JSON --root DIR [--deadline-ms N] [--t3-pack NAME] -
 plsp-it1 fetch --pins JSON --cache DIR [--id ID]
 plsp-it1 progressive --backend ID --root DIR --expected JSON --prefix DIR --control-socket PATH [--deadline-ms N] [--mux] -- <server> [args...]
 plsp-it1 discover-container --root DIR --expected JSON [--docker PATH] [--image NAME] [--platform linux/arm64] [--wal PATH] [--init-deadline-ms N] [--discover-deadline-ms N] [--quiet]
+plsp-it1 tam-load --suite PATH
+plsp-it1 tam-run --suite PATH --workspace-root DIR [--docker PATH] [--image NAME] [--platform linux/arm64] [--mount-serve-bin PATH] [--init-deadline-ms N] [--request-deadline-ms N] [--quiet]
 ";
 
 fn main() {
@@ -75,8 +81,52 @@ fn run(args: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
+        "tam-load" => {
+            let path = parse_suite_path(&args[1..])?;
+            let suite = tam::load_suite(&path)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "suite": path.display().to_string(),
+                    "cases": suite.cases.len(),
+                    "result": "ok"
+                }))
+                .map_err(|e| e.to_string())?
+            );
+            Ok(())
+        }
+        "tam-run" => {
+            let opts = tam_run::parse_tam_run(&args[1..])?;
+            let report = tam_run::run_tam(&opts)?;
+            println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+            if report["result"] == "fail" {
+                return Err(format!(
+                    "tam-run fail: {}",
+                    report["notes"].as_str().unwrap_or("see rows")
+                ));
+            }
+            Ok(())
+        }
         other => Err(format!("unknown command: {other}\n{USAGE}")),
     }
+}
+
+fn parse_suite_path(args: &[String]) -> Result<PathBuf, String> {
+    let mut path = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--suite" => {
+                i += 1;
+                path = Some(
+                    PathBuf::from(args.get(i).ok_or("--suite requires a path")?.clone()),
+                );
+            }
+            other => return Err(format!("unknown flag: {other}")),
+        }
+        i += 1;
+    }
+    path.ok_or("tam-load/tam-run require --suite PATH".into())
 }
 
 struct HandshakeOpts {
@@ -333,6 +383,7 @@ pub(crate) struct ExpectedGolden {
     ghost_sibling: Option<String>,
     expected_ceiling: bool,
     corpus_sha: String,
+    pub(crate) min_references: Option<usize>,
 }
 
 pub(crate) fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
@@ -352,6 +403,7 @@ pub(crate) fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
         ghost_sibling: v["ghost_sibling"].as_str().map(str::to_string).filter(|s| !s.is_empty()),
         expected_ceiling: v["expected_ceiling"].as_bool().unwrap_or(false),
         corpus_sha: v["corpus_sha"].as_str().unwrap_or("").to_string(),
+        min_references: v["min_references"].as_u64().map(|n| n as usize),
     })
 }
 

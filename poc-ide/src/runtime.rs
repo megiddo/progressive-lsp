@@ -370,6 +370,46 @@ impl LaunchJournal {
         }
     }
 
+    /// Workspace ingest + T3′ cache + engine rows from IndexStatus.
+    pub fn index_and_cache(
+        ingest: progressive_lsp_control::IngestState,
+        package_count: usize,
+        types_cache_entries: u64,
+        engines: &[(String, StepState, String)],
+    ) -> Self {
+        use progressive_lsp_control::IngestState;
+        let ingest_state = match ingest {
+            IngestState::NotStarted => StepState::Pending,
+            IngestState::Running => StepState::Running,
+            IngestState::Done => StepState::Ok,
+        };
+        let mut steps = vec![
+            LaunchStep::new("ingest", "Workspace ingest").with_state(ingest_state),
+            LaunchStep::new("packages", "Indexed packages")
+                .with_state(if package_count > 0 {
+                    StepState::Ok
+                } else {
+                    StepState::Pending
+                })
+                .with_detail(format!("{package_count} package(s)")),
+            LaunchStep::new("types_cache", "T3′ query cache")
+                .with_state(if types_cache_entries > 0 {
+                    StepState::Ok
+                } else {
+                    StepState::Running
+                })
+                .with_detail(format!("{types_cache_entries} entr(y/ies)")),
+        ];
+        for (lang, state, detail) in engines {
+            steps.push(
+                LaunchStep::new(&format!("engine_{lang}"), &format!("Engine {lang}"))
+                    .with_state(*state)
+                    .with_detail(detail.clone()),
+            );
+        }
+        Self { steps }
+    }
+
     pub fn steps(&self) -> &[LaunchStep] {
         &self.steps
     }
@@ -448,6 +488,7 @@ pub enum StatusModalKind {
     T1,
     T2,
     T3,
+    IndexCache,
     Container,
 }
 
@@ -457,6 +498,7 @@ impl StatusModalKind {
             Self::T1 => "T1",
             Self::T2 => "T2",
             Self::T3 => "T3",
+            Self::IndexCache => "index",
             Self::Container => "container",
         }
     }

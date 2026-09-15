@@ -1,0 +1,99 @@
+# POC suite — see tier-api-matrix/README.md. Executed via run-tam.sh / plsp-it1 tam-run (TAM-2).
+apiVersion: progressive-lsp/tam/v1
+id: java-junit4
+language: java
+language_id: java
+
+server:
+  docker_image: progressive-lsp-runtime:local
+  platform: linux/arm64
+  prefix_in_container: /opt/plsp
+  packs: [javacs]
+  serve_args: [--mux, --control-socket, /tmp/plsp.sock]
+
+source:
+  git:
+    url: https://github.com/junit-team/junit4.git
+    sha: 05fe2a64f59127c02135be22f416e91260d6ede6
+
+workspace:
+  root_uri: file:///workspace
+  manifest: pom.xml
+
+session:
+  progressive_lsp:
+    emitResultMeta: true
+    emitTiming: true
+
+readiness:
+  poll_interval_ms: 200
+  init_deadline_ms: 600000
+  syntax_available_within_ms: 30000
+  graph_available_within_ms: 120000
+  types_available_within_ms: 300000
+  per_request_deadline_ms: 15000
+
+tiers:
+  milestones:
+    - id: t1_syntax
+      when:
+        tier_status_at_least: syntax
+    - id: t2_graph
+      when:
+        tier_status_at_least: graph
+    - id: t3_types
+      when:
+        tier_status_at_least: types
+        engines_ready: [javacs]
+
+cases:
+  - id: testcase-definition-site
+    file: src/main/java/junit/framework/TestCase.java
+    anchor:
+      find: TestCase
+    apis:
+      - method: textDocument/definition
+        tiers: [t1_syntax, t2_graph, t3_types]
+        progressive_lsp:
+          maxChainIter: 3
+          maxTier: types
+        expect:
+          min_locations: 1
+          progressive_meta:
+            backend_language: java
+          timing:
+            max_wall_ms: 500
+            max_resolve_ms: 50
+          trace:
+            fetch: true
+      - method: textDocument/references
+        tiers: [t2_graph, t3_types]
+        expect:
+          min_locations: 1
+      - method: textDocument/hover
+        tiers: [t1_syntax, t2_graph, t3_types]
+        expect:
+          non_empty: true
+      - method: textDocument/documentSymbol
+        tiers: [t1_syntax, t2_graph, t3_types]
+        expect:
+          min_symbols: 1
+      - method: textDocument/semanticTokens/full
+        tiers: [t1_syntax, t2_graph, t3_types]
+        expect:
+          min_token_words: 1
+      - method: workspace/symbol
+        tiers: [t2_graph, t3_types]
+        query: TestCase
+        expect:
+          min_symbols: 1
+
+control_apis:
+  - method: IndexStatus
+    tiers: [t1_syntax, t2_graph, t3_types]
+    expect:
+      min_packages: 1
+  - method: TierStatus
+    tiers: [t2_graph, t3_types]
+    expect:
+      min_rows: 1

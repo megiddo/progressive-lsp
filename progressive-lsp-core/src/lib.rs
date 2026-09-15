@@ -9,6 +9,7 @@ pub mod ids;
 pub mod log;
 pub mod prefix;
 pub mod rss;
+pub mod tier_descriptor;
 
 pub use clock::{ClockPort, FakeClock, SystemClock};
 pub use config::{Config, ConfigLoad, ConfigOverlay, T2Backend, T2Table};
@@ -29,6 +30,9 @@ pub use log::{
     ENV_LOG_LEVEL, MEMORY_LOG_CAP, MESSAGE_MAX_BYTES,
 };
 pub use prefix::{PrefixLayout, PREFIX_DIR_NAME};
+pub use tier_descriptor::{
+    LatencyClass, QualityClass, TierDescriptor, DISCOVER_KINDS, TIER_REGISTRY,
+};
 pub use rss::{
     parse_proc_status_vmrss, parse_ps_rss_kb, rss_from_ps_output, rss_sample_label,
     sample_rss_bytes,

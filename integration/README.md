@@ -1,5 +1,15 @@
 # Integration tests (design)
 
+**Operator entry (from repo root):**
+
+```text
+./build test     # unit tests
+./build integ    # docker smoke (auto-builds runtime image + plsp-it1)
+./build run ide --smoke   # manual poc-ide on in-tree Java fixture
+```
+
+Reports: `integration/out/`. Scripts bootstrap via `integration/harness/bootstrap.sh`.
+
 System-level tests for a **shipped** progressive-lsp: static Linux binaries + optional engine packs, run against real project trees and real distro userspaces.
 
 These are **not** the crate unit/mutation suite (`docs/testing.md` in the product repo). That suite forbids `sleep`, uses FakeClock, and never vendors clangd’s tests. This suite **does** use containers, wall time, and child engines. Keep the two harnesses separate so unit CI stays fast and hermetic.
@@ -11,6 +21,7 @@ These are **not** the crate unit/mutation suite (`docs/testing.md` in the produc
 | IT-1 | [01-deploy-config.md](01-deploy-config.md) | Drop a binary on Arch / RHEL-family / Debian / Ubuntu; prefix + `config.toml` just work; no host Node/JVM/CPython |
 | IT-2 | [02-lsp-backends.md](02-lsp-backends.md) | Each language backend answers vanilla LSP on a **real** codebase |
 | IT-3 | [03-extended-protocol.md](03-extended-protocol.md) | A **few** backends plus a progressive client: FilesSince, WatchBatch, config, tiers |
+| IT-TAM | [tier-api-matrix/README.md](tier-api-matrix/README.md) | **Planned:** YAML-driven **API × tier** matrix in Docker (POC: Java); pinned git corpora |
 
 ## When they run
 
@@ -46,7 +57,7 @@ integration/
 
 **Client:** a tiny stdio LSP driver (initialize → didOpen → request → shutdown). Progressive tests add a Unix-socket protobuf client using `progressive-lsp-control`. Do not use Neovim as the only gate; a headless driver is reproducible.
 
-**POC IDE container discover (dogfood):** `harness/run-discover-container.sh` runs `docker … serve --mux` and sends the same LSP sequence as the editor **Find Definition** context menu (`textDocument/definition` on mux channel 0, 15s deadline). Verbose steps go to stderr; JSON report + serve WAL path under `integration/out/`. Override workspace:
+**POC IDE container discover (dogfood):** `harness/run-discover-container.sh` runs `docker … serve --mux` and sends the same LSP sequence as the editor **Find Definition** and **Find References** (`textDocument/definition` then `textDocument/references` on mux channel 0, 15s deadline). Report JSON includes `references_ok` / `references_count`. Verbose steps go to stderr; JSON report + serve WAL path under `integration/out/`. Override workspace:
 
 ```bash
 PLSP_DISCOVER_ROOT="/Users/you/…/supplytech-pdf-client/src" \

@@ -387,7 +387,7 @@ pub fn run_progressive(opts: &ProgressiveOpts) -> Result<Value, String> {
         &mut ctrl,
         METHOD_INDEX_STATUS,
         &mut next_id,
-        IndexStatusRequest {},
+        IndexStatusRequest::default(),
         opts.deadline,
         start,
     )?;

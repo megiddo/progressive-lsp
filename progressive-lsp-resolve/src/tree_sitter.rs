@@ -284,19 +284,23 @@ impl Resolver for TreeSitterResolver {
             }
             QueryKind::References => {
                 let Some(name) = self.reference_name(q) else {
-                    return ResolveOutcome::Ready(ResolveResult::empty(tier));
+                    return ResolveOutcome::NotReady;
                 };
                 let locs = self.reference_locations(q, &name, tier);
+                if locs.is_empty() {
+                    return ResolveOutcome::NotReady;
+                }
                 ResolveOutcome::Ready(ResolveResult::locations(tier, locs))
             }
             QueryKind::Implementation => {
                 let Some(at) = self.identifier_at(q) else {
-                    return ResolveOutcome::Ready(ResolveResult::empty(tier));
+                    return ResolveOutcome::NotReady;
                 };
-                ResolveOutcome::Ready(ResolveResult::locations(
-                    tier,
-                    self.type_locations(&at, tier),
-                ))
+                let locs = self.type_locations(&at, tier);
+                if locs.is_empty() {
+                    return ResolveOutcome::NotReady;
+                }
+                ResolveOutcome::Ready(ResolveResult::locations(tier, locs))
             }
         }
     }
@@ -582,8 +586,8 @@ mod tests {
             Position::new(1, 0),
             QueryKind::Implementation,
         )) {
-            ResolveOutcome::Ready(res) => assert!(res.locations.is_empty()),
-            ResolveOutcome::NotReady => panic!("ready"),
+            ResolveOutcome::NotReady => {}
+            other => panic!("{other:?}"),
         }
         match r.resolve(&ResolveQuery::new(
             FileId::new("missing.java"),
@@ -606,8 +610,8 @@ mod tests {
             Position::new(0, 0),
             QueryKind::References,
         )) {
-            ResolveOutcome::Ready(res) => assert!(res.locations.is_empty()),
-            ResolveOutcome::NotReady => panic!("ready"),
+            ResolveOutcome::NotReady => {}
+            other => panic!("{other:?}"),
         }
     }
 

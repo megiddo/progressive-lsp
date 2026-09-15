@@ -24,7 +24,10 @@ pub use port::{
     FixedGenerationPort, GenerationPort, IndexGenerationPort, SharedGenerationPort,
     TypesCachePort,
 };
-pub use engine_builder::{IndexOpenPort, OpenDocumentPort, spawn_engine_types_cache_builder};
+pub use engine_builder::{
+    CacheReadyListener, CacheReadyNotice, IndexOpenPort, OpenDocumentPort,
+    spawn_engine_types_cache_builder,
+};
 pub use resolver::TypesCacheResolver;
 pub use serve_state::CacheServeState;
 pub use stack::TypesCacheStack;

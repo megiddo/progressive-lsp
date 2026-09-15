@@ -9,7 +9,9 @@ use progressive_lsp_control::{
     EngineStatusRow, GetConfigResponse, IndexPackage, IndexStatusRequest, IndexStatusResponse,
     InstallPacksRequest,
     InstallPacksResponse, ReloadConfigRequest, ReloadConfigResponse, ReloadScriptsRequest,
-    ReloadScriptsResponse, SetConfigRequest, SetConfigResponse, Status, TierReady, TierRow,
+    CacheReady, FetchTraceRequest, FetchTraceResponse, ReloadScriptsResponse, SetConfigRequest,
+    SetConfigResponse, Status, TierReady, TraceRing,
+    TierRow,
     TierStatusRequest, TierStatusResponse, WatchBatch, WatchEvent, WatchSubscribeRequest,
     WatchSubscribeResponse,
 };
@@ -25,9 +27,10 @@ use progressive_lsp_log::ConfigWarnAdapter;
 use progressive_lsp_protocol::LspIntelligence;
 use progressive_lsp_resolve::{ResolveQuery, ResolveResult};
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
-use progressive_lsp_watch::{FilesSinceJournal, FilesSinceQuery};
+use progressive_lsp_watch::{FilesSinceJournal, FilesSinceQuery, WatchBatch as DomainWatchBatch};
 use serde_json::Value;
 
+use crate::file_hub::FileHubSlot;
 use crate::session::collect_sources;
 use crate::WorkspaceSession;
 
@@ -62,8 +65,11 @@ pub struct ServeHost {
     pending_batches: Mutex<Vec<WatchBatch>>,
     snapshot: Mutex<HashMap<PathBuf, u64>>,
     pending_tier: Mutex<Vec<TierReady>>,
+    pending_cache_ready: Arc<Mutex<Vec<CacheReady>>>,
     log: Arc<dyn LogPort>,
     supervisor: Option<Arc<EngineSupervisor>>,
+    file_hub: FileHubSlot,
+    trace_ring: Arc<TraceRing>,
 }
 
 impl ServeHost {
@@ -74,12 +80,14 @@ impl ServeHost {
     pub fn new_with_log(layout: PrefixLayout, log: Arc<dyn LogPort>) -> Result<Self, ConfigError> {
         let load = load_config_file(&layout.config_path())?;
         ConfigWarnAdapter::new(Arc::clone(&log)).emit_warnings(&load.warnings);
+        let trace_ring = Arc::new(TraceRing::new());
         Ok(Self {
             session: WorkspaceSession::with_prefix_and_t2_log(
                 &layout,
                 load.config.t2_for("java"),
                 Arc::clone(&log),
-            ),
+            )
+            .with_trace_ring(Arc::clone(&trace_ring)),
             layout,
             config: Mutex::new(load.config),
             disk_watch: ServeDiskWatch::new(),
@@ -89,13 +97,62 @@ impl ServeHost {
             pending_batches: Mutex::new(Vec::new()),
             snapshot: Mutex::new(HashMap::new()),
             pending_tier: Mutex::new(Vec::new()),
+            pending_cache_ready: Arc::new(Mutex::new(Vec::new())),
             log,
             supervisor: None,
+            file_hub: FileHubSlot::default(),
+            trace_ring,
         })
     }
 
+    /// Called from `serve_with_io_and_log` after `Arc::new` so hub subscribers can reach the host.
+    pub fn wire_file_event_hub(self: &Arc<Self>) {
+        let host = Arc::clone(self);
+        self.file_hub.wire_deliver(Arc::new(move |batch| {
+            host.deliver_hub_batch(batch);
+        }));
+    }
+
+    fn deliver_hub_batch(&self, batch: DomainWatchBatch) {
+        self.file_hub.note_batch_flags(&batch);
+        self.session.apply_hub_batch(&batch);
+        self.hub_control_subscriber(&batch);
+    }
+
+    /// ABS-2.5: journal + pending WatchBatch pushes (no tree-scan diff).
+    fn hub_control_subscriber(&self, batch: &DomainWatchBatch) {
+        if batch.events.is_empty() {
+            return;
+        }
+        let mut journal = self.journal.lock().expect("journal");
+        let gen = batch.generation;
+        if batch.overflow {
+            journal.mark_overflow(gen);
+        }
+        for ev in &batch.events {
+            journal.record(&ev.path, gen, 0);
+        }
+        drop(journal);
+        if *self.subscribed.lock().expect("sub") {
+            self.pending_batches
+                .lock()
+                .expect("batches")
+                .push(batch.to_proto());
+        }
+    }
+
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
-        self.session.attach_supervisor(Arc::clone(&supervisor));
+        let pending_cb = Arc::clone(&self.pending_cache_ready);
+        self.session.attach_supervisor(
+            Arc::clone(&supervisor),
+            Some(Arc::new(move |notice| {
+                pending_cb.lock().expect("cache ready").push(CacheReady {
+                    file: notice.file.as_str().to_string(),
+                    query_kind: notice.kind.as_str().to_string(),
+                    location_count: notice.location_count,
+                });
+            })),
+        );
         self.supervisor = Some(supervisor);
         self
     }
@@ -156,9 +213,20 @@ impl ServeHost {
         Ok(())
     }
 
-    /// Diff on-disk sources vs last snapshot. Queues WatchBatch when subscribed.
+    /// Fallback tree-scan when hub is off or `need_rescan` (ABS-2.6).
     pub fn poll_disk_watch(&self) -> usize {
         self.sync_types_tier_from_engines();
+        if self.file_hub.is_running() {
+            if self.file_hub.need_rescan() {
+                self.file_hub.clear_need_rescan();
+                return self.fallback_tree_scan_disk_watch();
+            }
+            return self.disk_watch.poll(&self.session);
+        }
+        self.fallback_tree_scan_disk_watch()
+    }
+
+    fn fallback_tree_scan_disk_watch(&self) -> usize {
         let Some(root) = self.workspace.lock().expect("ws").clone() else {
             return self.disk_watch.poll(&self.session);
         };
@@ -310,7 +378,10 @@ impl ServeHost {
 }
 
 impl LspIntelligence for ServeHost {
-    fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+    fn resolve_report(
+        &self,
+        q: &ResolveQuery,
+    ) -> progressive_lsp_protocol::ResolveReport {
         let operation = match q.kind {
             progressive_lsp_resolve::QueryKind::Definition => "textDocument/definition",
             progressive_lsp_resolve::QueryKind::Implementation => "textDocument/implementation",
@@ -326,14 +397,14 @@ impl LspIntelligence for ServeHost {
                 .line(q.position.line)
                 .operation(operation),
         );
-        let discover = matches!(
+        let _discover = matches!(
             q.kind,
             progressive_lsp_resolve::QueryKind::Definition
                 | progressive_lsp_resolve::QueryKind::Implementation
                 | progressive_lsp_resolve::QueryKind::References
                 | progressive_lsp_resolve::QueryKind::TypeDefinition
         );
-        self.session.resolve(q)
+        self.session.resolve_report(q)
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
@@ -353,7 +424,13 @@ impl LspIntelligence for ServeHost {
                 .path(path.to_string_lossy().into_owned())
                 .operation("textDocument/didChange"),
         );
-        self.session.did_change(uri, text);
+        self.session.apply_buffer_change(uri, text);
+        if self.file_hub.is_running() {
+            self.file_hub
+                .publish_buffer_modify(&path.to_string_lossy());
+        } else {
+            self.session.forward_buffer_change(uri, text);
+        }
     }
 
     fn did_close(&self, uri: &str) {
@@ -394,6 +471,7 @@ impl LspIntelligence for ServeHost {
             }
             self.sync_types_tier_from_engines();
             self.disk_watch.snapshot_root(&self.session);
+            let _ = self.file_hub.try_start(&root);
             let _ = self.poll_disk_watch();
         }
         let _g = LogScope::enter(
@@ -527,7 +605,8 @@ impl ControlPlane for ServeHost {
         std::mem::take(&mut *self.pending_batches.lock().expect("batches"))
     }
 
-    fn index_status(&self, _req: &IndexStatusRequest) -> IndexStatusResponse {
+    fn index_status(&self, req: &IndexStatusRequest) -> IndexStatusResponse {
+        let started = std::time::Instant::now();
         self.sync_types_tier_from_engines();
         let gen = self.session.index_generation();
         let package_ids = self.session.package_ids();
@@ -545,15 +624,58 @@ impl ControlPlane for ServeHost {
         let engines = self
             .supervisor
             .as_ref()
-            .map(|sup| index_engine_rows(sup, &self.layout, &package))
+            .map(|sup| crate::tier_registry::index_engine_rows(sup, &self.layout, &package))
             .unwrap_or_default();
-        IndexStatusResponse {
+        let tier_capabilities = crate::tier_registry::tier_capability_rows(
+            &self.session,
+            self.supervisor.as_deref(),
+            &self.layout,
+            package_ids.first().map(String::as_str).unwrap_or("."),
+        );
+        let ingest = self.session.ingest_state().as_str().to_string();
+        let mut resp = IndexStatusResponse {
             status: Some(Status::ok()),
             packages,
             cache_entries: self.session.cache_entries(),
-            ingest: self.session.ingest_state().as_str().into(),
+            ingest,
             engines,
+            tier_capabilities,
+            progressive_meta: None,
+        };
+        if req.emit_result_meta {
+            use progressive_lsp_control::{ProgressiveMeta, Timing};
+            use progressive_lsp_core::{LogLevel, LogRecord};
+            use progressive_lsp_protocol::progressive_lsp::new_trace_id;
+
+            let trace_id = new_trace_id();
+            let handler_ms = started.elapsed().as_millis() as u64;
+            let workspace_tier = package_ids
+                .first()
+                .and_then(|id| self.session.package_tier(id))
+                .map(|t| t.as_str().to_string())
+                .unwrap_or_else(|| "syntax".into());
+            let mut rec = LogRecord::at_caller(LogLevel::Info, "IndexStatus");
+            rec.message = format!(
+                "IndexStatus packages={} ingest={} cache={}",
+                resp.packages.len(),
+                resp.ingest,
+                resp.cache_entries
+            );
+            self.trace_ring.append(&trace_id, &rec);
+            resp.progressive_meta = Some(ProgressiveMeta {
+                trace_id,
+                tier: workspace_tier,
+                backend_language: String::new(),
+                backend_version: String::new(),
+                timing: req.emit_timing.then(|| Timing {
+                    handler_ms,
+                    resolve_ms: 0,
+                    chain_steps: 0,
+                    cache_state: String::new(),
+                }),
+            });
         }
+        resp
     }
 
     fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {
@@ -580,6 +702,10 @@ impl ControlPlane for ServeHost {
         std::mem::take(&mut *self.pending_tier.lock().expect("tier"))
     }
 
+    fn take_cache_ready(&self) -> Vec<CacheReady> {
+        std::mem::take(&mut *self.pending_cache_ready.lock().expect("cache ready"))
+    }
+
     fn reload_scripts(&self, _req: &ReloadScriptsRequest) -> ReloadScriptsResponse {
         match self.load_scripts_from_chain() {
             Ok(()) => ReloadScriptsResponse {
@@ -591,6 +717,26 @@ impl ControlPlane for ServeHost {
                     status: Some(Status::error(1, e.0)),
                 }
             }
+        }
+    }
+
+    fn fetch_trace(&self, req: &FetchTraceRequest) -> FetchTraceResponse {
+        if req.trace_id.is_empty() {
+            return FetchTraceResponse {
+                status: Some(Status::error(1, "empty trace_id")),
+                rows: vec![],
+            };
+        }
+        let rows = self.trace_ring.fetch(&req.trace_id, req.max_rows);
+        if rows.is_empty() {
+            return FetchTraceResponse {
+                status: Some(Status::error(404, "trace not found")),
+                rows: vec![],
+            };
+        }
+        FetchTraceResponse {
+            status: Some(Status::ok()),
+            rows,
         }
     }
 }
@@ -717,34 +863,6 @@ fn parse_sha256_hex(hex: &str) -> Result<[u8; 32], String> {
 }
 
 /// Inbox: `$PREFIX/inbox/<pack>/payload` + `expected.sha256`. Else stub bytes (CLI install).
-fn index_engine_rows(
-    sup: &EngineSupervisor,
-    layout: &PrefixLayout,
-    package: &PackageId,
-) -> Vec<EngineStatusRow> {
-    sup.registered_packs()
-        .into_iter()
-        .map(|(pack, language)| {
-            let (state, detail) = if sup.is_ready(&language, package) {
-                ("ready".into(), String::new())
-            } else if let Some(err) = sup.last_error(&pack) {
-                ("error".into(), err.to_string())
-            } else {
-                match discover_pack(layout, &pack) {
-                    Ok(_) => ("pending".into(), "discovered; waiting for engine".into()),
-                    Err(e) => ("missing".into(), e.to_string()),
-                }
-            };
-            EngineStatusRow {
-                language: language.as_str().to_string(),
-                pack,
-                state,
-                detail,
-            }
-        })
-        .collect()
-}
-
 fn install_pack_from_inbox_or_stub(
     layout: &PrefixLayout,
     raw: &str,
@@ -1041,6 +1159,7 @@ mod tests {
         )
         .unwrap();
         let _ = format!("{:?}", ServeDiskWatch::new());
+        host.poll_disk_watch();
         let sym = host.resolve(&ResolveQuery::workspace_symbol("ghost"));
         let src_now = host
             .session
@@ -1210,11 +1329,21 @@ mod tests {
                     .any(|p| p.contains("New.java") || p.contains("App.java")),
             "{batches:?}"
         );
-        let idx = host.index_status(&IndexStatusRequest {});
+        let idx = host.index_status(&IndexStatusRequest::default());
         assert!(idx.status.as_ref().unwrap().is_ok());
         assert_eq!(
             idx.ingest_state(),
             progressive_lsp_control::IngestState::Done
+        );
+        let idx_meta = host.index_status(&IndexStatusRequest {
+            emit_result_meta: true,
+            emit_timing: true,
+        });
+        assert!(
+            idx_meta
+                .progressive_meta
+                .as_ref()
+                .is_some_and(|m| !m.trace_id.is_empty())
         );
         let tiers = host.tier_status(&TierStatusRequest {});
         assert!(tiers.status.unwrap().is_ok());

@@ -8,6 +8,16 @@ use crate::key::TypesCacheKey;
 /// Enqueues cache misses for background fill (engine in TC-3).
 pub trait TypesCacheBuilder: Send + Sync {
     fn on_miss(&self, key: TypesCacheKey);
+
+    /// When true, mux stops at T3′ empty instead of falling through to T2/T1 (ABS-1.3).
+    fn terminal_miss_at_types(&self) -> bool {
+        false
+    }
+
+    /// True while the builder worker holds this key (duplicate mux discover).
+    fn is_inflight(&self, _key: &TypesCacheKey) -> bool {
+        false
+    }
 }
 
 /// Coalesced miss queue for builder worker (priority in TC-3).

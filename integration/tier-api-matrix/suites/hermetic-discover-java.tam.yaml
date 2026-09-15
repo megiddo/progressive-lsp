@@ -1,0 +1,25 @@
+# Hermetic TAM suite (discover-java fixture). Used by harness tests and run-tam.sh fallback.
+apiVersion: progressive-lsp/tam/v1
+id: hermetic-discover-java
+
+session:
+  progressive_lsp:
+    emitResultMeta: true
+    emitTiming: true
+
+cases:
+  - id: app-definition
+    file: src/main/java/com/example/app/App.java
+    anchor:
+      find: Lib
+    apis:
+      - method: textDocument/definition
+        progressive_lsp:
+          maxChainIter: 2
+          maxTier: graph
+        expect:
+          min_locations: 1
+          timing:
+            max_resolve_ms: 60000
+        trace:
+          fetch: true

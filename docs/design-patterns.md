@@ -34,6 +34,9 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `TsgPin` | Value object | Git URL + SHA + rel path; fetch-at-SHA; never a `third_party/` dump |
 | `TsgLoadState` | Value object | `Unused` vs `SourceLoaded` / `RuntimeReady` / `FetchFailed`; selected backend is never the unused slot |
 | `ResolveQuery`, `QueryKind`, `ResolveResult`, `LspLocation` | Query / Command | Protocol crate builds a query; resolvers do not parse JSON-RPC; `LspLocation.data.tier` when we set `data` |
+| `ChainPolicy` | Value object | Optional `maxChainIter` / `maxTier` on `ResolveQuery`; `ResolverChain` honors limits (IT-TAM deterministic tiers) |
+| `ProgressiveResultMeta` / extended LSP `result` | DTO | Opt-in `{ value, progressiveMeta }` wrapper; stock wire when meta off |
+| `TraceRing` | Ring buffer | In-memory rows keyed by `traceId`; `FetchTrace` on control plane |
 | `WorkspaceSource` adapters | Adapter | Disk/build files → `WorkspaceModel`; no compiler invocation except documented one-shots |
 | `WorkspaceModel` | Domain model / DTO | Roots and classpath-like entries **exist on disk**; scripts cannot invent jars |
 | `EngineAdapter` | Adapter | Child argv/stdio/ready → supervisor API |
@@ -119,6 +122,8 @@ Related: [detailed-design.md](detailed-design.md), [plugin-sdk.md](plugin-sdk.md
 | `root_from_params` | Adapter | `rootUri` / `rootPath` / `workspaceFolders` → workspace path; no `$/` FilesSince |
 | `LspStdioDriver` (`plsp-it1`) | Adapter | initialize → shutdown over Content-Length; integration only; no `$/` FilesSince |
 | `ServeDiskWatch` | Observer + Adapter | Stock ghost-disk: on-disk bytes change → reindex; no progressive client; no `thread::sleep` in unit tests |
+| `FileEventHub` | Observer + pub/sub | ADR 003: one coalescing thread; `WatchBackend` + buffer `didChange`; subscribers (index, T3′, engine forward, control journal); `poll_disk_watch` is fallback/rescan only |
+| `FileHubSlot` | Facade | `ServeHost` hub lifecycle; `wire_file_event_hub` after `Arc`; `NotifyWatcher` production adapter (platform-scoped live notify) |
 | `CorpusPin` (`integration/corpora/pins.json`) | Value object / Schema | URL + peeled SHA + entry; fetch-at-SHA; never a submodule mirror |
 | `ExpectedGolden` | Schema / DTO | 0-based `find` → line/character; integration only |
 | `It2BackendDriver` (`plsp-it1 backend`) | Adapter | Stock initialize/didOpen/def/hover/tokens/didChange/ghost; `$/` FilesSince must be method-not-found |
@@ -331,8 +336,13 @@ llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
 | `TypesCacheKey` | Value object | `(QueryKind, FileId, Position, CacheGeneration)` identity; generation mismatch → miss |
 | `TypesCacheEntry` | Value object | `ResolveResult` + `filled_at_unix_ms` + `source` + `engine_generation` |
 | `CacheGeneration` | Value object | Monotonic u64 from index dirty / global generation |
-| `TypesCacheResolver` | Chain of Responsibility step | Read path only; miss enqueues builder; never calls engine |
+| `TypesCacheResolver` | Chain of Responsibility step | Read path only; miss enqueues builder; with engine builder stops at empty `Tier::Types` (no T2 fallthrough); never calls engine on mux |
 | `TypesCacheBuilder` | Command + background worker | `on_miss` hook; engine fill in TC-3 |
+| `ServeReadiness` | Value object / FSM snapshot | Workspace ingest + `query_pending_at_types` from WAL `cache_state` (ADR 002) |
+| `TierDescriptor` / `TIER_REGISTRY` | Value object + static registry | Latency → quality sort; discover query kinds; ABS-3 |
+| `TierCapabilityRow` | DTO | Additive `IndexStatus.tier_capabilities[]`; per-tier `readiness` snapshot |
+| `TierPort` / `TierPortChain` | Port + composite | ABS-4 resolve-step boundary; `ResolverTierPort` adapter; dynamic chain omits types when engines `missing` |
+| `CacheReady` | Event / DTO | Control push when T3′ key leaves `inflight` on builder worker |
 | `BuilderQueue` | Command queue | Dedupes misses by query identity (ignoring generation) |
 | `InvalidationPolicy` | Strategy | `on_file_dirty` / `on_engine_restart` → store eviction |
 | `GenerationPort` | Port | `file_generation` for keys; `IndexGenerationPort` reads `IndexService` |

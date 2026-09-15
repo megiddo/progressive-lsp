@@ -73,6 +73,26 @@ impl QueryKind {
     }
 }
 
+/// Per-request resolver chain limits (SEAMS-1). Defaults = unlimited chain / full tier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChainPolicy {
+    pub max_chain_iter: Option<u8>,
+    pub max_tier: Option<Tier>,
+}
+
+impl ChainPolicy {
+    pub fn unlimited() -> Self {
+        Self::default()
+    }
+
+    pub fn merge(base: Self, override_: Self) -> Self {
+        Self {
+            max_chain_iter: override_.max_chain_iter.or(base.max_chain_iter),
+            max_tier: override_.max_tier.or(base.max_tier),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolveQuery {
     pub file: FileId,
@@ -80,6 +100,7 @@ pub struct ResolveQuery {
     pub kind: QueryKind,
     /// Workspace symbol query text. Ignored for other kinds.
     pub symbol_query: Option<String>,
+    pub chain_policy: ChainPolicy,
 }
 
 impl ResolveQuery {
@@ -89,6 +110,7 @@ impl ResolveQuery {
             position,
             kind,
             symbol_query: None,
+            chain_policy: ChainPolicy::default(),
         }
     }
 
@@ -98,6 +120,7 @@ impl ResolveQuery {
             position: Position::default(),
             kind: QueryKind::WorkspaceSymbol,
             symbol_query: Some(query.into()),
+            chain_policy: ChainPolicy::default(),
         }
     }
 }

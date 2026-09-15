@@ -8,6 +8,7 @@ This directory is the **source of truth** for the product. Implement from these 
 
 | If you need | Read |
 |---|---|
+| **Build & run from a clone** | [../README.md](../README.md) (Use & development), `./build help` |
 | What this is and is not | [vision.md](vision.md) |
 | Must / must-not / NFRs | [requirements.md](requirements.md) |
 | Process and data flow | [architecture.md](architecture.md) |
@@ -29,7 +30,10 @@ This directory is the **source of truth** for the product. Implement from these 
 | If you need | Read |
 |---|---|
 | Vanilla LSP vs progressive client | [lsp-contract.md](lsp-contract.md) |
+| **Current public APIs (LSP + control catalog)** | [progressive-lsp-apis.md](progressive-lsp-apis.md) |
 | Optional protobuf control API | [control-protocol.md](control-protocol.md) |
+| N-tier framework (target vs ADR 002 plan) | [architecture/n-tier-framework.md](architecture/n-tier-framework.md) |
+| **Serve abstraction program (ABS-1…4)** | [architecture/abstraction-targets-plan.md](architecture/abstraction-targets-plan.md), [abstraction-checklist.md](architecture/abstraction-checklist.md) |
 | LanguageFactory / scripts | [plugin-sdk.md](plugin-sdk.md) |
 | LATEST+2 pins and lag | [language-matrix.md](language-matrix.md) |
 | What may exist on the host | [host-deps.md](host-deps.md) |

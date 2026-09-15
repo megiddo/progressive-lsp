@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use progressive_lsp_control::IngestState;
+use progressive_lsp_control::{IngestState, TraceRing};
 use progressive_lsp_core::{
+    path_to_file_uri,
     path_from_file_uri, FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort,
     LogRecord, LogScope, NullLog, PackageId, PrefixLayout, T2Backend, Tier,
 };
@@ -15,13 +16,22 @@ use progressive_lsp_types_cache::{CacheServeState, TypesCacheStack};
 use progressive_lsp_index::{
     IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex,
 };
-use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
+use progressive_lsp_protocol::{
+    progressive_lsp::{
+        new_trace_id, session_options_from_initialize, test_chain_policy_from_env,
+        ProgressiveLspSessionOptions,
+    },
+    LspIntelligence, ProgressiveLspRequestOptions, ResolveReport, WorkDoneProgress,
+};
 use progressive_lsp_resolve::{
-    QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy,
-    TreeSitterResolver,
+    ChainPolicy, QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, Resolver, ResolverChain,
+    T2Strategy, TreeSitterResolver,
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
-use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
+use progressive_lsp_watch::{
+    DefaultIgnoreFilter, WatchBackend, WatchBatch, WatchCoalescer, WatchEventSource, WatchFilter,
+    WatchKind,
+};
 use progressive_lsp_workspace::{detect_workspace, PackageEntry, WorkspaceModel};
 
 #[cfg(test)]
@@ -65,6 +75,8 @@ pub struct WorkspaceSession {
     pub(crate) types_cache: TypesCacheStack,
     log: Arc<dyn LogPort>,
     unknown_languages: Mutex<HashSet<String>>,
+    progressive_lsp: Mutex<ProgressiveLspSessionOptions>,
+    trace_ring: Option<Arc<TraceRing>>,
 }
 
 impl WorkspaceSession {
@@ -84,7 +96,14 @@ impl WorkspaceSession {
             types_cache,
             log: Arc::new(NullLog),
             unknown_languages: Mutex::new(HashSet::new()),
+            progressive_lsp: Mutex::new(ProgressiveLspSessionOptions::default()),
+            trace_ring: None,
         }
+    }
+
+    pub fn with_trace_ring(mut self, ring: Arc<TraceRing>) -> Self {
+        self.trace_ring = Some(ring);
+        self
     }
 
     pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
@@ -93,15 +112,20 @@ impl WorkspaceSession {
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
-        self.attach_supervisor(supervisor);
+        self.attach_supervisor(supervisor, None);
         self
     }
 
-    pub fn attach_supervisor(&mut self, supervisor: Arc<EngineSupervisor>) {
+    pub fn attach_supervisor(
+        &mut self,
+        supervisor: Arc<EngineSupervisor>,
+        cache_ready: Option<progressive_lsp_types_cache::CacheReadyListener>,
+    ) {
         if self.supervisor.is_none() {
             self.types_cache.attach_engine_builder(
                 Arc::clone(&supervisor),
                 self.index.clone(),
+                cache_ready,
             );
         }
         self.supervisor = Some(supervisor);
@@ -362,7 +386,11 @@ impl WorkspaceSession {
     }
 
     pub fn cache_entries(&self) -> u64 {
-        self.index.lock().cache.len() as u64
+        if self.supervisor.is_some() {
+            self.types_cache.types_cache_entry_count()
+        } else {
+            self.index.lock().cache.len() as u64
+        }
     }
 
     pub fn index_generation(&self) -> u64 {
@@ -439,6 +467,57 @@ impl WorkspaceSession {
             }
         }
         n
+    }
+
+    /// LSP buffer edit on the mux thread (index only).
+    pub fn apply_buffer_change(&self, uri: &str, text: &str) {
+        let path = path_from_file_uri(uri);
+        let _g = LogScope::enter(
+            LogScope::new()
+                .path(path.to_string_lossy().into_owned())
+                .operation("textDocument/didChange"),
+        );
+        self.log.debug("textDocument/didChange");
+        if let Some(indexer) = self.indexer_for(&path, "") {
+            let old = self.index.lock().source(&path).unwrap_or("").to_string();
+            let change = InputChange::replace_all(&old, text);
+            self.index
+                .lock()
+                .apply_change(&path, &change, indexer.as_ref());
+        }
+    }
+
+    pub fn forward_buffer_change(&self, uri: &str, text: &str) {
+        if let Some(sup) = &self.supervisor {
+            sup.forward_did_change(uri, text);
+        }
+    }
+
+    /// Hub subscriber: index, T3′ invalidation, engine forward (ABS-2.2–2.4).
+    pub fn apply_hub_batch(&self, batch: &WatchBatch) {
+        let mut filtered = batch.clone();
+        let paths: Vec<String> = filtered.events.iter().map(|e| e.path.clone()).collect();
+        let kept = self.filter_watch_paths(&paths);
+        filtered.events.retain(|e| kept.iter().any(|k| k == &e.path));
+        if filtered.events.is_empty() {
+            return;
+        }
+        self.index
+            .lock()
+            .apply_watch_batch(&filtered, self.filter.as_ref());
+        for ev in &filtered.events {
+            if ev.source == WatchEventSource::Disk && ev.kind != WatchKind::Delete {
+                self.apply_disk_path(Path::new(&ev.path));
+            }
+            if let Some(sup) = &self.supervisor {
+                let path = Path::new(&ev.path);
+                if let Some(text) = self.index.lock().source(path) {
+                    let uri = path_to_file_uri(path);
+                    sup.forward_did_change(&uri, text);
+                }
+            }
+        }
+        self.types_cache.on_watch_batch(&filtered);
     }
 }
 
@@ -534,8 +613,16 @@ pub(crate) fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
     }
 }
 
+fn backend_version_label(tier: Tier, _supervisor: Option<&Arc<EngineSupervisor>>) -> String {
+    match tier {
+        Tier::Types => "engine".into(),
+        Tier::Graph => format!("heuristic-graph@{}", env!("CARGO_PKG_VERSION")),
+        Tier::Syntax => format!("tree-sitter@{}", env!("CARGO_PKG_VERSION")),
+    }
+}
+
 impl LspIntelligence for WorkspaceSession {
-    fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+    fn resolve_report(&self, q: &ResolveQuery) -> ResolveReport {
         let operation = match q.kind {
             QueryKind::Definition => "textDocument/definition",
             QueryKind::Implementation => "textDocument/implementation",
@@ -552,12 +639,15 @@ impl LspIntelligence for WorkspaceSession {
                 .operation(operation),
         );
         self.log.debug(&format!("{operation} start"));
+        let trace_id = new_trace_id();
         let started = Instant::now();
-        let result = match self.chain.resolve(q) {
+        let (outcome, chain_steps) = self.chain.resolve_with_steps(q);
+        let result = match outcome {
             ResolveOutcome::Ready(r) => r,
             ResolveOutcome::NotReady => ResolveResult::empty(Tier::Syntax),
         };
         let cache_state = self.types_cache.take_serve_state();
+        let resolve_ms = started.elapsed().as_millis() as u64;
         let discover = matches!(
             q.kind,
             QueryKind::Definition
@@ -566,7 +656,6 @@ impl LspIntelligence for WorkspaceSession {
                 | QueryKind::TypeDefinition
         );
         if discover {
-            let resolve_ms = started.elapsed().as_millis() as u64;
             self.log.debug(&format!(
                 "{operation} complete tier={} locations={} resolve_ms={resolve_ms}",
                 result.tier.as_str(),
@@ -608,11 +697,75 @@ impl LspIntelligence for WorkspaceSession {
                 result.locations.len()
             );
             rec.extras = Some(extras);
+            if let Some(ring) = &self.trace_ring {
+                ring.append(&trace_id, &rec);
+            }
             self.log.emit(rec);
         } else {
             self.log.debug(operation);
         }
-        result
+        let path = Path::new(q.file.as_str());
+        let backend_language = progressive_lsp_core::language_id_from_path(path)
+            .map(|id| id.as_str().to_string())
+            .unwrap_or_default();
+        let tier_str = result.tier.as_str().to_string();
+        let backend_version = backend_version_label(result.tier, self.supervisor.as_ref());
+        ResolveReport {
+            result,
+            meta: progressive_lsp_protocol::progressive_lsp::ProgressiveResultMeta {
+                trace_id,
+                tier: tier_str,
+                backend_language,
+                backend_version,
+                resolve_ms: Some(resolve_ms),
+                chain_steps: Some(chain_steps),
+                cache_state: Some(cache_state.as_str().to_string()),
+            },
+        }
+    }
+
+    fn effective_chain_policy(&self, per_request: ChainPolicy) -> ChainPolicy {
+        let session = self
+            .progressive_lsp
+            .lock()
+            .expect("progressive_lsp")
+            .chain_defaults;
+        let env = test_chain_policy_from_env();
+        ChainPolicy::merge(
+            ChainPolicy::merge(session, env),
+            per_request,
+        )
+    }
+
+    fn progressive_cap_extension(&self) -> Option<serde_json::Value> {
+        let opts = self.progressive_lsp.lock().expect("progressive_lsp");
+        if !opts.emit_result_meta {
+            return None;
+        }
+        Some(serde_json::json!({
+            "extendedResults": true,
+            "resultMetaFields": [
+                "tier",
+                "backendLanguage",
+                "backendVersion",
+                "timing",
+                "traceId"
+            ]
+        }))
+    }
+
+    fn effective_emit_options(
+        &self,
+        per_request: &ProgressiveLspRequestOptions,
+    ) -> (bool, bool) {
+        let base = self.progressive_lsp.lock().expect("progressive_lsp");
+        let emit_meta = per_request
+            .emit_result_meta
+            .unwrap_or(base.emit_result_meta);
+        let emit_timing = per_request
+            .emit_timing
+            .unwrap_or(base.emit_timing);
+        (emit_meta, emit_timing)
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {
@@ -635,23 +788,8 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn did_change(&self, uri: &str, text: &str) {
-        let path = path_from_file_uri(uri);
-        let _g = LogScope::enter(
-            LogScope::new()
-                .path(path.to_string_lossy().into_owned())
-                .operation("textDocument/didChange"),
-        );
-        self.log.debug("textDocument/didChange");
-        if let Some(indexer) = self.indexer_for(&path, "") {
-            let old = self.index.lock().source(&path).unwrap_or("").to_string();
-            let change = InputChange::replace_all(&old, text);
-            self.index
-                .lock()
-                .apply_change(&path, &change, indexer.as_ref());
-        }
-        if let Some(sup) = &self.supervisor {
-            sup.forward_did_change(uri, text);
-        }
+        self.apply_buffer_change(uri, text);
+        self.forward_buffer_change(uri, text);
     }
 
     fn did_close(&self, uri: &str) {
@@ -773,6 +911,8 @@ impl LspIntelligence for WorkspaceSession {
     }
 
     fn on_initialize(&self, params: &serde_json::Value) -> Result<(), InitializeFailed> {
+        *self.progressive_lsp.lock().expect("progressive_lsp") =
+            session_options_from_initialize(params);
         let scripts = params
             .get("initializationOptions")
             .and_then(|o| o.get("scripts"))
@@ -1370,8 +1510,9 @@ mod tests {
             Some(&"miss".to_string())
         );
         let second = session.resolve(&q);
-        assert_eq!(first.tier, Tier::Syntax);
-        assert_eq!(second.tier, Tier::Syntax);
+        assert_eq!(first.tier, Tier::Types);
+        assert!(first.locations.is_empty());
+        assert_eq!(second.tier, Tier::Types);
         let engine_skips: Vec<_> = log
             .records()
             .into_iter()
@@ -1382,6 +1523,39 @@ mod tests {
             })
             .collect();
         assert!(engine_skips.is_empty(), "engine is builder-only on mux: {engine_skips:?}");
+    }
+
+    #[test]
+    fn mux_discover_does_not_call_supervisor_resolve() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(dir.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = progressive_lsp_engine::FakeEngineAdapter::java()
+            .with_binary(progressive_lsp_engine::EngineBinary {
+                pack_name: "java".into(),
+                path: dir.path().join("javacs"),
+                sha256: [0; 32],
+            });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        let _ = sup.try_spawn(
+            "java",
+            &LanguageId::new("java"),
+            &PackageId::new("pkg"),
+            dir.path(),
+        );
+        let session = WorkspaceSession::java_default().with_supervisor(Arc::new(sup));
+        session.did_open("file:///Use.java", "java", "class Use { void f() { Ref r; } }\n");
+        let q = ResolveQuery::new(
+            progressive_lsp_core::FileId::new("Use.java"),
+            progressive_lsp_resolve::Position::new(0, 20),
+            QueryKind::References,
+        );
+        let r = session.resolve(&q);
+        assert_eq!(r.tier, Tier::Types);
+        assert!(r.locations.is_empty());
+        assert_eq!(session.types_cache.types_cache_entry_count(), 0);
     }
 
     #[test]

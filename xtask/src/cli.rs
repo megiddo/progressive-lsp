@@ -216,6 +216,8 @@ pub struct RunLaunch {
     pub container: bool,
     /// Explicit native open (T1/T2 on non-Linux). Opts out of folder container default.
     pub native: bool,
+    /// In-tree Java fixture; ensures runtime image when using container.
+    pub smoke: bool,
     pub control_socket: Option<PathBuf>,
     pub extra: Vec<String>,
 }
@@ -312,6 +314,12 @@ pub enum XtaskCommand {
     Run {
         launch: RunLaunch,
     },
+    Test {
+        rest: Vec<String>,
+    },
+    Integ {
+        rest: Vec<String>,
+    },
     Legacy {
         name: String,
         rest: Vec<String>,
@@ -347,6 +355,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
         XtaskCommand::Build { target, flags } => execute_build(target, flags),
         XtaskCommand::Run { launch } => execute_run(launch),
+        XtaskCommand::Test { rest } => crate::ws_test::run(&rest),
+        XtaskCommand::Integ { rest } => crate::integ::run(&rest),
         XtaskCommand::Legacy { name, rest } => execute_legacy(&name, &rest),
     }
 }
@@ -358,6 +368,12 @@ pub fn parse(args: &[String]) -> Result<XtaskCommand, String> {
         "lsp" => parse_lsp(&args[1..]),
         "ide" => parse_ide(&args[1..]),
         "run" => parse_run_ide(&args[1..]),
+        "test" => Ok(XtaskCommand::Test {
+            rest: args[1..].to_vec(),
+        }),
+        "integ" => Ok(XtaskCommand::Integ {
+            rest: args[1..].to_vec(),
+        }),
         "poc" => parse_run_flags(&args[1..]),
         "build" => parse_build(&args[1..]),
         "musl" | "pack" | "runtime-image" | "check-static" | "bench-alloc" | "bench-perf"
@@ -547,6 +563,8 @@ fn parse_run_flags(args: &[String]) -> Result<XtaskCommand, String> {
             launch.container = true;
         } else if arg == "--native" {
             launch.native = true;
+        } else if arg == "--smoke" {
+            launch.smoke = true;
         } else if arg == "-h" || arg == "--help" {
             return Ok(XtaskCommand::Help {
                 topic: HelpTopic::Run,
@@ -555,6 +573,11 @@ fn parse_run_flags(args: &[String]) -> Result<XtaskCommand, String> {
             return Err(format!("unknown run flag: {arg}\nTry: ./build help run"));
         }
         i += 1;
+    }
+    if launch.smoke && launch.folder.is_none() {
+        launch.folder = Some(
+            crate::workspace_root().join("integration/fixtures/discover-java"),
+        );
     }
     launch.apply_host_defaults();
     launch.validate()?;
@@ -592,27 +615,26 @@ pub fn print_help(topic: HelpTopic) {
 
 const ROOT_HELP: &str = "\
 Usage:
+  ./build test              Unit tests (workspace + harness + seams)
+  ./build integ             Integration smoke (auto-build image/harness)
   ./build lsp {all|x86_64|aarch64} [--force] [--flavor slim|dogfood]
   ./build ide
-  ./build run ide
-  ./build run ide --folder DIR
-  ./build run ide --folder DIR --container
+  ./build run ide [--smoke]
+  ./build run ide --folder DIR [--container]
 
   ./build help
-  ./build help lsp
-  ./build help ide
-  ./build help run
 
-lsp     Linux static language server (musl controller + backends +
-        container image progressive-lsp-runtime:local). Needs Docker.
-        Architecture is required. Omit it to list valid arches.
-        Rebuilds artifacts whose inputs changed; skips dests that are
-        fresh. --force rebuilds controller, backends, and image.
+test    Self-bootstrapping cargo test (CARGO_TARGET_DIR=target, .cargo-home).
 
-ide     POC editor + native progressive-lsp. Does not start the window.
+integ   Hermetic IT-TAM + discover-container in Docker. Builds
+        progressive-lsp-runtime:local and plsp-it1 when missing.
 
-run ide Start the POC editor (rebuilds native progressive-lsp first).
-        --folder must be absolute when using --container.
+lsp     Linux musl server + runtime image (Docker). See: ./build help lsp
+
+ide     POC editor + native progressive-lsp (does not open UI).
+
+run ide Rebuilds native serve, opens poc-ide. --smoke = in-tree Java
+        fixture + container on macOS/Windows. Image built if missing.
 ";
 
 pub const LSP_ARCHES: &str = "\
@@ -697,10 +719,11 @@ fn execute_build(target: BuildTarget, flags: BuildFlags) -> Result<(), String> {
 }
 
 fn execute_run(launch: RunLaunch) -> Result<(), String> {
-    if launch.container {
-        eprintln!(
-            "./build run ide: container mode -> image {IMAGE_TAG} (Docker Desktop + `./build lsp <arch>`)"
-        );
+    if launch.container || launch.smoke {
+        crate::integ::ensure_dogfood_runtime_image()?;
+    }
+    if launch.container || launch.smoke {
+        eprintln!("./build run ide: container -> {IMAGE_TAG}");
     }
     poc::run_poc_ide(&launch.to_forwarded())
 }
@@ -1188,11 +1211,11 @@ mod tests {
         print_help(HelpTopic::Lsp);
         print_help(HelpTopic::Ide);
         print_help(HelpTopic::Run);
+        assert!(ROOT_HELP.contains("./build test"));
+        assert!(ROOT_HELP.contains("./build integ"));
         assert!(ROOT_HELP.contains("./build lsp"));
-        assert!(ROOT_HELP.contains("./build ide"));
         assert!(ROOT_HELP.contains("./build run ide"));
-        assert!(ROOT_HELP.contains("--container"));
-        assert!(ROOT_HELP.contains("--force"));
+        assert!(ROOT_HELP.contains("--smoke"));
         assert!(LSP_ARCHES.contains("Valid architectures"));
         assert!(LSP_ARCHES.contains("x86_64"));
         assert!(LSP_ARCHES.contains("aarch64"));

@@ -216,10 +216,13 @@ fn t3_state(
         return TierCellState::InProgress;
     }
     if ingest.is_done() {
+        if engine.is_some_and(|e| !e.is_blocked()) {
+            return TierCellState::InProgress;
+        }
         return TierCellState::Skipped;
     }
     if ingest.is_running() {
-        return TierCellState::Na;
+        return TierCellState::InProgress;
     }
     TierCellState::Na
 }
@@ -298,6 +301,13 @@ impl PackageTierMap {
         self.engines.get(language_id)
     }
 
+    pub fn engine_status_rows(&self) -> Vec<(String, String, String)> {
+        self.engines
+            .iter()
+            .map(|(lang, snap)| (lang.clone(), snap.state.clone(), snap.detail.clone()))
+            .collect()
+    }
+
     pub fn apply_tier_status(&mut self, resp: &TierStatusResponse) {
         for row in &resp.rows {
             if let Some(tier) = WireTier::parse(&row.tier) {
@@ -339,6 +349,23 @@ impl PackageTierMap {
     }
 
     /// Short wire summary for the readiness line (e.g. `src@graph, app@types`).
+    /// When no v1 source tab is focused, prefer a T3-capable language reported by the serve host.
+    pub fn workspace_strip_language(
+        &self,
+        catalog: &LanguageCatalog,
+        tabs_language: &str,
+    ) -> String {
+        if catalog.is_known(tabs_language) {
+            return tabs_language.to_string();
+        }
+        for lang in self.engines.keys() {
+            if catalog.is_known(lang.as_str()) && catalog.t3_supported(lang) {
+                return lang.clone();
+            }
+        }
+        tabs_language.to_string()
+    }
+
     pub fn tier_summary(&self) -> String {
         if self.packages.is_empty() {
             return "no packages on control plane".into();
@@ -676,13 +703,13 @@ mod tests {
         assert_eq!(java_ingest.t1().state(), TierCellState::InProgress);
         assert_eq!(java_ingest.t2().state(), TierCellState::InProgress);
         assert_eq!(java_ingest.t2().status(), "processing");
-        assert_eq!(java_ingest.t3().state(), TierCellState::Na);
+        assert_eq!(java_ingest.t3().state(), TierCellState::InProgress);
 
         let java_t1 = TierStrip::paint(&c, "java", IngestState::Running, Some(WireTier::Syntax));
         assert_eq!(java_t1.t1().state(), TierCellState::Done);
         assert_eq!(java_t1.t2().state(), TierCellState::InProgress);
         assert_eq!(java_t1.t2().status(), "processing");
-        assert_eq!(java_t1.t3().state(), TierCellState::Na);
+        assert_eq!(java_t1.t3().state(), TierCellState::InProgress);
 
         let java_t2 = TierStrip::paint(&c, "java", IngestState::Running, Some(WireTier::Graph));
         assert_eq!(java_t2.t2().state(), TierCellState::Done);

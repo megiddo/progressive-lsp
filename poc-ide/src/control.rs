@@ -520,7 +520,7 @@ impl<T: ControlTransport> ControlClient<T> {
     }
 
     pub fn index_status(&mut self) -> Result<IndexStatusResponse, IdeError> {
-        self.call(METHOD_INDEX_STATUS, IndexStatusRequest {})
+        self.call(METHOD_INDEX_STATUS, IndexStatusRequest::default())
     }
 
     pub fn tier_status(&mut self) -> Result<TierStatusResponse, IdeError> {

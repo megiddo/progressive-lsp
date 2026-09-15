@@ -19,8 +19,8 @@ pub use graph::{
 };
 pub use heuristic::HeuristicResolver;
 pub use query::{
-    DocumentSymbol, EmptyIndex, Hover, LspLocation, Position, QueryKind, Range, ResolveOutcome,
-    ResolveQuery, ResolveResult, SymbolKind,
+    ChainPolicy, DocumentSymbol, EmptyIndex, Hover, LspLocation, Position, QueryKind, Range,
+    ResolveOutcome, ResolveQuery, ResolveResult, SymbolKind,
 };
 pub use stack_graph::{looks_like_java_tsg, StackGraphResolver, TsgLoadState, TsgPin};
 pub use t2::T2Strategy;

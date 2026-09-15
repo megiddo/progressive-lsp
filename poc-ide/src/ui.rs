@@ -15,7 +15,8 @@ use poc_ide::{
     LspIoAttach, LspIoEvent, LspIoHandle, LspIoRequest, LspSessionState, NotifyWatch, OpenBuffer,
     OpenMode, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent,
     RuntimeIoHandle, RuntimeIoRequest, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec,
-    StatusModal, StatusModalKind, StdFs, SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind,
+    StatusModal, StatusModalKind, StepState, StdFs, SystemClock, T3HostOffer, TabId, TabStrip,
+    TierCellKind,
     ReadinessLine, TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent, TreeIoHandle,
     TreeIoRequest, TreeNode,
     WatchPort, WireTier, WorkspaceRoot, PLAIN_TEXT_RGB,
@@ -133,6 +134,8 @@ pub struct PocIdeApp {
     control_connected: bool,
     control_error: Option<String>,
     last_progress_line: Option<String>,
+    last_index_packages: usize,
+    last_types_cache_entries: u64,
     catalog: LanguageCatalog,
     tiers: PackageTierMap,
     discover_flight: DiscoverFlight,
@@ -200,6 +203,8 @@ impl PocIdeApp {
             control_connected: false,
             control_error: None,
             last_progress_line: None,
+            last_index_packages: 0,
+            last_types_cache_entries: 0,
             catalog: LanguageCatalog::new(),
             tiers: PackageTierMap::new(),
             discover_flight: DiscoverFlight::idle(),
@@ -758,6 +763,8 @@ impl PocIdeApp {
                         resp.packages.len(),
                         resp.cache_entries,
                     );
+                    self.last_index_packages = resp.packages.len();
+                    self.last_types_cache_entries = resp.cache_entries;
                     self.tiers.apply_index_status(&resp);
                 }
                 ControlIoEvent::TierStatus(resp) => {
@@ -797,7 +804,7 @@ impl PocIdeApp {
             &self.tiers,
             self.tiers.ingest_for_strip(self.lsp_session),
             self.last_progress_line.as_deref(),
-            Some(self.strip_language()),
+            Some(self.strip_language().as_str()),
         )
     }
 
@@ -820,8 +827,10 @@ impl PocIdeApp {
             .unwrap_or_else(|| IdeError::MissingBinary.to_string())
     }
 
-    fn strip_language(&self) -> &str {
-        self.tabs.language_for_strip(&self.catalog)
+    fn strip_language(&self) -> String {
+        let tabs = self.tabs.language_for_strip(&self.catalog);
+        self.tiers
+            .workspace_strip_language(&self.catalog, tabs)
     }
 
     fn focused_language(&self) -> &str {
@@ -852,13 +861,14 @@ impl PocIdeApp {
 
     fn tier_strip(&self) -> TierStrip {
         let lang = self.strip_language();
+        let tier = self.focused_tier().or_else(|| self.tiers.aggregate());
         TierStrip::paint_for_open(
             &self.catalog,
-            lang,
+            lang.as_str(),
             self.tiers.ingest_for_strip(self.lsp_session),
-            self.focused_tier(),
+            tier,
             T3HostOffer::from_open(self.host, self.open_mode),
-            self.tiers.engine_for_language(lang),
+            self.tiers.engine_for_language(lang.as_str()),
         )
     }
 
@@ -879,20 +889,45 @@ impl PocIdeApp {
             }
             StatusModalKind::T3 => {
                 let lang = self.strip_language();
-                if lang == "csharp" {
+                if lang.as_str() == "csharp" {
                     LaunchJournal::t3_not_supported()
-                } else if !self.catalog.is_known(lang) {
+                } else if !self.catalog.is_known(lang.as_str()) {
                     LaunchJournal::t3_no_source_focus()
                 } else if !T3HostOffer::from_open(self.host, self.open_mode).is_offered() {
                     LaunchJournal::native_t3_skipped()
                 } else {
                     LaunchJournal::native_t3_from_wire(
-                        self.focused_tier(),
+                        self.focused_tier().or_else(|| self.tiers.aggregate()),
                         self.tiers.ingest_for_strip(self.lsp_session),
-                        self.tiers
-                            .engine_for_language(self.strip_language()),
+                        self.tiers.engine_for_language(lang.as_str()),
                     )
                 }
+            }
+            StatusModalKind::IndexCache => {
+                let engine_steps: Vec<(String, StepState, String)> = self
+                    .tiers
+                    .engine_status_rows()
+                    .into_iter()
+                    .map(|(lang, state, detail)| {
+                        let step = match state.as_str() {
+                            "ready" => StepState::Ok,
+                            "error" | "missing" => StepState::Fail,
+                            _ => StepState::Running,
+                        };
+                        let detail = if detail.is_empty() {
+                            state
+                        } else {
+                            detail
+                        };
+                        (lang, step, detail)
+                    })
+                    .collect();
+                LaunchJournal::index_and_cache(
+                    self.tiers.ingest_for_strip(self.lsp_session),
+                    self.last_index_packages,
+                    self.last_types_cache_entries,
+                    &engine_steps,
+                )
             }
         }
     }
@@ -1228,6 +1263,15 @@ impl eframe::App for PocIdeApp {
                             self.status_modal = StatusModal::open(kind);
                         }
                         ui.separator();
+                    }
+                    if ui
+                        .button(format!(
+                            "Index: {} pkg · {} cache",
+                            self.last_index_packages, self.last_types_cache_entries
+                        ))
+                        .clicked()
+                    {
+                        self.status_modal = StatusModal::open(StatusModalKind::IndexCache);
                     }
                 });
                 ui.separator();

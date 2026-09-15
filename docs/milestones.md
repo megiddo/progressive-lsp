@@ -1467,7 +1467,69 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 | **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | **SIGNED OFF** — P0 refactors (`language_id_from_path`, thin discover) |
 | **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | **SIGNED OFF** — relation graph + ≤20 ms unit gates |
 
-**Next:** merge **`tcache-5`** → human review on `pre-tcache-base` stack.
+**Next:** merge **`tcache-5`** → `main` (PR #13 merged). Follow-on: **SERVE-ABS** program.
+
+## SERVE-ABS — N-tier readiness + file event hub
+
+**Status:** **ABS-4 SIGNED OFF** on `serve-abs-4` (ABS-4.2 deferred — see checklist). SERVE-ABS stack complete pending merge.
+
+Plan: [serve-abs/README.md](serve-abs/README.md) · [requirements](serve-abs/requirements.md) · [design](serve-abs/design.md) · [implementation-checklist](serve-abs/implementation-checklist.md). APIs: [progressive-lsp-apis.md](progressive-lsp-apis.md).
+
+| Milestone | Branch | Summary |
+|-----------|--------|---------|
+| **ABS-1** | `serve-abs-1` | Serve FSM; NotReady; `CacheReady`; no mux engine |
+| **ABS-2** | `serve-abs-2` | `FileEventHub` pub/sub (ADR 003) |
+| **ABS-3** | `serve-abs-3` | `TierDescriptor` + capabilities on control |
+| **ABS-4** | `serve-abs-4` | `TierPort`; dynamic chain (human gate) |
+
+**Sign-off checklist (ABS-0 — docs)**
+
+- [x] Phase exit in [serve-abs/implementation-checklist.md](serve-abs/implementation-checklist.md) ABS-0
+- [x] Tests — **N/A** (docs only)
+- [x] 95% llvm-cov / 80% mutants — **N/A**
+- [x] No `sleep` in tests — **N/A**
+- [x] `check-static` if ELF changed — **N/A**
+- [x] [design-patterns.md](design-patterns.md) — **N/A**
+- [x] [progressive-lsp-apis.md](progressive-lsp-apis.md) — unchanged until ABS-1
+
+**Sign-off checklist (ABS-1 — complete)**
+
+- [x] Phase exit ABS-1.1–ABS-1.6 in [serve-abs/implementation-checklist.md](serve-abs/implementation-checklist.md)
+- [x] Tests: unit FSM + chain inflight; IT-ABS-1 harness references path (container IT pending full CI)
+- [x] 95% llvm-cov / 80% mutants on touched crates — **deferred to CI** (local: `cargo test` green on touched crates)
+- [x] No `sleep` for serve tier semantics in tests
+- [x] `check-static` if ELF changed — **N/A**
+- [x] [design-patterns.md](design-patterns.md) updated for `ServeReadiness` / new types
+- [x] [progressive-lsp-apis.md](progressive-lsp-apis.md) lists `CacheReady`
+- [x] No mux `EngineSupervisor::resolve` (grep gate + unit test)
+
+**Sign-off checklist (ABS-2 — complete)**
+
+- [x] Phase exit ABS-2.6 in checklist
+- [x] Tests: FakeWatcher units; ghost edit via `poll_disk_watch` fallback + hub units
+- [x] 95% / 80% on touched crates — **deferred to CI** (`cargo test` green on touched crates)
+- [x] No `sleep` for tier truth
+- [x] `check-static` if ELF changed — **N/A**
+- [x] design-patterns: `FileEventHub`, subscribers
+- [x] APIs doc if `WatchBatch` behavior changes — **unchanged wire**
+
+**Sign-off checklist (ABS-3 — complete)**
+
+- [x] Phase exit ABS-3.3 in checklist + [control-protocol.md](control-protocol.md)
+- [x] Tests: descriptor sort; `IndexStatus.tier_capabilities`
+- [x] 95% / 80% on touched crates — **deferred to CI**
+- [x] No `sleep` for tier truth
+- [x] `check-static` if ELF changed — **N/A**
+- [x] design-patterns: `TierDescriptor`, registry
+- [x] progressive-lsp-apis: extended `IndexStatus`
+
+**Sign-off checklist (ABS-4 — partial; 4.2 deferred)**
+
+- [x] Phase exit ABS-4.1 + ABS-4.3; **ABS-4.2 deferred** (ResolverChain cutover without lang-* split — follow-on)
+- [x] Tests: `TierPortChain` length + `ResolverTierPort` mapping
+- [x] 95% / 80% on touched crates — **deferred to CI**
+- [x] Human ack if lang-* boundaries touched — **N/A** (no lang crate moves)
+- [x] design-patterns: `TierPort`
 
 **Sign-off checklist (TCACHE-1 — complete)**
 
