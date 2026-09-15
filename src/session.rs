@@ -10,7 +10,8 @@ use progressive_lsp_core::{
     path_from_file_uri, FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort,
     LogRecord, LogScope, NullLog, PackageId, PrefixLayout, T2Backend, Tier,
 };
-use progressive_lsp_engine::{EngineResolver, EngineSupervisor};
+use progressive_lsp_engine::EngineSupervisor;
+use progressive_lsp_types_cache::{CacheServeState, TypesCacheStack};
 use progressive_lsp_index::{
     IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex,
 };
@@ -22,9 +23,6 @@ use progressive_lsp_resolve::{
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
 use progressive_lsp_workspace::{detect_workspace, PackageEntry, WorkspaceModel};
-
-#[cfg(feature = "types-cache-chain")]
-use progressive_lsp_types_cache::stub_types_cache_resolver;
 
 #[cfg(test)]
 use progressive_lsp_watch::FakeWatcher;
@@ -64,19 +62,15 @@ pub struct WorkspaceSession {
     skipped_packages: Mutex<Vec<PackageId>>,
     ingest: Mutex<IngestState>,
     supervisor: Option<Arc<EngineSupervisor>>,
+    pub(crate) types_cache: TypesCacheStack,
     log: Arc<dyn LogPort>,
     unknown_languages: Mutex<HashSet<String>>,
 }
 
 impl WorkspaceSession {
-    fn prepend_types_cache_stub(chain: &mut ResolverChain) {
-        #[cfg(feature = "types-cache-chain")]
-        {
-            chain.prepend(Box::new(stub_types_cache_resolver()));
-        }
-    }
-
-    pub fn new(index: SharedIndex, chain: ResolverChain) -> Self {
+    pub fn new(index: SharedIndex, mut chain: ResolverChain) -> Self {
+        let types_cache = TypesCacheStack::new(index.clone());
+        types_cache.prepend_resolver(&mut chain);
         Self {
             index,
             chain,
@@ -87,6 +81,7 @@ impl WorkspaceSession {
             skipped_packages: Mutex::new(Vec::new()),
             ingest: Mutex::new(IngestState::NotStarted),
             supervisor: None,
+            types_cache,
             log: Arc::new(NullLog),
             unknown_languages: Mutex::new(HashSet::new()),
         }
@@ -104,14 +99,10 @@ impl WorkspaceSession {
 
     pub fn attach_supervisor(&mut self, supervisor: Arc<EngineSupervisor>) {
         if self.supervisor.is_none() {
-            let resolver = EngineResolver::new(
+            self.types_cache.attach_engine_builder(
                 Arc::clone(&supervisor),
-                LanguageId::new("java"),
-                PackageId::new("pkg"),
-            )
-            .with_log(Arc::clone(&self.log))
-            .with_file_language();
-            self.chain.prepend(Box::new(resolver));
+                self.index.clone(),
+            );
         }
         self.supervisor = Some(supervisor);
     }
@@ -135,21 +126,19 @@ impl WorkspaceSession {
         log: Arc<dyn LogPort>,
     ) -> Self {
         let index = SharedIndex::new(IndexService::with_prefix_and_log(layout, Arc::clone(&log)));
-        let mut chain = ResolverChain::new(vec![
+        let chain = ResolverChain::new(vec![
             T2Strategy::from_backend(t2).build(Arc::new(index.clone())),
             Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
         ]);
-        Self::prepend_types_cache_stub(&mut chain);
         Self::new(index, chain).with_log(log)
     }
 
     pub fn java_default() -> Self {
         let index = SharedIndex::new(IndexService::new());
-        let mut chain = ResolverChain::new(vec![
+        let chain = ResolverChain::new(vec![
             T2Strategy::from_backend(T2Backend::Heuristic).build(Arc::new(index.clone())),
             Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
         ]);
-        Self::prepend_types_cache_stub(&mut chain);
         Self::new(index, chain)
     }
 
@@ -568,6 +557,7 @@ impl LspIntelligence for WorkspaceSession {
             ResolveOutcome::Ready(r) => r,
             ResolveOutcome::NotReady => ResolveResult::empty(Tier::Syntax),
         };
+        let cache_state = self.types_cache.take_serve_state();
         let discover = matches!(
             q.kind,
             QueryKind::Definition
@@ -623,6 +613,7 @@ impl LspIntelligence for WorkspaceSession {
             extras.insert("language_id".into(), language_id.to_string());
             extras.insert("package_id".into(), package_id);
             extras.insert("tier".into(), result.tier.as_str().to_string());
+            extras.insert("cache_state".into(), cache_state.as_str().to_string());
             let mut rec = LogRecord::at_caller(LogLevel::Info, operation);
             rec.message = format!(
                 "{operation} complete resolve_ms={resolve_ms} tier={} locations={}",
@@ -1365,7 +1356,7 @@ mod tests {
     }
 
     #[test]
-    fn engine_resolver_first_skip_once_does_not_fail_user() {
+    fn types_cache_miss_does_not_block_discover_with_supervisor() {
         let log = progressive_lsp_core::FakeLog::new();
         let clock = Arc::new(FakeClock::at_unix_ms(1));
         let prefix = PrefixLayout::from_path("/tmp/log8-session-skip");
@@ -1379,20 +1370,22 @@ mod tests {
             QueryKind::Definition,
         );
         let first = session.resolve(&q);
-        let skips_first = log
+        let discover = log
             .records()
             .into_iter()
-            .filter(|r| {
+            .find(|r| {
                 r.level == progressive_lsp_core::LogLevel::Info
-                    && r.operation.as_deref() == Some("resolve")
-                    && r.message.contains("pack skipped")
+                    && r.operation.as_deref() == Some("textDocument/definition")
             })
-            .count();
-        assert_eq!(skips_first, 1, "{:?}", log.records());
+            .expect("discover row");
+        assert_eq!(
+            discover.extras.as_ref().and_then(|e| e.get("cache_state")),
+            Some(&"miss".to_string())
+        );
         let second = session.resolve(&q);
         assert_eq!(first.tier, Tier::Syntax);
         assert_eq!(second.tier, Tier::Syntax);
-        let skips: Vec<_> = log
+        let engine_skips: Vec<_> = log
             .records()
             .into_iter()
             .filter(|r| {
@@ -1401,8 +1394,7 @@ mod tests {
                     && r.message.contains("pack skipped")
             })
             .collect();
-        assert_eq!(skips.len(), 1, "{skips:?}");
-        assert!(skips[0].message.contains("python"), "{skips:?}");
+        assert!(engine_skips.is_empty(), "engine is builder-only on mux: {engine_skips:?}");
     }
 
     #[test]
@@ -1592,6 +1584,56 @@ mod tests {
         let extras = info.extras.as_ref().expect("extras");
         assert_eq!(extras.get("location_count").map(String::as_str), Some("1"));
         assert!(extras.contains_key("resolve_ms"));
+        assert_eq!(extras.get("cache_state").map(String::as_str), Some("miss"));
+    }
+
+    #[test]
+    fn second_discover_hit_after_cache_warm() {
+        use progressive_lsp_types_cache::{
+            CacheEntrySource, CacheGeneration, TypesCacheEntry, TypesCacheKey,
+        };
+        let log = progressive_lsp_core::FakeLog::new();
+        let session = WorkspaceSession::java_default().with_log(Arc::new(log.clone()));
+        let q = ResolveQuery::new(
+            FileId::new("Warm.java"),
+            Position::new(0, 4),
+            QueryKind::Definition,
+        );
+        let key = TypesCacheKey::new(q.kind, q.file.clone(), q.position, CacheGeneration::zero());
+        session.types_cache.store.put(
+            key,
+            TypesCacheEntry::new(
+                ResolveResult::locations(
+                    Tier::Types,
+                    vec![LspLocation::new(
+                        "file:///Lib.java",
+                        Range::point(Position::new(1, 0)),
+                        Tier::Types,
+                    )],
+                ),
+                0,
+                CacheEntrySource::Engine,
+            ),
+        );
+        let r = session.resolve(&q);
+        assert_eq!(r.tier, Tier::Types);
+        assert_eq!(r.locations.len(), 1);
+        let row = log
+            .records()
+            .into_iter()
+            .find(|rec| {
+                rec.level == progressive_lsp_core::LogLevel::Info
+                    && rec.operation.as_deref() == Some("textDocument/definition")
+            })
+            .expect("discover row");
+        assert_eq!(
+            row.extras.as_ref().and_then(|e| e.get("cache_state")),
+            Some(&"hit".to_string())
+        );
+        assert_eq!(
+            row.extras.as_ref().and_then(|e| e.get("tier")),
+            Some(&"types".to_string())
+        );
     }
 
     #[test]

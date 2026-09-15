@@ -11,6 +11,7 @@ progressive-lsp-core.workspace = true
 progressive-lsp-index.workspace = true
 progressive-lsp-resolve.workspace = true
 progressive-lsp-watch.workspace = true
+progressive-lsp-engine = { path = "../progressive-lsp-engine" }
 
 [dev-dependencies]
-progressive-lsp-engine = { path = "../progressive-lsp-engine" }
+tempfile.workspace = true

@@ -195,12 +195,8 @@ fn language_from_file(path: &str) -> Option<LanguageId> {
     Some(LanguageId::new(id))
 }
 
-/// Best-effort T3: if the child cannot answer within this budget, fall through to T2/T1.
-const ENGINE_RESOLVE_TRY_BUDGET: Duration = Duration::from_millis(400);
-/// References often need a cold javacs scan; still bounded so mux does not hang forever.
-const ENGINE_REFERENCES_TRY_BUDGET: Duration = Duration::from_secs(8);
-
 impl Resolver for EngineResolver {
+    /// Language-factory chains only. Serve mux uses T3′ + background builder (REQ-NFR-1.3).
     fn resolve(&self, q: &ResolveQuery) -> ResolveOutcome {
         let language = self.language_of(q);
         let package = self.package(q);
@@ -212,42 +208,14 @@ impl Resolver for EngineResolver {
             self.emit_t3_timing(q, Instant::now(), "skip_unwarmed", 0, None);
             return ResolveOutcome::NotReady;
         }
-        let budget = if q.kind == QueryKind::References {
-            ENGINE_REFERENCES_TRY_BUDGET
-        } else {
-            ENGINE_RESOLVE_TRY_BUDGET
-        };
         let started = Instant::now();
-        let sup = Arc::clone(&self.supervisor);
-        let q_bg = q.clone();
-        let lang = language.clone();
-        let pkg = package.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(sup.resolve(&lang, &pkg, &q_bg));
-        });
-        match rx.recv_timeout(budget) {
-            Ok(outcome) => {
-                let (tag, locs) = match &outcome {
-                    ResolveOutcome::Ready(r) => ("ready", r.locations.len()),
-                    ResolveOutcome::NotReady => ("not_ready", 0),
-                };
-                self.emit_t3_timing(q, started, tag, locs, Some(budget));
-                outcome
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                self.emit_t3_timing(q, started, "timeout", 0, Some(budget));
-                self.log.debug(&format!(
-                    "engine {}: try budget ({budget:?}) elapsed; T2/T1 may answer (child RPC may still run)",
-                    language.as_str()
-                ));
-                ResolveOutcome::NotReady
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                self.emit_t3_timing(q, started, "disconnected", 0, Some(budget));
-                ResolveOutcome::NotReady
-            }
-        }
+        let outcome = self.supervisor.resolve(&language, &package, q);
+        let (tag, locs) = match &outcome {
+            ResolveOutcome::Ready(r) => ("ready", r.locations.len()),
+            ResolveOutcome::NotReady => ("not_ready", 0),
+        };
+        self.emit_t3_timing(q, started, tag, locs, None);
+        outcome
     }
 }
 

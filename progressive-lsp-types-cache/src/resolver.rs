@@ -1,12 +1,13 @@
 //! T3′ chain step: read cache only; never calls engine.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery, Resolver};
 
 use crate::builder::TypesCacheBuilder;
 use crate::key::TypesCacheKey;
 use crate::port::GenerationPort;
+use crate::serve_state::CacheServeState;
 use crate::store::TypesCacheStore;
 
 /// Chain of Responsibility step for types cache hits.
@@ -14,6 +15,7 @@ pub struct TypesCacheResolver {
     store: Arc<TypesCacheStore>,
     generation: Arc<dyn GenerationPort>,
     builder: Arc<dyn TypesCacheBuilder>,
+    serve_state: Arc<Mutex<Option<CacheServeState>>>,
 }
 
 impl TypesCacheResolver {
@@ -21,12 +23,18 @@ impl TypesCacheResolver {
         store: Arc<TypesCacheStore>,
         generation: Arc<dyn GenerationPort>,
         builder: Arc<dyn TypesCacheBuilder>,
+        serve_state: Arc<Mutex<Option<CacheServeState>>>,
     ) -> Self {
         Self {
             store,
             generation,
             builder,
+            serve_state,
         }
+    }
+
+    fn note_state(&self, state: CacheServeState) {
+        *self.serve_state.lock().expect("serve_state") = Some(state);
     }
 
     fn key_for(&self, q: &ResolveQuery) -> TypesCacheKey {
@@ -39,8 +47,10 @@ impl Resolver for TypesCacheResolver {
     fn resolve(&self, q: &ResolveQuery) -> ResolveOutcome {
         let key = self.key_for(q);
         if let Some(entry) = self.store.get(&key) {
+            self.note_state(CacheServeState::Hit);
             return ResolveOutcome::Ready(entry.result);
         }
+        self.note_state(CacheServeState::Miss);
         self.builder.on_miss(key);
         ResolveOutcome::NotReady
     }
@@ -62,10 +72,12 @@ mod tests {
     fn stub_miss_falls_through_to_fake_t2() {
         let store = Arc::new(TypesCacheStore::new());
         let builder = Arc::new(RecordingBuilder::new());
+        let serve_state = Arc::new(Mutex::new(None));
         let resolver = TypesCacheResolver::new(
             Arc::clone(&store),
             Arc::new(FixedGenerationPort::new(CacheGeneration::zero())),
             Arc::clone(&builder) as Arc<dyn TypesCacheBuilder>,
+            Arc::clone(&serve_state),
         );
         let chain = chain_with_types_cache_and_t2(resolver);
         let q = ResolveQuery::new(
@@ -112,6 +124,7 @@ mod tests {
             Arc::clone(&store),
             Arc::new(FixedGenerationPort::new(gen)),
             Arc::new(RecordingBuilder::new()),
+            Arc::new(Mutex::new(None)),
         );
         let chain = ResolverChain::new(vec![
             Box::new(resolver),

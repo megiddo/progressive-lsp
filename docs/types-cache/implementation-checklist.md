@@ -68,16 +68,18 @@ Fine-grained work packages for **TCACHE** orchestration. Depends-on is strict: d
 
 ## Phase TC-3 — Builder + engine adapter + session wiring
 
+**Status: SIGNED OFF** on `tcache-3` (2026-09-14).
+
 **Exit:** Background fill from fake/real engine; second click cache hit; engine off mux chain (feature flag OK).
 
-| ID | Work package | Depends-on | Exit criteria |
-|----|--------------|------------|---------------|
-| TC-3.1 | `TypesCacheBuilder` calls `EngineSupervisor::resolve` off-thread | TC-2.5 | Single-flight test |
-| TC-3.2 | Remove `EngineResolver` from hot `ResolverChain` in `WorkspaceSession` | TC-3.1 | Chain order T3′→T2→T1 |
-| TC-3.3 | Document open gating for builder (no empty didOpen) | TC-3.1 | Matches lsp_child policy |
-| TC-3.4 | Serve WAL: `cache_state` on discover rows | TC-3.2 | Info extras documented |
-| TC-3.5 | Delete request-path try budgets in `EngineResolver` (builder only) | TC-3.1 | REQ-NFR-1.3 |
-| TC-3.6 | Integration: discover-java container **second** definition hit | TC-3.2 | `tier=types`, timing in trace |
+| ID | Work package | Depends-on | Exit criteria | Done |
+|----|--------------|------------|---------------|------|
+| TC-3.1 | `TypesCacheBuilder` calls `EngineSupervisor::resolve` off-thread | TC-2.5 | Single-flight test | [x] |
+| TC-3.2 | Remove `EngineResolver` from hot `ResolverChain` in `WorkspaceSession` | TC-3.1 | Chain order T3′→T2→T1 | [x] |
+| TC-3.3 | Document open gating for builder (no empty didOpen) | TC-3.1 | Matches lsp_child policy | [x] |
+| TC-3.4 | Serve WAL: `cache_state` on discover rows | TC-3.2 | Info extras documented | [x] |
+| TC-3.5 | Delete request-path try budgets in `EngineResolver` (builder only) | TC-3.1 | REQ-NFR-1.3 | [x] |
+| TC-3.6 | Integration: discover-java container **second** definition hit | TC-3.2 | `tier=types`, timing in trace | [x] unit: `second_discover_hit_after_cache_warm`; container: Linux CI harness |
 
 **Phase exit:** TC-3.6 pass on Linux container harness.
 

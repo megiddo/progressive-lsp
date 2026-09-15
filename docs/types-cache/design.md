@@ -118,7 +118,7 @@ TreeSitterResolver (T1)
 
 `TypesCacheBuilder` holds `Arc<EngineSupervisor>` and writes to `Arc<TypesCacheStore>`.
 
-Document sync: builder only runs `resolve_query` when URI is in engine **opened** set (inbox drain completed) — same rule as today’s `lsp_child` fix; never `didOpen` empty body on builder path.
+Document sync: builder only runs `resolve_query` when URI is in engine **opened** set (inbox drain completed) — same rule as today’s `lsp_child` fix; never `didOpen` empty body on builder path. Implementation: [`IndexOpenPort`](../../progressive-lsp-types-cache/src/engine_builder.rs) checks `IndexService::is_open` before enqueueing engine RPC (TC-3.3).
 
 ---
 

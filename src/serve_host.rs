@@ -333,12 +333,6 @@ impl LspIntelligence for ServeHost {
                 | progressive_lsp_resolve::QueryKind::References
                 | progressive_lsp_resolve::QueryKind::TypeDefinition
         );
-        if discover {
-            let r = self.session.resolve(q);
-            self.poll_disk_watch();
-            return r;
-        }
-        self.poll_disk_watch();
         self.session.resolve(q)
     }
 

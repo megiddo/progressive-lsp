@@ -3245,6 +3245,7 @@ dependencies = [
  "progressive-lsp-protocol",
  "progressive-lsp-resolve",
  "progressive-lsp-script",
+ "progressive-lsp-types-cache",
  "progressive-lsp-watch",
  "progressive-lsp-workspace",
  "serde_json",
@@ -3539,6 +3540,18 @@ version = "0.1.0"
 dependencies = [
  "progressive-lsp-core",
  "rhai",
+ "tempfile",
+]
+
+[[package]]
+name = "progressive-lsp-types-cache"
+version = "0.1.0"
+dependencies = [
+ "progressive-lsp-core",
+ "progressive-lsp-engine",
+ "progressive-lsp-index",
+ "progressive-lsp-resolve",
+ "progressive-lsp-watch",
  "tempfile",
 ]
 

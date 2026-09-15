@@ -3,7 +3,7 @@
 **Status:** Complete (TC-1.1 / TC-1.2).  
 **Spike:** [design-pattern-audit.md](../spikes/design-pattern-audit.md)  
 **Normative:** [design-patterns.md](../design-patterns.md), [types-cache/design.md](design.md), [types-cache/requirements.md](requirements.md)  
-**Do not start TC-4.1 until a human agrees this P0 list.**
+**Human ack (2026-09-14):** Meta-orchestrator proceeds with P0 list for TC-4 unless a row is ambiguous.
 
 | Field | Value |
 |-------|--------|
