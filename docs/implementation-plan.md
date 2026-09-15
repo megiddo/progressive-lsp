@@ -903,17 +903,20 @@ Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stac
 
 ## TCACHE (`tcache-*` branch stack)
 
-**Status:** Not started. Parent: **current `main`**. Meta-orchestrator: [types-cache/agent-context.md](types-cache/agent-context.md).
+**Status:** Base committed on **`pre-tcache-base`** (dogfood discover + TCACHE docs). **TCACHE-0 signed off** on that branch. Next: **TCACHE-1** (`tcache-1`). Meta-orchestrator: [types-cache/agent-context.md](types-cache/agent-context.md).
+
+**Milestone agents:** follow the **seven-step workflow** in [types-cache/agent-context.md](types-cache/agent-context.md) (branchless stack, coverage, mutation, checklist, commit, sign-off).
 
 ```text
-main   # after productization / current dogfood tip
-  └── tcache-0   # TC-0 docs + ADR
-        └── tcache-1   # TC-1 pattern audit spike (report only)
-              └── tcache-2   # TC-2 types-cache crate skeleton
-                    └── tcache-3   # TC-3 builder + cutover
-                          └── tcache-4   # TC-4 refactor from audit
-                                └── tcache-5   # TC-5 graph + timing IT
+pre-tcache-base   # base working branch — all pre-TCACHE local work committed here
+  └── tcache-1   # TCACHE-1 pattern audit spike (report only)
+        └── tcache-2   # TCACHE-2 types-cache crate skeleton
+              └── tcache-3   # TCACHE-3 builder + cutover
+                    └── tcache-4   # TCACHE-4 refactor from audit
+                          └── tcache-5   # TCACHE-5 graph + timing IT
 ```
+
+(`tcache-0` is not a separate branch; TC-0 docs landed on `pre-tcache-base`.)
 
 | ID | Work package | Depends-on | Notes |
 |----|--------------|------------|-------|

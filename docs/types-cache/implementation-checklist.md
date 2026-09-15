@@ -2,13 +2,17 @@
 
 Fine-grained work packages for **TCACHE** orchestration. Depends-on is strict: do not start a WP until dependencies are signed off.
 
+**Base branch:** `pre-tcache-base`. **Milestone agents:** mandatory [seven-step workflow](agent-context.md#milestone-workflow-every-tcache-n-agent--mandatory-order) (branchless stack → work → ≥95% cov / ≥80% mutants → update this file → commit → sign off).
+
 **Branch stack:** see [implementation-plan.md](../implementation-plan.md) (TCACHE section).
 
-**Sign-off checklist (every WP):** copy from implementation-plan.md (tests, cov, mutants, no sleep, check-static if ELF, design-patterns, docs).
+**Sign-off checklist (every milestone):** copy from [milestones.md](../milestones.md) TCACHE section and [implementation-plan.md](../implementation-plan.md) (tests, cov, mutants, no sleep, check-static if ELF, design-patterns, docs).
 
 ---
 
 ## Phase TC-0 — Documentation & ADR (docs only)
+
+**Status: SIGNED OFF** on `pre-tcache-base` (no separate `tcache-0` branch).
 
 **Exit:** Requirements and design accepted; agent-context and spike brief on disk; no crate changes.
 

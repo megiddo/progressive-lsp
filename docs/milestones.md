@@ -1452,18 +1452,22 @@ Master plan: [post-poc-tier-development-plan.md](post-poc-tier-development-plan.
 
 ## TCACHE — Types cache overlay (T3′)
 
-**Status:** Not started. Stack on current `main` after productization sign-off. **Do not start TC-2 crates until TC-0 and TC-1 are signed off.**
+**Base working branch:** **`pre-tcache-base`** (committed dogfood discover work + TCACHE documentation). Stack TCACHE milestones with **git-branchless** on top of this branch, not on `main`, until the human merges base.
 
-Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-cache/design.md](types-cache/design.md), [ADR 001](adr/001-types-cache-overlay.md). Orchestration: [types-cache/agent-context.md](types-cache/agent-context.md), checklist: [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md).
+**Milestone agent workflow (mandatory):** [types-cache/agent-context.md](types-cache/agent-context.md) — seven steps: clean parent → stack branch → work → 95% cov / 80% mutants → update checklists → commit → sign off.
 
-| Milestone | Phase | Branch | Exit (summary) |
-|-----------|-------|--------|----------------|
-| **TCACHE-0** | TC-0 | `tcache-0` | Requirements, design, ADR, agent-context on disk |
-| **TCACHE-1** | TC-1 | `tcache-1` | [pattern-audit-report.md](types-cache/pattern-audit-report.md) complete |
-| **TCACHE-2** | TC-2 | `tcache-2` | `progressive-lsp-types-cache` stub; chain hook; tests |
-| **TCACHE-3** | TC-3 | `tcache-3` | Builder + engine off mux path; container 2nd-click hit |
-| **TCACHE-4** | TC-4 | `tcache-4` | P0 refactors from audit |
-| **TCACHE-5** | TC-5 | `tcache-5` | Graph layer + IT-discover-timing CI |
+Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-cache/design.md](types-cache/design.md), [ADR 001](adr/001-types-cache-overlay.md). Checklist: [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md).
+
+| Milestone | Phase | Branch | Parent | Exit (summary) |
+|-----------|-------|--------|--------|----------------|
+| **TCACHE-0** | TC-0 | *(on `pre-tcache-base`)* | `prod-validation` | **SIGNED OFF** — requirements, design, ADR, agent-context |
+| **TCACHE-1** | TC-1 | `tcache-1` | `pre-tcache-base` | [pattern-audit-report.md](types-cache/pattern-audit-report.md) complete |
+| **TCACHE-2** | TC-2 | `tcache-2` | `tcache-1` | `progressive-lsp-types-cache` stub; chain hook; tests |
+| **TCACHE-3** | TC-3 | `tcache-3` | `tcache-2` | Builder + engine off mux path; container 2nd-click hit |
+| **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | P0 refactors from audit |
+| **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | Graph layer + IT-discover-timing CI |
+
+**Do not start TCACHE-2 crates until TCACHE-1 is signed off.**
 
 **Sign-off checklist (each TCACHE-N)**
 
