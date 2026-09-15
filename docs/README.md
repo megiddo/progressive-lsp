@@ -8,7 +8,7 @@ This directory is the **source of truth** for the product. Implement from these 
 
 | If you need | Read |
 |---|---|
-| **Build & run from a clone** | [../README.md](../README.md) (Use & development), `./build help` |
+| **Build and test from a clone** | [../README.md](../README.md#development), `./build help` |
 | What this is and is not | [vision.md](vision.md) |
 | Must / must-not / NFRs | [requirements.md](requirements.md) |
 | Process and data flow | [architecture.md](architecture.md) |
