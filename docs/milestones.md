@@ -1461,19 +1461,29 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 | Milestone | Phase | Branch | Parent | Exit (summary) |
 |-----------|-------|--------|--------|----------------|
 | **TCACHE-0** | TC-0 | *(on `pre-tcache-base`)* | `prod-validation` | **SIGNED OFF** — requirements, design, ADR, agent-context |
-| **TCACHE-1** | TC-1 | `tcache-1` | `pre-tcache-base` | [pattern-audit-report.md](types-cache/pattern-audit-report.md) complete |
+| **TCACHE-1** | TC-1 | `tcache-1` | `pre-tcache-base` | **SIGNED OFF** — [pattern-audit-report.md](types-cache/pattern-audit-report.md) (27 crates, 6 P0) |
 | **TCACHE-2** | TC-2 | `tcache-2` | `tcache-1` | `progressive-lsp-types-cache` stub; chain hook; tests |
 | **TCACHE-3** | TC-3 | `tcache-3` | `tcache-2` | Builder + engine off mux path; container 2nd-click hit |
 | **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | P0 refactors from audit |
 | **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | Graph layer + IT-discover-timing CI |
 
-**Do not start TCACHE-2 crates until TCACHE-1 is signed off.**
+**Next:** stack **`tcache-2`** on **`tcache-1`** for TCACHE-2 implementation.
 
-**Sign-off checklist (each TCACHE-N)**
+**Sign-off checklist (TCACHE-1 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — **N/A** (docs only)
+- [x] 95% llvm-cov / 80% mutants — **N/A**
+- [x] No `sleep` in tests — **N/A**
+- [x] `check-static` if ELF changed — **N/A**
+- [x] [design-patterns.md](design-patterns.md) — gap list in audit report §6
+- [x] Timing requirements — deferred to TCACHE-5
+
+**Sign-off checklist (each TCACHE-N)** — template for TCACHE-2+
 
 - [ ] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
-- [ ] Tests on branch (N/A for TCACHE-0 docs-only)
-- [ ] 95% llvm-cov / 80% mutants on crates touched (N/A for TCACHE-0/TCACHE-1)
+- [ ] Tests on branch (N/A for docs-only milestones)
+- [ ] 95% llvm-cov / 80% mutants on crates touched
 - [ ] No `sleep` in tests
 - [ ] `check-static` if ELF changed
 - [ ] [design-patterns.md](design-patterns.md) updated for new types

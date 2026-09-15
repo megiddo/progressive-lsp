@@ -31,16 +31,18 @@ Fine-grained work packages for **TCACHE** orchestration. Depends-on is strict: d
 
 ## Phase TC-1 — Design pattern audit spike (docs + inventory)
 
+**Status: SIGNED OFF** on `tcache-1` (2026-09-14).
+
 **Exit:** Repo-wide pattern/refactor backlog without mandatory code changes.
 
-| ID | Work package | Depends-on | Exit criteria |
-|----|--------------|------------|---------------|
-| TC-1.1 | Run [design-pattern-audit spike](../spikes/design-pattern-audit.md) | TC-0 | Output file populated |
-| TC-1.2 | Publish `docs/types-cache/pattern-audit-report.md` from spike | TC-1.1 | Every workspace crate listed; each module mapped or flagged ad-hoc |
-| TC-1.3 | Prioritize refactor candidates (P0/P1/P2) for TC-4 | TC-1.2 | Table with file paths + pattern target |
-| TC-1.4 | Update [design-patterns.md](../design-patterns.md) gap list (missing types in code) | TC-1.2 | Appendix or linked section |
+| ID | Work package | Depends-on | Exit criteria | Done |
+|----|--------------|------------|---------------|------|
+| TC-1.1 | Run [design-pattern-audit spike](../spikes/design-pattern-audit.md) | TC-0 | Output file populated | [x] |
+| TC-1.2 | Publish `docs/types-cache/pattern-audit-report.md` from spike | TC-1.1 | Every workspace crate listed; each module mapped or flagged ad-hoc | [x] |
+| TC-1.3 | Prioritize refactor candidates (P0/P1/P2) for TC-4 | TC-1.2 | Table with file paths + pattern target | [x] |
+| TC-1.4 | Update [design-patterns.md](../design-patterns.md) gap list (missing types in code) | TC-1.2 | Appendix or linked section (report §6; main table deferred to TC-2) | [x] |
 
-**Phase exit:** TC-1.2 report merged; TC-4 scope agreed.
+**Phase exit:** TC-1.2 report merged; TC-4 scope agreed (6 P0 items — human ack on report before TC-4.1).
 
 ---
 
