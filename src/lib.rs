@@ -29,6 +29,7 @@ mod control_socket;
 mod file_hub;
 mod serve_host;
 mod tier_registry;
+mod tier_port;
 mod serve_readiness;
 mod session;
 pub use serve_host::{root_from_params, ServeDiskWatch, ServeHost};

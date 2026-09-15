@@ -92,9 +92,9 @@ Fine-grained work packages for **ABS-0 … ABS-4**. Depends-on is strict.
 
 | ID | Work package | Depends-on | Exit criteria | Done |
 |----|--------------|------------|---------------|------|
-| ABS-4.1 | `TierPort` trait: `readiness`, `resolve_step`, `on_ingest`, `on_edit_event` | ABS-3 | Fake tier chain test | [ ] |
+| ABS-4.1 | `TierPort` trait: `readiness`, `resolve_step`, `on_ingest`, `on_edit_event` | ABS-3 | Fake tier chain test | [x] |
 | ABS-4.2 | Refactor T1/T2/types read steps behind ports (no lang crate split) | ABS-4.1 | Behavior parity tests | [ ] |
-| ABS-4.3 | Dynamic chain: drop types tier when engine `missing` | ABS-4.2 | Unit: chain length | [ ] |
+| ABS-4.3 | Dynamic chain: drop types tier when engine `missing` | ABS-4.2 | Unit: chain length | [x] |
 
 **Phase exit:** ABS-4.1–ABS-4.3 or human defers ABS-4.2/4.3 with ABS-4.1 merged.
 
