@@ -11,6 +11,7 @@ members = [
     "progressive-lsp-watch",
     "progressive-lsp-index",
     "progressive-lsp-resolve",
+    "progressive-lsp-types-cache",
     "progressive-lsp-workspace",
     "progressive-lsp-script",
     "progressive-lsp-engine",
@@ -46,6 +47,7 @@ progressive-lsp-install = { path = "progressive-lsp-install" }
 progressive-lsp-watch = { path = "progressive-lsp-watch" }
 progressive-lsp-index = { path = "progressive-lsp-index" }
 progressive-lsp-resolve = { path = "progressive-lsp-resolve" }
+progressive-lsp-types-cache = { path = "progressive-lsp-types-cache" }
 progressive-lsp-workspace = { path = "progressive-lsp-workspace" }
 progressive-lsp-lang-java = { path = "progressive-lsp-lang-java" }
 progressive-lsp-lang-php = { path = "progressive-lsp-lang-php" }
@@ -119,6 +121,7 @@ progressive-lsp-engine.workspace = true
 progressive-lsp-plugin.workspace = true
 progressive-lsp-protocol.workspace = true
 progressive-lsp-resolve.workspace = true
+progressive-lsp-types-cache = { workspace = true, optional = true }
 progressive-lsp-script.workspace = true
 progressive-lsp-watch.workspace = true
 progressive-lsp-workspace.workspace = true
@@ -155,6 +158,7 @@ lang-c = ["dep:progressive-lsp-lang-c"]
 lang-cpp = ["dep:progressive-lsp-lang-cpp"]
 lang-csharp = ["dep:progressive-lsp-lang-csharp"]
 t2-stack-graphs = ["progressive-lsp-resolve/t2-stack-graphs"]
+types-cache-chain = ["dep:progressive-lsp-types-cache"]
 
 [dev-dependencies]
 serde_json.workspace = true

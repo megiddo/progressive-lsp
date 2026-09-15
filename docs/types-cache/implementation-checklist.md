@@ -48,19 +48,21 @@ Fine-grained work packages for **TCACHE** orchestration. Depends-on is strict: d
 
 ## Phase TC-2 — Crate skeleton & ports
 
+**Status: SIGNED OFF** on `tcache-2` (2026-09-14).
+
 **Exit:** `progressive-lsp-types-cache` exists; store/resolver/builder stubs; unit tests green; always `NotReady` on read.
 
-| ID | Work package | Depends-on | Exit criteria |
-|----|--------------|------------|---------------|
-| TC-2.1 | Add crate `progressive-lsp-types-cache` to workspace | TC-0 | `cargo test -p progressive-lsp-types-cache` |
-| TC-2.2 | `TypesCacheKey`, `CacheGeneration`, `TypesCacheEntry` | TC-2.1 | Value object tests |
-| TC-2.3 | `TypesCacheStore` in-memory get/put/invalidate | TC-2.2 | Generation mismatch → miss |
-| TC-2.4 | `TypesCacheResolver` chain step (stub miss) | TC-2.3 | Chain test: falls through to fake T2 |
-| TC-2.5 | `TypesCacheBuilder` trait + `FakeBuilder` / queue | TC-2.3 | Enqueue on miss (hook only) |
-| TC-2.6 | `InvalidationPolicy` wired to generation port | TC-2.3 | didChange fixture bumps gen |
-| TC-2.7 | Pattern table rows in design-patterns.md | TC-2.1–TC-2.6 | Names match addendum |
+| ID | Work package | Depends-on | Exit criteria | Done |
+|----|--------------|------------|---------------|------|
+| TC-2.1 | Add crate `progressive-lsp-types-cache` to workspace | TC-0 | `cargo test -p progressive-lsp-types-cache` | [x] |
+| TC-2.2 | `TypesCacheKey`, `CacheGeneration`, `TypesCacheEntry` | TC-2.1 | Value object tests | [x] |
+| TC-2.3 | `TypesCacheStore` in-memory get/put/invalidate | TC-2.2 | Generation mismatch → miss | [x] |
+| TC-2.4 | `TypesCacheResolver` chain step (stub miss) | TC-2.3 | Chain test: falls through to fake T2 | [x] |
+| TC-2.5 | `TypesCacheBuilder` trait + `FakeBuilder` / queue | TC-2.3 | Enqueue on miss (hook only) | [x] |
+| TC-2.6 | `InvalidationPolicy` wired to generation port | TC-2.3 | didChange fixture bumps gen | [x] |
+| TC-2.7 | Pattern table rows in design-patterns.md | TC-2.1–TC-2.6 | Names match addendum | [x] |
 
-**Phase exit:** Resolver in chain behind `cfg` or empty store; no engine calls.
+**Phase exit:** Resolver in chain behind `types-cache-chain` feature + empty store; no engine calls.
 
 ---
 

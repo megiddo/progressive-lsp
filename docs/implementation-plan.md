@@ -903,7 +903,7 @@ Do not reopen signed-off POC-URI … POC-REST code WPs to implement POST-*; stac
 
 ## TCACHE (`tcache-*` branch stack)
 
-**Status:** Base committed on **`pre-tcache-base`** (dogfood discover + TCACHE docs). **TCACHE-0 signed off** on that branch. Next: **TCACHE-1** (`tcache-1`). Meta-orchestrator: [types-cache/agent-context.md](types-cache/agent-context.md).
+**Status:** **TCACHE-2 signed off** on `tcache-2`. Next: **TCACHE-3** (`tcache-3` on `tcache-2`). Meta-orchestrator: [types-cache/agent-context.md](types-cache/agent-context.md).
 
 **Milestone agents:** follow the **seven-step workflow** in [types-cache/agent-context.md](types-cache/agent-context.md) (branchless stack, coverage, mutation, checklist, commit, sign-off).
 

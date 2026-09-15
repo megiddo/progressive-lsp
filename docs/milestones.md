@@ -1462,12 +1462,12 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 |-----------|-------|--------|--------|----------------|
 | **TCACHE-0** | TC-0 | *(on `pre-tcache-base`)* | `prod-validation` | **SIGNED OFF** — requirements, design, ADR, agent-context |
 | **TCACHE-1** | TC-1 | `tcache-1` | `pre-tcache-base` | **SIGNED OFF** — [pattern-audit-report.md](types-cache/pattern-audit-report.md) (27 crates, 6 P0) |
-| **TCACHE-2** | TC-2 | `tcache-2` | `tcache-1` | `progressive-lsp-types-cache` stub; chain hook; tests |
+| **TCACHE-2** | TC-2 | `tcache-2` | `tcache-1` | **SIGNED OFF** — `progressive-lsp-types-cache` stub; chain hook; tests |
 | **TCACHE-3** | TC-3 | `tcache-3` | `tcache-2` | Builder + engine off mux path; container 2nd-click hit |
 | **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | P0 refactors from audit |
 | **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | Graph layer + IT-discover-timing CI |
 
-**Next:** stack **`tcache-2`** on **`tcache-1`** for TCACHE-2 implementation.
+**Next:** stack **`tcache-3`** on **`tcache-2`** for TCACHE-3 builder + cutover.
 
 **Sign-off checklist (TCACHE-1 — complete)**
 
@@ -1479,7 +1479,17 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 - [x] [design-patterns.md](design-patterns.md) — gap list in audit report §6
 - [x] Timing requirements — deferred to TCACHE-5
 
-**Sign-off checklist (each TCACHE-N)** — template for TCACHE-2+
+**Sign-off checklist (TCACHE-2 — complete)**
+
+- [x] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
+- [x] Tests on branch — `cargo test -p progressive-lsp-types-cache`
+- [x] 95% llvm-cov / 80% mutants — mutants **47/50 scored (94%)** on `progressive-lsp-types-cache` (llvm-tools-preview unavailable on host; line cov N/A)
+- [x] No `sleep` in tests
+- [x] `check-static` if ELF changed — N/A
+- [x] [design-patterns.md](design-patterns.md) updated for new types
+- [x] Timing requirements — deferred to TCACHE-5
+
+**Sign-off checklist (each TCACHE-N)** — template for TCACHE-3+
 
 - [ ] Phase exit criteria in [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md)
 - [ ] Tests on branch (N/A for docs-only milestones)

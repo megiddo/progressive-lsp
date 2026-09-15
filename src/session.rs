@@ -23,6 +23,9 @@ use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
 use progressive_lsp_workspace::{detect_workspace, PackageEntry, WorkspaceModel};
 
+#[cfg(feature = "types-cache-chain")]
+use progressive_lsp_types_cache::stub_types_cache_resolver;
+
 #[cfg(test)]
 use progressive_lsp_watch::FakeWatcher;
 
@@ -66,6 +69,13 @@ pub struct WorkspaceSession {
 }
 
 impl WorkspaceSession {
+    fn prepend_types_cache_stub(chain: &mut ResolverChain) {
+        #[cfg(feature = "types-cache-chain")]
+        {
+            chain.prepend(Box::new(stub_types_cache_resolver()));
+        }
+    }
+
     pub fn new(index: SharedIndex, chain: ResolverChain) -> Self {
         Self {
             index,
@@ -125,19 +135,21 @@ impl WorkspaceSession {
         log: Arc<dyn LogPort>,
     ) -> Self {
         let index = SharedIndex::new(IndexService::with_prefix_and_log(layout, Arc::clone(&log)));
-        let chain = ResolverChain::new(vec![
+        let mut chain = ResolverChain::new(vec![
             T2Strategy::from_backend(t2).build(Arc::new(index.clone())),
             Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
         ]);
+        Self::prepend_types_cache_stub(&mut chain);
         Self::new(index, chain).with_log(log)
     }
 
     pub fn java_default() -> Self {
         let index = SharedIndex::new(IndexService::new());
-        let chain = ResolverChain::new(vec![
+        let mut chain = ResolverChain::new(vec![
             T2Strategy::from_backend(T2Backend::Heuristic).build(Arc::new(index.clone())),
             Box::new(TreeSitterResolver::new(Arc::new(index.clone()))),
         ]);
+        Self::prepend_types_cache_stub(&mut chain);
         Self::new(index, chain)
     }
 
