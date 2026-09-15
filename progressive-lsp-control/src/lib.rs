@@ -84,6 +84,12 @@ mod tests {
             }],
             cache_entries: 2,
             ingest: IngestState::Done.as_str().into(),
+            engines: vec![EngineStatusRow {
+                language: "java".into(),
+                pack: "java".into(),
+                state: "ready".into(),
+                detail: String::new(),
+            }],
         });
         assert_round_trip(&TierStatusRequest {});
         assert_round_trip(&TierStatusResponse {

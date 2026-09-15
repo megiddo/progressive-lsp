@@ -13,6 +13,7 @@ use progressive_lsp_engine::{
     binary_name_for_pack, full_pack_names, slim_pack_names, CLANGD_PACK, GOPLS_PACK, TSGO_PACK,
     ZLS_PACK,
 };
+use progressive_lsp_install::{hex_encode, sha256, Manifest, ManifestArtifact};
 
 use crate::check_static;
 use crate::musl::{
@@ -42,9 +43,6 @@ pub const IMAGE_PREFIX: &str = "/opt/plsp";
 
 pub const DOCKERFILE_X86_REL: &str = "docker/runtime.Dockerfile";
 pub const DOCKERFILE_AARCH64_REL: &str = "docker/runtime-aarch64.Dockerfile";
-
-/// x86_64 scratch dockerfile (legacy name for freshness stamps).
-pub const DOCKERFILE_REL: &str = DOCKERFILE_X86_REL;
 
 pub fn runtime_dockerfile_rel(triple: &str) -> Result<&'static str, String> {
     match triple {
@@ -284,6 +282,7 @@ impl RuntimeImagePlan {
                     .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
             }
             copy_file(&pack.src, &dest)?;
+            write_pack_manifest(&dest, &pack.binary)?;
         }
         let tmp = self.staging.join("tmp");
         fs::create_dir_all(&tmp).map_err(|e| format!("mkdir {}: {e}", tmp.display()))?;
@@ -300,6 +299,33 @@ fn copy_file(src: &Path, dest: &Path) -> Result<(), String> {
     fs::copy(src, dest)
         .map_err(|e| format!("copy {} -> {}: {e}", src.display(), dest.display()))?;
     check_static::ensure_executable(dest)?;
+    Ok(())
+}
+
+/// Runtime image stages ELFs only; serve discovers packs via `manifest.json` + sha256.
+fn write_pack_manifest(dest_elf: &Path, binary: &str) -> Result<(), String> {
+    let dir = dest_elf.parent().ok_or_else(|| {
+        format!(
+            "pack ELF has no parent dir: {}",
+            dest_elf.display()
+        )
+    })?;
+    let bytes = fs::read(dest_elf)
+        .map_err(|e| format!("read {} for manifest: {e}", dest_elf.display()))?;
+    let manifest = Manifest {
+        version: "1".into(),
+        artifacts: vec![ManifestArtifact {
+            name: binary.into(),
+            rel_path: binary.into(),
+            sha256: hex_encode(&sha256(&bytes)),
+            executable: true,
+        }],
+    };
+    fs::write(
+        dir.join("manifest.json"),
+        manifest.to_json().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write {}: {e}", dir.join("manifest.json").display()))?;
     Ok(())
 }
 
@@ -583,6 +609,7 @@ mod tests {
         assert!(prefix.engines_dir().join("phpantom/phpantom").is_file());
         assert!(prefix.engines_dir().join("biome/biome").is_file());
         assert!(prefix.engines_dir().join("java/javacs").is_file());
+        assert!(prefix.engines_dir().join("java/manifest.json").is_file());
         assert!(prefix.engines_dir().join("superhtml/superhtml").is_file());
         for dir in [
             prefix.cache_dir(),

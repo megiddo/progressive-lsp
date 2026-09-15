@@ -218,6 +218,13 @@ impl IndexService {
         self.files.get(path).map(|f| f.source.as_str())
     }
 
+    pub fn indexed_file_ids(&self) -> Vec<FileId> {
+        self.files
+            .keys()
+            .map(|p| FileId::new(p.to_string_lossy().into_owned()))
+            .collect()
+    }
+
     pub fn indexed(&self, path: &Path) -> Option<&IndexedFile> {
         self.files.get(path)
     }

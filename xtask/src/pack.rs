@@ -14,8 +14,7 @@ use progressive_lsp_engine::{
 };
 
 use crate::artifact_store::{
-    self, pull_cache_binary, push_cache_binary, ArtifactFormat, NetworkFetcher,
-    ARTIFACT_DEFAULT_FORMAT,
+    pull_cache_binary, push_cache_binary, ArtifactFormat, NetworkFetcher, ARTIFACT_DEFAULT_FORMAT,
 };
 use crate::check_static;
 use crate::musl::{triples, CommandDockerPort, DockerPort, AARCH64_MUSL, X86_64_MUSL};

@@ -26,11 +26,15 @@ pub const EVENT_TAB_CLOSE: &str = "tab_close";
 pub const EVENT_SAVE: &str = "save";
 pub const EVENT_CONTROL_CONNECT_ERROR: &str = "control_connect_error";
 pub const EVENT_CONTROL_PUSH: &str = "control_push";
+pub const EVENT_INDEX_STATUS: &str = "index_status";
+pub const EVENT_TIER_STATUS: &str = "tier_status";
+pub const EVENT_CONTROL_CONNECTED: &str = "control_connected";
 pub const EVENT_PROGRESS: &str = "$/progress";
 pub const EVENT_LOG_MESSAGE: &str = "window/logMessage";
 pub const EVENT_CONFLICT_ENQUEUE: &str = "conflict_enqueue";
 pub const EVENT_CONFLICT_RESOLVE: &str = "conflict_resolve";
 pub const EVENT_CONTAINER_STEP: &str = "container_step";
+pub const EVENT_CONTAINER_SERVE_LOG: &str = "container_serve_log";
 
 /// Child `PROGRESSIVE_LSP_LOG_LEVEL`. poc-ide always sets this on spawn.
 pub const CHILD_LOG_LEVEL: &str = "debug";
@@ -527,6 +531,17 @@ impl RunLog {
         );
     }
 
+    pub fn log_container_serve_log(&mut self, wal: &Path) {
+        self.record(
+            LogCategory::Runtime,
+            EVENT_CONTAINER_SERVE_LOG,
+            Some(json!({
+                "serve_wal": wal.display().to_string(),
+                "bind_mount": wal.parent().map(|p| p.display().to_string()),
+            })),
+        );
+    }
+
     pub fn log_container_journal(&mut self, journal: &LaunchJournal) {
         for step in journal.steps() {
             self.record(
@@ -600,6 +615,28 @@ impl RunLog {
         );
     }
 
+    /// Discover queued on the LSP IO thread (before the response returns).
+    pub fn log_discover_submit(
+        &mut self,
+        method: &str,
+        path: &Path,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) {
+        self.record(
+            LogCategory::Lsp,
+            "discover_submit",
+            Some(json_obj([
+                ("method", json!(method)),
+                ("path", json!(path.display().to_string())),
+                ("uri", json!(uri)),
+                ("line", json!(line)),
+                ("character", json!(character)),
+            ])),
+        );
+    }
+
     /// Discover request as the IDE sent it: uri, caret, hit count. Never file bodies.
     pub fn log_discover(
         &mut self,
@@ -610,6 +647,7 @@ impl RunLog {
         character: u32,
         location_count: Option<u64>,
         error: Option<&str>,
+        duration_ms: Option<u64>,
     ) {
         self.record(
             LogCategory::Lsp,
@@ -627,6 +665,13 @@ impl RunLog {
                         None => Value::Null,
                     },
                 ),
+                (
+                    "duration_ms",
+                    match duration_ms {
+                        Some(n) => json!(n),
+                        None => Value::Null,
+                    },
+                ),
                 ("error", opt_str(error)),
             ])),
         );
@@ -640,6 +685,35 @@ impl RunLog {
         );
     }
 
+    pub fn log_control_connected(&mut self) {
+        self.record(LogCategory::Control, EVENT_CONTROL_CONNECTED, None);
+    }
+
+    pub fn log_index_status(
+        &mut self,
+        ingest: &str,
+        package_count: usize,
+        cache_entries: u64,
+    ) {
+        self.record(
+            LogCategory::Control,
+            EVENT_INDEX_STATUS,
+            Some(json!({
+                "ingest": ingest,
+                "package_count": package_count,
+                "cache_entries": cache_entries,
+            })),
+        );
+    }
+
+    pub fn log_tier_status(&mut self, rows: &[(&str, &str)]) {
+        self.record(
+            LogCategory::Control,
+            EVENT_TIER_STATUS,
+            Some(json!({ "rows": rows })),
+        );
+    }
+
     pub fn log_control_push(&mut self, method: &str) {
         self.record(
             LogCategory::Control,
@@ -648,13 +722,21 @@ impl RunLog {
         );
     }
 
-    pub fn log_progress(&mut self, progress_token: &str, kind: &str) {
+    pub fn log_progress(
+        &mut self,
+        progress_token: &str,
+        kind: &str,
+        message: Option<&str>,
+        percentage: Option<u32>,
+    ) {
         self.record(
             LogCategory::Lsp,
             EVENT_PROGRESS,
             Some(json!({
                 "progress_token": progress_token,
                 "kind": kind,
+                "message": message,
+                "percentage": percentage,
             })),
         );
     }
@@ -1001,12 +1083,13 @@ mod tests {
             4,
             Some(0),
             None,
+            None,
         );
         log.log_lsp("textDocument/implementation", None);
         log.log_lsp("textDocument/references", None);
         log.log_control_connect_error("control socket missing");
         log.log_control_push("TierReady");
-        log.log_progress("ingest", "begin");
+        log.log_progress("ingest", "begin", Some("indexing"), Some(50));
         log.log_window_log_message(3, "hi");
         log.log_conflict_enqueue(Path::new("/ws/a.rs"), 9);
         log.log_conflict_resolve(Path::new("/ws/a.rs"), ConflictChoice::LoadDisk);

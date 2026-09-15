@@ -229,6 +229,7 @@ impl ControlServer {
             packages: Vec::new(),
             cache_entries: 0,
             ingest: IngestState::NotStarted.as_str().into(),
+            engines: Vec::new(),
         }
     }
 
@@ -350,6 +351,18 @@ impl ControlServer {
         encode_frame(&reply)
     }
 
+    /// Unary reply plus any pending WatchBatch / TierReady pushes (mux writes each as its own frame).
+    pub fn handle_mux_payload_with_pushes(
+        &self,
+        length_prefixed: &[u8],
+    ) -> Result<Vec<Vec<u8>>, CodecError> {
+        let mut frames = vec![self.handle_mux_payload(length_prefixed)?];
+        for push in self.drain_pushes() {
+            frames.push(encode_frame(&push.to_bytes())?);
+        }
+        Ok(frames)
+    }
+
     pub fn encode_watch_batch(&self) -> Result<Vec<u8>, CodecError> {
         encode_frame(&Envelope::push(METHOD_WATCH_BATCH, self.last_watch_batch()).encode_to_vec())
     }
@@ -468,6 +481,7 @@ mod tests {
                 }],
                 cache_entries: 4,
                 ingest: IngestState::Done.as_str().into(),
+                engines: Vec::new(),
             }
         }
         fn tier_status(&self, _req: &TierStatusRequest) -> TierStatusResponse {

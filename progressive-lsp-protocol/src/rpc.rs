@@ -81,6 +81,18 @@ pub fn failure(id: Option<Value>, error: JsonRpcError) -> Value {
     })
 }
 
+/// JSON-RPC ids may be number or string; treat equivalent forms as a match.
+pub fn id_matches(expected: i64, got: &Value) -> bool {
+    match got {
+        Value::Number(n) => {
+            n.as_i64() == Some(expected)
+                || (expected >= 0 && n.as_u64() == Some(expected as u64))
+        }
+        Value::String(s) => s.parse::<i64>().ok() == Some(expected),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +133,13 @@ mod tests {
         assert!(err["id"].is_null());
         assert!(JsonRpcError::invalid_request("z").message.contains("z"));
         assert!(JsonRpcError::parse_error("p").message.contains("p"));
+    }
+
+    #[test]
+    fn id_matches_number_and_string() {
+        assert!(id_matches(2, &json!(2)));
+        assert!(id_matches(2, &json!("2")));
+        assert!(!id_matches(2, &json!(3)));
+        assert!(!id_matches(2, &json!("3")));
     }
 }

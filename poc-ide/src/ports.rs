@@ -774,6 +774,7 @@ impl FakeControl {
                     }],
                     cache_entries: 0,
                     ingest: progressive_lsp_control::IngestState::Done.as_str().into(),
+                    engines: Vec::new(),
                 },
             ),
             METHOD_TIER_STATUS => Envelope::reply(

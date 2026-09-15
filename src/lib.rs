@@ -366,7 +366,21 @@ where
         facade.serve_mux(
             &mut reader,
             &mut writer,
-            Some(|payload: &[u8]| srv.handle_mux_payload(payload).ok()),
+            Some(|payload: &[u8]| {
+                host.poll_disk_watch();
+                srv.handle_mux_payload_with_pushes(payload).ok()
+            }),
+            Some(|| {
+                use progressive_lsp_core::InitializeFailed;
+                host.poll_disk_watch();
+                srv.drain_pushes()
+                    .into_iter()
+                    .map(|push| {
+                        progressive_lsp_control::encode_frame(&push.to_bytes())
+                            .map_err(|e| InitializeFailed(e.to_string()))
+                    })
+                    .collect()
+            }),
         )?;
     } else {
         facade.serve(reader, writer)?;

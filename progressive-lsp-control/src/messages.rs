@@ -143,6 +143,19 @@ pub struct IndexPackage {
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
+pub struct EngineStatusRow {
+    #[prost(string, tag = "1")]
+    pub language: String,
+    #[prost(string, tag = "2")]
+    pub pack: String,
+    /// `ready` | `error` | `missing` | `pending`
+    #[prost(string, tag = "3")]
+    pub state: String,
+    #[prost(string, tag = "4")]
+    pub detail: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
 pub struct IndexStatusResponse {
     #[prost(message, optional, tag = "1")]
     pub status: Option<Status>,
@@ -153,6 +166,8 @@ pub struct IndexStatusResponse {
     /// Additive. `not_started` | `running` | `done`.
     #[prost(string, tag = "4")]
     pub ingest: String,
+    #[prost(message, repeated, tag = "5")]
+    pub engines: Vec<EngineStatusRow>,
 }
 
 impl IndexStatusResponse {
@@ -373,6 +388,7 @@ mod tests {
             packages: vec![],
             cache_entries: 0,
             ingest: IngestState::Running.as_str().into(),
+            engines: vec![],
         };
         assert_eq!(resp.ingest_state(), IngestState::Running);
         assert_eq!(

@@ -6,6 +6,7 @@ pub mod capabilities;
 pub mod discovery;
 pub mod fake;
 pub mod hooks;
+pub mod lsp_child;
 pub mod pack;
 pub mod resolve;
 pub mod supervisor;

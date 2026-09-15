@@ -280,7 +280,8 @@ impl LspFacade {
             return self.serve_mux(
                 &mut reader,
                 &mut writer,
-                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+                None::<fn(&[u8]) -> Option<Vec<Vec<u8>>>>,
+                None::<fn() -> Result<Vec<Vec<u8>>, InitializeFailed>>,
             );
         }
         self.serve_lsp(&mut reader, &mut writer)
@@ -307,16 +308,18 @@ impl LspFacade {
     }
 
     /// `--mux`: channel id + length + payload. LSP stays JSON-RPC; control is proto.
-    pub fn serve_mux<R, W, C>(
+    pub fn serve_mux<R, W, C, P>(
         &self,
         reader: &mut R,
         writer: &mut W,
         mut on_control: Option<C>,
+        mut after_lsp: Option<P>,
     ) -> Result<(), InitializeFailed>
     where
         R: std::io::Read,
         W: Write,
-        C: FnMut(&[u8]) -> Option<Vec<u8>>,
+        C: FnMut(&[u8]) -> Option<Vec<Vec<u8>>>,
+        P: FnMut() -> Result<Vec<Vec<u8>>, InitializeFailed>,
     {
         loop {
             let frame = match crate::mux::read_mux_frame(reader) {
@@ -329,8 +332,10 @@ impl LspFacade {
             };
             if frame.is_control() {
                 if let Some(cb) = on_control.as_mut() {
-                    if let Some(resp) = cb(&frame.payload) {
-                        self.write_mux(writer, crate::mux::CHANNEL_CONTROL, &resp)?;
+                    if let Some(frames) = cb(&frame.payload) {
+                        for resp in frames {
+                            self.write_mux(writer, crate::mux::CHANNEL_CONTROL, &resp)?;
+                        }
                     }
                 }
                 continue;
@@ -344,6 +349,11 @@ impl LspFacade {
             }
             if self.dispatch_json_rpc_mux(&frame.payload, writer)? {
                 return Ok(());
+            }
+            if let Some(ref mut hook) = after_lsp {
+                for frame in hook()? {
+                    self.write_mux(writer, crate::mux::CHANNEL_CONTROL, &frame)?;
+                }
             }
         }
     }
@@ -804,8 +814,9 @@ mod tests {
                 &mut out,
                 Some(|p: &[u8]| {
                     seen = p == inner;
-                    Some(b"ack".to_vec())
+                    Some(vec![b"ack".to_vec()])
                 }),
+                None::<fn() -> Result<Vec<Vec<u8>>, InitializeFailed>>,
             )
             .unwrap();
         assert!(seen);
@@ -943,7 +954,8 @@ mod tests {
             .serve_mux(
                 &mut Cursor::new(vec![9u8, 0, 0, 0, 0]),
                 &mut Vec::new(),
-                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+                None::<fn(&[u8]) -> Option<Vec<Vec<u8>>>>,
+                None::<fn() -> Result<Vec<Vec<u8>>, InitializeFailed>>,
             )
             .unwrap_err();
         assert!(err.0.contains("unknown mux channel"));
@@ -966,7 +978,8 @@ mod tests {
             .serve_mux(
                 &mut Cursor::new(hdr),
                 &mut Vec::new(),
-                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+                None::<fn(&[u8]) -> Option<Vec<Vec<u8>>>>,
+                None::<fn() -> Result<Vec<Vec<u8>>, InitializeFailed>>,
             )
             .unwrap_err();
         assert!(err.0.contains("exceeds") || err.0.to_lowercase().contains("payload"));
@@ -989,7 +1002,8 @@ mod tests {
         let _ = facade3.serve_mux(
             &mut Cursor::new(short),
             &mut Vec::new(),
-            None::<fn(&[u8]) -> Option<Vec<u8>>>,
+            None::<fn(&[u8]) -> Option<Vec<Vec<u8>>>>,
+            None::<fn() -> Result<Vec<Vec<u8>>, InitializeFailed>>,
         );
         assert_no_payload_leak(&log3);
         let rows3 = protocol_rows(&log3);
@@ -1022,7 +1036,8 @@ mod tests {
             .serve_mux(
                 &mut Cursor::new(stdin),
                 &mut out,
-                None::<fn(&[u8]) -> Option<Vec<u8>>>,
+                None::<fn(&[u8]) -> Option<Vec<Vec<u8>>>>,
+                None::<fn() -> Result<Vec<Vec<u8>>, InitializeFailed>>,
             )
             .unwrap();
         let rows4 = protocol_rows(&log4);

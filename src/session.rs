@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use progressive_lsp_control::IngestState;
 use progressive_lsp_core::{
@@ -15,7 +16,8 @@ use progressive_lsp_index::{
 };
 use progressive_lsp_protocol::{LspIntelligence, WorkDoneProgress};
 use progressive_lsp_resolve::{
-    QueryKind, ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy, TreeSitterResolver,
+    QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, Resolver, ResolverChain, T2Strategy,
+    TreeSitterResolver,
 };
 use progressive_lsp_script::{RhaiEngineFactory, ScriptContext, ScriptHost};
 use progressive_lsp_watch::{DefaultIgnoreFilter, WatchBackend, WatchCoalescer, WatchFilter};
@@ -292,6 +294,12 @@ impl WorkspaceSession {
         self.index.lock().package_tier(&PackageId::new(id))
     }
 
+    pub fn mark_package_tier(&self, id: &str, tier: Tier) {
+        self.index
+            .lock()
+            .mark_package_tier(PackageId::new(id), tier);
+    }
+
     pub fn apply_watch(
         &self,
         backend: &mut dyn WatchBackend,
@@ -401,6 +409,15 @@ impl WorkspaceSession {
     }
 
     /// Stock ghost-disk: reindex files whose on-disk bytes changed (no LSP didChange).
+    /// T1-only fallback when discover hits the serve deadline while T3 is still busy.
+    pub fn resolve_syntax_tier(&self, q: &ResolveQuery) -> ResolveResult {
+        let t1 = TreeSitterResolver::new(Arc::new(self.index.clone()));
+        match t1.resolve(q) {
+            ResolveOutcome::Ready(r) => r,
+            ResolveOutcome::NotReady => ResolveResult::empty(Tier::Syntax),
+        }
+    }
+
     pub fn reindex_known_paths(&self) -> usize {
         let mut n = 0usize;
         for path in self.source_paths() {
@@ -533,11 +550,11 @@ impl LspIntelligence for WorkspaceSession {
                 .line(q.position.line)
                 .operation(operation),
         );
+        self.log.debug(&format!("{operation} start"));
+        let started = Instant::now();
         let result = match self.chain.resolve(q) {
-            progressive_lsp_resolve::ResolveOutcome::Ready(r) => r,
-            progressive_lsp_resolve::ResolveOutcome::NotReady => {
-                ResolveResult::empty(progressive_lsp_core::Tier::Syntax)
-            }
+            ResolveOutcome::Ready(r) => r,
+            ResolveOutcome::NotReady => ResolveResult::empty(Tier::Syntax),
         };
         let discover = matches!(
             q.kind,
@@ -546,7 +563,13 @@ impl LspIntelligence for WorkspaceSession {
                 | QueryKind::References
                 | QueryKind::TypeDefinition
         );
-        if discover && result.locations.is_empty() {
+        if discover {
+            let resolve_ms = started.elapsed().as_millis() as u64;
+            self.log.debug(&format!(
+                "{operation} complete tier={} locations={} resolve_ms={resolve_ms}",
+                result.tier.as_str(),
+                result.locations.len()
+            ));
             let path = Path::new(q.file.as_str());
             let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
             let language_id = match ext {
@@ -577,7 +600,11 @@ impl LspIntelligence for WorkspaceSession {
                 })
                 .unwrap_or_default();
             let mut extras = BTreeMap::new();
-            extras.insert("location_count".into(), "0".into());
+            extras.insert("resolve_ms".into(), resolve_ms.to_string());
+            extras.insert(
+                "location_count".into(),
+                result.locations.len().to_string(),
+            );
             extras.insert("path".into(), q.file.as_str().to_string());
             extras.insert("line".into(), q.position.line.to_string());
             extras.insert("character".into(), q.position.character.to_string());
@@ -585,6 +612,11 @@ impl LspIntelligence for WorkspaceSession {
             extras.insert("package_id".into(), package_id);
             extras.insert("tier".into(), result.tier.as_str().to_string());
             let mut rec = LogRecord::at_caller(LogLevel::Info, operation);
+            rec.message = format!(
+                "{operation} complete resolve_ms={resolve_ms} tier={} locations={}",
+                result.tier.as_str(),
+                result.locations.len()
+            );
             rec.extras = Some(extras);
             self.log.emit(rec);
         } else {
@@ -606,6 +638,9 @@ impl LspIntelligence for WorkspaceSession {
             self.index
                 .lock()
                 .index_text(&path, text, indexer.as_ref(), false);
+        }
+        if let Some(sup) = &self.supervisor {
+            sup.forward_did_open(uri, language_id, text);
         }
     }
 
@@ -1513,7 +1548,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_hit_does_not_emit_info_for_resolve_row() {
+    fn resolve_hit_emits_discover_timing_info() {
         let log = progressive_lsp_core::FakeLog::new();
         let loc = LspLocation::new(
             "file:///hit.java",
@@ -1535,20 +1570,16 @@ mod tests {
         let r = session.resolve(&q);
         assert_eq!(r.locations.len(), 1);
         let recs = log.records();
-        assert!(
-            recs.iter().any(|rec| {
-                rec.level == progressive_lsp_core::LogLevel::Debug
+        let info = recs
+            .iter()
+            .find(|rec| {
+                rec.level == progressive_lsp_core::LogLevel::Info
                     && rec.operation.as_deref() == Some("textDocument/definition")
-            }),
-            "{recs:?}"
-        );
-        assert!(
-            recs.iter().all(|rec| {
-                rec.operation.as_deref() != Some("textDocument/definition")
-                    || rec.level != progressive_lsp_core::LogLevel::Info
-            }),
-            "hit must not emit info for the resolve row: {recs:?}"
-        );
+            })
+            .expect("discover timing info row");
+        let extras = info.extras.as_ref().expect("extras");
+        assert_eq!(extras.get("location_count").map(String::as_str), Some("1"));
+        assert!(extras.contains_key("resolve_ms"));
     }
 
     #[test]

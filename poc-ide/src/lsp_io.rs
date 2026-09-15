@@ -252,40 +252,56 @@ impl LspIoEvent {
 }
 
 /// Session / in-flight discover flag. Value object, not a Manager.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct DiscoverFlight {
     kind: Option<DiscoverKind>,
+    submitted: Option<std::time::Instant>,
 }
 
 impl DiscoverFlight {
     pub fn idle() -> Self {
-        Self { kind: None }
-    }
-
-    pub fn begin(self, kind: DiscoverKind) -> Self {
-        match self.kind {
-            Some(_) => self,
-            None => Self { kind: Some(kind) },
+        Self {
+            kind: None,
+            submitted: None,
         }
     }
 
-    pub fn finish(self) -> Self {
-        Self { kind: None }
+    pub fn begin(&self, kind: DiscoverKind) -> Self {
+        match self.kind {
+            Some(_) => self.clone(),
+            None => Self {
+                kind: Some(kind),
+                submitted: Some(std::time::Instant::now()),
+            },
+        }
     }
 
-    pub fn is_in_flight(self) -> bool {
+    pub fn finish(&self) -> Self {
+        Self {
+            kind: None,
+            submitted: None,
+        }
+    }
+
+    pub fn elapsed_ms(&self) -> Option<u64> {
+        self.submitted
+            .as_ref()
+            .map(|t| t.elapsed().as_millis() as u64)
+    }
+
+    pub fn is_in_flight(&self) -> bool {
         self.kind.is_some()
     }
 
-    pub fn can_submit(self) -> bool {
+    pub fn can_submit(&self) -> bool {
         self.kind.is_none()
     }
 
-    pub fn kind(self) -> Option<DiscoverKind> {
+    pub fn kind(&self) -> Option<DiscoverKind> {
         self.kind
     }
 
-    pub fn waiting_label(self) -> Option<&'static str> {
+    pub fn waiting_label(&self) -> Option<&'static str> {
         self.kind.map(|_| "waiting for server")
     }
 }

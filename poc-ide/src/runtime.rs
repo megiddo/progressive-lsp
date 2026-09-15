@@ -6,6 +6,8 @@ use std::process::{Command, Stdio};
 
 use crate::error::IdeError;
 use crate::language::WireTier;
+use crate::lsp::ServeSpawn;
+use crate::log::CHILD_LOG_LEVEL;
 use crate::open_mode::OpenMode;
 
 /// Image the container host would run. Not pulled in unit tests.
@@ -59,6 +61,9 @@ pub struct DockerRunPlan {
     image: String,
     /// `docker run --platform` (e.g. `linux/arm64` on Apple Silicon).
     docker_platform: Option<String>,
+    /// Host serve WAL bind-mounted at the same path for agent post-mortems.
+    serve_wal: Option<PathBuf>,
+    serve_log_level: Option<String>,
 }
 
 impl DockerRunPlan {
@@ -81,12 +86,25 @@ impl DockerRunPlan {
             workspace,
             image: RUNTIME_IMAGE.to_string(),
             docker_platform: None,
+            serve_wal: None,
+            serve_log_level: None,
         })
     }
 
     pub fn with_docker_platform(mut self, platform: impl Into<String>) -> Self {
         self.docker_platform = Some(platform.into());
         self
+    }
+
+    /// Bind-mount the host log directory and pass [`ServeSpawn::ENV_LOG`] into the container.
+    pub fn with_serve_logging(mut self, wal: impl AsRef<Path>, log_level: &str) -> Self {
+        self.serve_wal = Some(wal.as_ref().to_path_buf());
+        self.serve_log_level = Some(log_level.into());
+        self
+    }
+
+    pub fn serve_wal(&self) -> Option<&Path> {
+        self.serve_wal.as_deref()
     }
 
     fn docker_path_missing(docker: &Path) -> bool {
@@ -132,7 +150,29 @@ impl DockerRunPlan {
             "-v".into(),
             format!("{ws}:{ws}"),
             "-w".into(),
-            ws,
+            ws.clone(),
+        ]);
+        if let Some(wal) = &self.serve_wal {
+            if wal.is_absolute() {
+                if let Some(log_dir) = wal.parent() {
+                    let dir = log_dir.to_string_lossy().into_owned();
+                    if dir != ws {
+                        argv.extend(["-v".into(), format!("{dir}:{dir}")]);
+                    }
+                }
+                argv.extend([
+                    "-e".into(),
+                    format!("{}={}", ServeSpawn::ENV_LOG, wal.display()),
+                    "-e".into(),
+                    format!(
+                        "{}={}",
+                        ServeSpawn::ENV_LOG_LEVEL,
+                        self.serve_log_level.as_deref().unwrap_or(CHILD_LOG_LEVEL)
+                    ),
+                ]);
+            }
+        }
+        argv.extend([
             self.image.clone(),
             "serve".into(),
             "--prefix".into(),
@@ -257,7 +297,7 @@ impl LaunchJournal {
         }
     }
 
-    /// C# T1/T2 ceiling (no csharp-ls pack). Java uses the same T3 journal as other typed languages.
+    /// C# T1/T2 ceiling (no csharp-ls pack).
     pub fn t3_not_supported() -> Self {
         Self {
             steps: vec![LaunchStep::new("t3_engine", "T3 types")
@@ -266,14 +306,32 @@ impl LaunchJournal {
         }
     }
 
+    /// No known language for the strip (no v1 source tab focused or open).
+    pub fn t3_no_source_focus() -> Self {
+        Self {
+            steps: vec![LaunchStep::new("t3_focus", "T3 types")
+                .with_state(StepState::Pending)
+                .with_detail("open or focus a source file (strip stays n/a for plaintext)")],
+        }
+    }
+
     /// Native Linux T3: one serve, no Docker plan.
     pub fn native_t3_from_wire(
         current: Option<WireTier>,
         ingest: progressive_lsp_control::IngestState,
+        engine: Option<&crate::tier::EngineSnap>,
     ) -> Self {
         use progressive_lsp_control::IngestState;
+        if let Some(e) = engine.filter(|e| e.is_blocked()) {
+            return Self {
+                steps: vec![LaunchStep::new("t3_engine", "T3 types")
+                    .with_state(StepState::Fail)
+                    .with_detail(e.fail_detail())],
+            };
+        }
         let (state, detail) = match current {
             Some(WireTier::Types) => (StepState::Ok, "types"),
+            Some(WireTier::Graph) => (StepState::Running, "loading types (T3 engine)"),
             _ if ingest == IngestState::Running => (StepState::Pending, "waiting for T1/T2"),
             _ if ingest == IngestState::Done => (StepState::Skipped, "T3 skipped (stub pack)"),
             _ => (StepState::Pending, "not started"),
@@ -850,6 +908,9 @@ mod tests {
         let no_t3 = LaunchJournal::t3_not_supported();
         assert_eq!(no_t3.steps()[0].state(), StepState::Skipped);
         assert!(no_t3.steps()[0].detail().unwrap().contains("not supported"));
+        let no_focus = LaunchJournal::t3_no_source_focus();
+        assert_eq!(no_focus.steps()[0].state(), StepState::Pending);
+        assert!(no_focus.steps()[0].detail().unwrap().contains("source file"));
 
         let t1 = LaunchJournal::t1_from_ingest(IngestState::Running);
         assert_eq!(t1.steps()[0].state(), StepState::Ok);
@@ -889,15 +950,23 @@ mod tests {
         assert_ne!(StatusModalKind::T1, StatusModalKind::T3);
         assert_ne!(StatusModalKind::Container, StatusModalKind::T3);
 
-        let native_ok =
-            LaunchJournal::native_t3_from_wire(Some(WireTier::Types), IngestState::Done);
+        let native_ok = LaunchJournal::native_t3_from_wire(
+            Some(WireTier::Types),
+            IngestState::Done,
+            None,
+        );
         assert_eq!(native_ok.steps()[0].state(), StepState::Ok);
-        let native_skip =
-            LaunchJournal::native_t3_from_wire(Some(WireTier::Syntax), IngestState::Done);
+        let native_skip = LaunchJournal::native_t3_from_wire(
+            Some(WireTier::Syntax),
+            IngestState::Done,
+            None,
+        );
         assert_eq!(native_skip.steps()[0].state(), StepState::Skipped);
-        let native_wait = LaunchJournal::native_t3_from_wire(None, IngestState::Running);
+        let native_wait =
+            LaunchJournal::native_t3_from_wire(None, IngestState::Running, None);
         assert_eq!(native_wait.steps()[0].state(), StepState::Pending);
-        let native_not_started = LaunchJournal::native_t3_from_wire(None, IngestState::NotStarted);
+        let native_not_started =
+            LaunchJournal::native_t3_from_wire(None, IngestState::NotStarted, None);
         assert_eq!(native_not_started.steps()[0].state(), StepState::Pending);
         assert_eq!(native_not_started.steps()[0].detail(), Some("not started"));
 
@@ -1126,6 +1195,18 @@ esac
         assert!(argv
             .windows(4)
             .any(|w| { w == ["serve", "--prefix", "/opt/plsp", "--mux"] }));
+        let wal = Path::new("/Users/me/.progressivelsp/log/serve-1-2.sqlite");
+        let logged = plan
+            .clone()
+            .with_serve_logging(wal, "debug")
+            .argv();
+        assert!(logged.iter().any(|a| a == "-e"));
+        assert!(logged.iter().any(|a| {
+            a == "PROGRESSIVE_LSP_LOG=/Users/me/.progressivelsp/log/serve-1-2.sqlite"
+        }));
+        assert!(logged.iter().any(|a| {
+            a == "/Users/me/.progressivelsp/log:/Users/me/.progressivelsp/log"
+        }));
         let cmd = plan.command();
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("docker"));
         let cmd_args: Vec<String> = cmd

@@ -16,7 +16,8 @@ use poc_ide::{
     OpenMode, PackageTierMap, PendingDialog, PendingDiscover, ProofStatus, RunLog, RuntimeIoEvent,
     RuntimeIoHandle, RuntimeIoRequest, Selection, ServeMode, ServeSpawn, ServeWalPath, SpawnSpec,
     StatusModal, StatusModalKind, StdFs, SystemClock, T3HostOffer, TabId, TabStrip, TierCellKind,
-    TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent, TreeIoHandle, TreeIoRequest, TreeNode,
+    ReadinessLine, TierStrip, TreeExpandFlight, TreeExpansion, TreeIoEvent, TreeIoHandle,
+    TreeIoRequest, TreeNode,
     WatchPort, WireTier, WorkspaceRoot, PLAIN_TEXT_RGB,
 };
 use std::sync::mpsc;
@@ -129,7 +130,9 @@ pub struct PocIdeApp {
     spawn_binary: Option<PathBuf>,
     control_io: Option<ControlIoHandle>,
     control_inbox: ControlPushInbox,
+    control_connected: bool,
     control_error: Option<String>,
+    last_progress_line: Option<String>,
     catalog: LanguageCatalog,
     tiers: PackageTierMap,
     discover_flight: DiscoverFlight,
@@ -142,6 +145,7 @@ pub struct PocIdeApp {
     host: HostOs,
     open_mode: OpenMode,
     status_modal: StatusModal,
+    references_modal: poc_ide::ReferencesModal,
     launch_journal: LaunchJournal,
     runtime_io: RuntimeIoHandle,
 }
@@ -193,7 +197,9 @@ impl PocIdeApp {
             spawn_binary,
             control_io: None,
             control_inbox: ControlPushInbox::new(),
+            control_connected: false,
             control_error: None,
+            last_progress_line: None,
             catalog: LanguageCatalog::new(),
             tiers: PackageTierMap::new(),
             discover_flight: DiscoverFlight::idle(),
@@ -206,6 +212,7 @@ impl PocIdeApp {
             host,
             open_mode: open_mode.for_host(host),
             status_modal: StatusModal::closed(),
+            references_modal: poc_ide::ReferencesModal::closed(),
             launch_journal: LaunchJournal::new(),
             runtime_io: spawn_runtime_io(),
         };
@@ -414,6 +421,12 @@ impl PocIdeApp {
                     } else {
                         plan
                     };
+                    let plan = if let Some(wal) = self.serve_spawn.serve_wal_path() {
+                        self.run_log.log_container_serve_log(wal);
+                        plan.with_serve_logging(wal, self.serve_spawn.log_level())
+                    } else {
+                        plan
+                    };
                     LspIoAttach::Container(plan)
                 }
                 Err(e) => {
@@ -455,6 +468,7 @@ impl PocIdeApp {
                     self.status = "Connecting language server…".into();
                 }
             } else if self.launch_journal.is_failed() {
+                self.discover_flight = self.discover_flight.finish();
                 self.status = "Container host failed — see launch log".into();
             }
         }
@@ -536,6 +550,13 @@ impl PocIdeApp {
         for ev in events {
             self.handle_lsp_event(ev);
         }
+        if self.serve_mode.is_mux()
+            && self.control_io.is_none()
+            && self.lsp_session.is_ready()
+            && self.control_error.is_none()
+        {
+            self.connect_control(None);
+        }
     }
 
     fn handle_lsp_event(&mut self, ev: LspIoEvent) {
@@ -583,23 +604,37 @@ impl PocIdeApp {
                 character,
                 locations,
             } => {
+                let duration_ms = self.discover_flight.elapsed_ms();
                 self.discover_flight = self.discover_flight.finish();
+                if self.status == "waiting for server" {
+                    self.status.clear();
+                }
                 match locations {
-                    Ok(locs) => match poc_ide::DiscoverCommand::new(kind).apply_locations(
-                        &locs,
-                        &path,
-                        line,
-                        character,
-                        &mut self.tabs,
-                        &mut self.buffers,
-                        &self.fs,
-                        Some(&mut self.run_log),
-                        None,
-                    ) {
-                        Ok(0) => self.status = "No locations".into(),
-                        Ok(_) => self.status.clear(),
-                        Err(e) => self.status = e.to_string(),
-                    },
+                    Ok(locs) => {
+                        let plan = poc_ide::DiscoverApplyPlan::for_locations(kind, locs);
+                        match poc_ide::DiscoverCommand::new(kind).apply_locations(
+                            &plan.jump_locations,
+                            &path,
+                            line,
+                            character,
+                            &mut self.tabs,
+                            &mut self.buffers,
+                            &self.fs,
+                            Some(&mut self.run_log),
+                            None,
+                            plan.jump,
+                            duration_ms,
+                        ) {
+                            Ok(0) => self.status = "No locations".into(),
+                            Ok(_) if let Some(modal) = plan.modal_locations => {
+                                self.references_modal =
+                                    poc_ide::ReferencesModal::open(modal);
+                                self.status.clear();
+                            }
+                            Ok(_) => self.status.clear(),
+                            Err(e) => self.status = e.to_string(),
+                        }
+                    }
                     Err(e) => {
                         let _ = poc_ide::DiscoverCommand::new(kind).apply_locations(
                             &[],
@@ -611,6 +646,8 @@ impl PocIdeApp {
                             &self.fs,
                             Some(&mut self.run_log),
                             Some(&e),
+                            true,
+                            duration_ms,
                         );
                         self.status = if e.contains("binary") {
                             self.missing_server_status()
@@ -621,7 +658,23 @@ impl PocIdeApp {
                 }
             }
             LspIoEvent::Progress(p) => {
-                self.run_log.log_progress(p.token(), p.kind().as_str());
+                self.run_log.log_progress(
+                    p.token(),
+                    p.kind().as_str(),
+                    p.message(),
+                    p.percentage(),
+                );
+                self.last_progress_line = match p.kind() {
+                    poc_ide::LspProgressKind::End => None,
+                    poc_ide::LspProgressKind::Begin | poc_ide::LspProgressKind::Report => {
+                        Some(match (p.message(), p.percentage()) {
+                            (Some(m), Some(n)) => format!("{} ({n}%)", m),
+                            (Some(m), None) => format!("{} [{}]", m, p.token()),
+                            (None, Some(n)) => format!("{} ({n}%)", p.token()),
+                            (None, None) => p.token().to_string(),
+                        })
+                    }
+                };
             }
             LspIoEvent::LogMessage(m) => {
                 self.run_log.log_window_log_message(m.typ(), m.message());
@@ -638,6 +691,12 @@ impl PocIdeApp {
                         self.control_error = Some(error.clone());
                     }
                 }
+                if method.contains("definition")
+                    || method.contains("implementation")
+                    || method.contains("references")
+                {
+                    self.discover_flight = self.discover_flight.finish();
+                }
                 self.status = error;
             }
         }
@@ -645,6 +704,7 @@ impl PocIdeApp {
 
     fn connect_control(&mut self, cap: Option<&poc_ide::ProgressiveLspCap>) {
         self.control_io = None;
+        self.control_connected = false;
         self.control_error = None;
         if self.serve_mode.is_mux() {
             match self.lsp_io.as_ref().and_then(|h| h.take_mux_control()) {
@@ -688,26 +748,57 @@ impl PocIdeApp {
         };
         for ev in events {
             match ev {
-                ControlIoEvent::Connected => {}
+                ControlIoEvent::Connected => {
+                    self.control_connected = true;
+                    self.run_log.log_control_connected();
+                }
                 ControlIoEvent::IndexStatus(resp) => {
+                    self.run_log.log_index_status(
+                        resp.ingest.as_str(),
+                        resp.packages.len(),
+                        resp.cache_entries,
+                    );
                     self.tiers.apply_index_status(&resp);
                 }
                 ControlIoEvent::TierStatus(resp) => {
+                    let rows: Vec<(&str, &str)> = resp
+                        .rows
+                        .iter()
+                        .map(|r| (r.package_id.as_str(), r.tier.as_str()))
+                        .collect();
+                    self.run_log.log_tier_status(&rows);
                     self.tiers.apply_tier_status(&resp);
                 }
                 ControlIoEvent::Push(push) => {
                     self.run_log.log_control_push(push.method());
                     if let ControlPush::TierReady(ready) = &push {
                         self.tiers.apply_tier_ready(ready);
+                        self.last_progress_line = Some(format!(
+                            "tier {} → {}",
+                            ready.package_id, ready.tier
+                        ));
                     }
                     self.control_inbox.ingest(push);
                 }
                 ControlIoEvent::Failed(e) => {
                     self.run_log.log_control_connect_error(&e);
                     self.control_error = Some(e);
+                    self.control_connected = false;
                 }
             }
         }
+    }
+
+    fn readiness_line(&self) -> ReadinessLine {
+        ReadinessLine::paint(
+            self.lsp_session,
+            self.control_connected,
+            self.control_error.as_deref(),
+            &self.tiers,
+            self.tiers.ingest_for_strip(self.lsp_session),
+            self.last_progress_line.as_deref(),
+            Some(self.strip_language()),
+        )
     }
 
     fn shutdown_lsp(&mut self) {
@@ -716,6 +807,8 @@ impl PocIdeApp {
         }
         self.control_io = None;
         self.control_inbox = ControlPushInbox::new();
+        self.control_connected = false;
+        self.last_progress_line = None;
         self.tiers = PackageTierMap::new();
         self.discover_flight = DiscoverFlight::idle();
         self.lsp_session = LspSessionState::Idle;
@@ -725,6 +818,10 @@ impl PocIdeApp {
         self.lsp_error
             .clone()
             .unwrap_or_else(|| IdeError::MissingBinary.to_string())
+    }
+
+    fn strip_language(&self) -> &str {
+        self.tabs.language_for_strip(&self.catalog)
     }
 
     fn focused_language(&self) -> &str {
@@ -754,12 +851,14 @@ impl PocIdeApp {
     }
 
     fn tier_strip(&self) -> TierStrip {
+        let lang = self.strip_language();
         TierStrip::paint_for_open(
             &self.catalog,
-            self.focused_language(),
+            lang,
             self.tiers.ingest_for_strip(self.lsp_session),
             self.focused_tier(),
             T3HostOffer::from_open(self.host, self.open_mode),
+            self.tiers.engine_for_language(lang),
         )
     }
 
@@ -779,14 +878,19 @@ impl PocIdeApp {
                 }
             }
             StatusModalKind::T3 => {
-                if !self.catalog.t3_supported(self.focused_language()) {
+                let lang = self.strip_language();
+                if lang == "csharp" {
                     LaunchJournal::t3_not_supported()
+                } else if !self.catalog.is_known(lang) {
+                    LaunchJournal::t3_no_source_focus()
                 } else if !T3HostOffer::from_open(self.host, self.open_mode).is_offered() {
                     LaunchJournal::native_t3_skipped()
                 } else {
                     LaunchJournal::native_t3_from_wire(
                         self.focused_tier(),
                         self.tiers.ingest_for_strip(self.lsp_session),
+                        self.tiers
+                            .engine_for_language(self.strip_language()),
                     )
                 }
             }
@@ -801,27 +905,57 @@ impl PocIdeApp {
     }
 
     fn apply_pending_discover(&mut self) {
-        let Some(pending) = self.pending_discover.take() else {
-            return;
-        };
         if !self.discover_flight.can_submit() {
             return;
         }
+        let Some(pending) = self.pending_discover.take() else {
+            return;
+        };
         match pending.to_io_request(&self.tabs, &self.buffers) {
             Ok(req) => {
+                if let LspIoRequest::Discover {
+                    kind,
+                    path,
+                    line,
+                    character,
+                    ..
+                } = &req
+                {
+                    let uri = poc_ide::file_uri(path).unwrap_or_default();
+                    self.run_log.log_discover_submit(
+                        kind.lsp_method(),
+                        path,
+                        &uri,
+                        *line,
+                        *character,
+                    );
+                }
                 if let Some(io) = &self.lsp_io {
                     match io.submit(req) {
                         Ok(()) => {
                             self.discover_flight = self.discover_flight.begin(pending.kind());
+                            if let Some(label) = self.discover_flight.waiting_label() {
+                                self.status = label.to_string();
+                            }
                         }
-                        Err(e) => self.status = e.to_string(),
+                        Err(e) => {
+                            self.pending_discover = Some(pending);
+                            self.status = e.to_string();
+                        }
                     }
                 } else {
+                    self.pending_discover = Some(pending);
                     self.status = self.missing_server_status();
                 }
             }
-            Err(e) if e.is_missing_binary() => self.status = self.missing_server_status(),
-            Err(e) => self.status = e.to_string(),
+            Err(e) if e.is_missing_binary() => {
+                self.pending_discover = Some(pending);
+                self.status = self.missing_server_status();
+            }
+            Err(e) => {
+                self.pending_discover = Some(pending);
+                self.status = e.to_string();
+            }
         }
     }
 
@@ -885,6 +1019,7 @@ impl PocIdeApp {
         egui::Modal::new(egui::Id::new("tier_status")).show(ui.ctx(), |ui| {
             ui.heading(title);
             ui.label(format!("Open mode: {}", self.open_mode.as_str()));
+            ui.label(self.readiness_line().as_str());
             ui.separator();
             for step in journal.steps() {
                 let detail = step.detail().unwrap_or("");
@@ -908,6 +1043,48 @@ impl PocIdeApp {
             self.status_modal.close();
         }
     }
+
+    fn show_references_modal(&mut self, ui: &mut egui::Ui) {
+        if !self.references_modal.is_open() {
+            return;
+        }
+        let count = self.references_modal.len();
+        let mut close = false;
+        let mut navigate: Option<usize> = None;
+        egui::Modal::new(egui::Id::new("find_references")).show(ui.ctx(), |ui| {
+            ui.heading("Find References");
+            ui.label(format!("{count} location(s) — click a link to go there"));
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for i in 0..count {
+                        let label = self.references_modal.link_label(i);
+                        if ui.link(&label).clicked() {
+                            navigate = Some(i);
+                        }
+                    }
+                });
+            ui.separator();
+            if ui.button("Close").clicked() {
+                close = true;
+            }
+        });
+        if let Some(i) = navigate {
+            if let Err(e) = self.references_modal.navigate_to(
+                i,
+                &mut self.tabs,
+                &mut self.buffers,
+                &self.fs,
+            ) {
+                self.status = e.to_string();
+            }
+        }
+        if close {
+            self.references_modal.close();
+        }
+    }
 }
 
 impl eframe::App for PocIdeApp {
@@ -921,6 +1098,7 @@ impl eframe::App for PocIdeApp {
             || self.discover_flight.is_in_flight()
             || !self.tree_flight.is_empty()
             || self.launch_journal.is_running()
+            || self.references_modal.is_open()
             || self.status_modal.is_open() && self.open_mode == OpenMode::Container
         {
             ui.ctx().request_repaint();
@@ -944,6 +1122,7 @@ impl eframe::App for PocIdeApp {
         }
         self.show_conflict_modal(ui);
         self.show_status_modal(ui);
+        self.show_references_modal(ui);
 
         if ui.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
             self.save_focused();
@@ -1051,6 +1230,8 @@ impl eframe::App for PocIdeApp {
                         ui.separator();
                     }
                 });
+                ui.separator();
+                ui.small(self.readiness_line().as_str());
             });
 
         let tree_response = egui::Panel::left("tree")

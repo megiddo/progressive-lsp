@@ -18,7 +18,7 @@ use crate::musl::{
     triples, CommandDockerPort, DockerPort, AARCH64_MUSL, CORE_ELF_NAME, X86_64_MUSL,
 };
 use crate::pack::PINS_REL;
-use crate::runtime_image::{runtime_dockerfile_rel, DOCKERFILE_REL, IMAGE_TAG};
+use crate::runtime_image::{runtime_dockerfile_rel, IMAGE_TAG};
 use crate::{musl, pack, runtime_image, workspace_root};
 
 /// SHA-256 hex of the inputs that produce one dest ELF / image. Value object.
@@ -876,7 +876,11 @@ dockerfile = "docker/engine-pack-graal.Dockerfile"
         )
         .unwrap();
         assert_eq!(image.current_stamp(root).unwrap(), before);
-        fs::write(root.join(DOCKERFILE_REL), "FROM scratch\n# revised\n").unwrap();
+        fs::write(
+            root.join(runtime_image::DOCKERFILE_X86_REL),
+            "FROM scratch\n# revised\n",
+        )
+        .unwrap();
         assert_ne!(image.current_stamp(root).unwrap(), before);
     }
 

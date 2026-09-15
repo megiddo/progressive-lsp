@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::language::LanguageCatalog;
+
 /// Identity of an open tab. Equality is path equality.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TabId {
@@ -92,6 +94,23 @@ impl TabStrip {
     pub fn contains(&self, id: &TabId) -> bool {
         self.tabs.iter().any(|t| t == id)
     }
+
+    /// Focused tab language, else first open tab with a known v1 language, else `plaintext`.
+    pub fn language_for_strip<'a>(&'a self, catalog: &'a LanguageCatalog) -> &'a str {
+        if let Some(id) = self.focused() {
+            let lang = catalog.for_path(id.as_path());
+            if catalog.is_known(lang) {
+                return lang;
+            }
+        }
+        for tab in &self.tabs {
+            let lang = catalog.for_path(tab.as_path());
+            if catalog.is_known(lang) {
+                return lang;
+            }
+        }
+        "plaintext"
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +154,25 @@ mod tests {
         assert_eq!(strip.focused(), Some(&second));
         assert_eq!(strip.tabs()[0], first);
         assert_eq!(strip.tabs()[1], second);
+    }
+
+    #[test]
+    fn tab_strip_language_for_strip_prefers_focused_known_else_first_tab() {
+        use crate::language::LanguageCatalog;
+
+        let catalog = LanguageCatalog::new();
+        let mut strip = TabStrip::new();
+        assert_eq!(strip.language_for_strip(&catalog), "plaintext");
+
+        let java = strip.open("/ws/src/SupplyTechPDFClient.java");
+        assert_eq!(strip.language_for_strip(&catalog), "java");
+
+        let pom = strip.open("/ws/pom.xml");
+        assert_eq!(strip.focused(), Some(&pom));
+        assert_eq!(strip.language_for_strip(&catalog), "java");
+
+        strip.focus(&java);
+        assert_eq!(strip.language_for_strip(&catalog), "java");
     }
 
     #[test]

@@ -36,6 +36,11 @@ pub enum ReadyKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EngineMessage {
+    DidOpen {
+        uri: String,
+        language_id: String,
+        text: String,
+    },
     DidChange { uri: String, text: String },
     Watch { paths: Vec<String> },
 }
@@ -221,6 +226,8 @@ pub(crate) fn spawn_linux_command(
 struct OsChild {
     child: Mutex<std::process::Child>,
     stderr: Mutex<Option<std::process::ChildStderr>>,
+    stdin: Mutex<Option<std::process::ChildStdin>>,
+    stdout: Mutex<Option<std::process::ChildStdout>>,
 }
 
 #[derive(Clone)]
@@ -232,6 +239,7 @@ pub struct ChildHandle {
     inbox: Arc<Mutex<Vec<EngineMessage>>>,
     io: ChildIo,
     os: Option<Arc<OsChild>>,
+    lsp: Option<Arc<crate::lsp_child::LspChildProxy>>,
 }
 
 impl std::fmt::Debug for ChildHandle {
@@ -242,6 +250,7 @@ impl std::fmt::Debug for ChildHandle {
             .field("capabilities", &self.capabilities)
             .field("io", &self.io)
             .field("has_os_child", &self.os.is_some())
+            .field("has_lsp", &self.lsp.is_some())
             .finish()
     }
 }
@@ -264,6 +273,7 @@ impl ChildHandle {
             inbox: Arc::new(Mutex::new(Vec::new())),
             io: ChildIo::lsp_with_stderr_pipe(),
             os: None,
+            lsp: None,
         }
     }
 
@@ -274,14 +284,45 @@ impl ChildHandle {
 
     pub fn with_os_child(
         mut self,
-        child: std::process::Child,
+        mut child: std::process::Child,
         stderr: Option<std::process::ChildStderr>,
     ) -> Self {
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take();
         self.os = Some(Arc::new(OsChild {
             child: Mutex::new(child),
             stderr: Mutex::new(stderr),
+            stdin: Mutex::new(stdin),
+            stdout: Mutex::new(stdout),
         }));
         self
+    }
+
+    pub fn lsp(&self) -> Option<&Arc<crate::lsp_child::LspChildProxy>> {
+        self.lsp.as_ref()
+    }
+
+    pub fn set_lsp(&mut self, proxy: Arc<crate::lsp_child::LspChildProxy>) {
+        self.lsp = Some(proxy);
+    }
+
+    pub fn with_lsp(mut self, proxy: Arc<crate::lsp_child::LspChildProxy>) -> Self {
+        self.lsp = Some(proxy);
+        self
+    }
+
+    pub(crate) fn take_lsp_pipes(
+        &self,
+    ) -> Option<(std::process::ChildStdin, std::process::ChildStdout)> {
+        let os = self.os.as_ref()?;
+        let stdin = os.stdin.lock().ok()?.take()?;
+        let stdout = os.stdout.lock().ok()?.take()?;
+        Some((stdin, stdout))
+    }
+
+    pub fn take_inbox(&self) -> Vec<EngineMessage> {
+        let mut inbox = self.inbox.lock().expect("inbox");
+        std::mem::take(&mut *inbox)
     }
 
     pub fn io(&self) -> &ChildIo {
@@ -316,6 +357,48 @@ impl ChildHandle {
         self.alive.store(false, Ordering::SeqCst);
     }
 
+    /// Background line drain so a chatty pack (javacs, clangd) cannot fill stderr and stall LSP.
+    pub fn spawn_stderr_drain(&self, log: Arc<dyn progressive_lsp_core::LogPort>) {
+        use std::io::BufRead;
+        use progressive_lsp_log::ChildStderrAdapter;
+        let Some(os) = self.os.as_ref() else {
+            return;
+        };
+        let stderr = os
+            .stderr
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take());
+        let Some(stderr) = stderr else {
+            return;
+        };
+        let pack = self.pack_name.clone();
+        let adapter = ChildStderrAdapter::new(log, pack.clone());
+        let _ = std::thread::Builder::new()
+            .name(format!("plsp-stderr-{pack}"))
+            .spawn(move || {
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.lines() {
+                    match line {
+                        Ok(l) if !l.is_empty() => adapter.ingest_line(&l),
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+            });
+    }
+
+    /// Stop a wedged pack child so T3 can back off and the mux thread can return.
+    pub fn terminate(&self) {
+        if let Some(os) = &self.os {
+            if let Ok(mut child) = os.child.lock() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+        self.mark_dead();
+    }
+
     pub fn push_message(&self, msg: EngineMessage) {
         self.inbox.lock().expect("inbox").push(msg);
     }
@@ -335,6 +418,14 @@ pub trait EngineAdapter: Send + Sync {
 
     fn resolve_query(&self, _handle: &ChildHandle, _q: &ResolveQuery) -> ResolveOutcome {
         ResolveOutcome::NotReady
+    }
+
+    fn forward_did_open(&self, handle: &ChildHandle, uri: &str, language_id: &str, text: &str) {
+        handle.push_message(EngineMessage::DidOpen {
+            uri: uri.to_string(),
+            language_id: language_id.to_string(),
+            text: text.to_string(),
+        });
     }
 
     fn forward_did_change(&self, handle: &ChildHandle, uri: &str, text: &str) {
@@ -454,6 +545,28 @@ mod tests {
             ReadyKind::IndexedPackage(PackageId::new("p"))
         );
         assert!(a.extra_languages().is_empty());
+    }
+
+    #[test]
+    fn spawn_stderr_drain_takes_os_stderr_pipe_at_spawn() {
+        use progressive_lsp_core::FakeLog;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let stderr = child.stderr.take().expect("stderr pipe");
+        let handle = ChildHandle::new(1, "java", EngineCapabilities::types_full())
+            .with_os_child(child, Some(stderr));
+        assert!(handle.has_os_stderr());
+        handle.spawn_stderr_drain(Arc::new(FakeLog::new()));
+        assert!(
+            !handle.has_os_stderr(),
+            "stderr pipe must be owned by drain thread so javacs cannot stall on full pipe"
+        );
     }
 
     #[test]

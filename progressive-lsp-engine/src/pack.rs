@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use progressive_lsp_core::{EngineError, LanguageId, PrefixLayout};
+use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery};
 
 use crate::adapter::{
     ChildHandle, CommandSpawnPort, EngineAdapter, EngineBinary, ReadyKind, SpawnCtx, SpawnPlan,
@@ -113,6 +114,27 @@ impl EngineAdapter for PackAdapter {
         ReadyKind::Initialize
     }
 
+    fn resolve_query(&self, handle: &ChildHandle, q: &ResolveQuery) -> ResolveOutcome {
+        if !handle.is_alive() {
+            return ResolveOutcome::NotReady;
+        }
+        let Some(lsp) = handle.lsp() else {
+            return ResolveOutcome::NotReady;
+        };
+        lsp.resolve_query(handle, &self.language, q)
+    }
+
+    fn forward_did_open(&self, handle: &ChildHandle, uri: &str, language_id: &str, text: &str) {
+        handle.push_message(crate::adapter::EngineMessage::DidOpen {
+            uri: uri.to_string(),
+            language_id: language_id.to_string(),
+            text: text.to_string(),
+        });
+        if let Some(lsp) = handle.lsp() {
+            lsp.schedule_warm(handle.clone(), self.language_id());
+        }
+    }
+
     fn extra_languages(&self) -> Vec<LanguageId> {
         match self.pack_name.as_str() {
             CLANGD_PACK => vec![LanguageId::new("cpp")],
@@ -191,6 +213,48 @@ mod tests {
         assert!(PackAdapter::new("phpantom", LanguageId::new("php"))
             .extra_languages()
             .is_empty());
+    }
+
+    #[test]
+    fn forward_did_open_queues_on_inbox_so_mux_does_not_block_on_javacs() {
+        use crate::adapter::EngineAdapter;
+        let handle = ChildHandle::new(1, "java", crate::capabilities::EngineCapabilities::types_full());
+        let adapter = PackAdapter::java();
+        adapter.forward_did_open(
+            &handle,
+            "file:///w/T.java",
+            "java",
+            "class T {}",
+        );
+        let inbox = handle.inbox();
+        assert_eq!(
+            inbox.len(),
+            1,
+            "didOpen must queue for resolve-time drain, not sync LSP on mux"
+        );
+    }
+
+    #[test]
+    fn pack_adapter_discovers_stub_spawn_plan_continued() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(dir.path());
+        prefix.ensure_dirs().unwrap();
+        let bytes = stub_pack_bytes(PYTHON_PACK, TY_BINARY);
+        let d = prefix.engines_dir().join("python");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(TY_BINARY), &bytes).unwrap();
+        let m = Manifest {
+            version: "1".into(),
+            artifacts: vec![ManifestArtifact {
+                name: TY_BINARY.into(),
+                rel_path: TY_BINARY.into(),
+                sha256: hex_of(&bytes),
+                executable: true,
+            }],
+        };
+        std::fs::write(d.join("manifest.json"), m.to_json().unwrap()).unwrap();
+        let a = PackAdapter::python();
+        let bin = a.discover(&prefix).unwrap();
         let io = crate::adapter::ChildIo::lsp_with_stderr_pipe();
         assert!(io.has_stderr_pipe());
         assert!(io.stdout_is_never_log_adapter());

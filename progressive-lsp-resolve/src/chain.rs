@@ -1,4 +1,10 @@
-//! Chain of Responsibility: T3 → T2 → T1. `NotReady` does not drop the next handler.
+//! Chain of Responsibility: T3 → T2 → T1. One tier answers each query — no merge, no race.
+//!
+//! A step returns [`ResolveOutcome::NotReady`] when that tier cannot serve the query (engine
+//! down, graph/heuristics not ready, etc.); the chain tries the next step. The first
+//! [`ResolveOutcome::Ready`] wins, including `Ready` with an empty location list (terminal:
+//! do not fall through to a lower tier). Lower tiers never append to or combine with a higher
+//! tier’s result.
 
 use crate::query::{ResolveOutcome, ResolveQuery, ResolveResult};
 use crate::Resolver;
@@ -201,6 +207,26 @@ mod tests {
             ResolveOutcome::Ready(r) => {
                 assert_eq!(r.tier, Tier::Syntax);
                 assert_eq!(r.locations[0].uri, "file:///t1");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn t3_ready_empty_does_not_fall_to_t1() {
+        let chain = ResolverChain::with_tiers(
+            Some(Box::new(FakeResolver::types("t3-empty"))),
+            None,
+            Box::new(FakeResolver::syntax("t1").with_location(LspLocation::new(
+                "file:///t1",
+                Range::default(),
+                Tier::Syntax,
+            ))),
+        );
+        match chain.resolve(&def_query()) {
+            ResolveOutcome::Ready(r) => {
+                assert_eq!(r.tier, Tier::Types);
+                assert!(r.locations.is_empty());
             }
             other => panic!("{other:?}"),
         }

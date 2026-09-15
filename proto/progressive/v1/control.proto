@@ -78,6 +78,14 @@ message IndexPackage {
   uint64 generation = 2;
 }
 
+message EngineStatusRow {
+  string language = 1;
+  string pack = 2;
+  // ready | error | missing | pending
+  string state = 3;
+  string detail = 4;
+}
+
 message IndexStatusResponse {
   Status status = 1;
   repeated IndexPackage packages = 2;
@@ -85,6 +93,8 @@ message IndexStatusResponse {
   // Additive. not_started | running | done. Distinguishes empty packages
   // from ingest-in-flight without a new RPC.
   string ingest = 4;
+  // Additive. T3 engine discovery/readiness per registered pack.
+  repeated EngineStatusRow engines = 5;
 }
 
 message TierStatusRequest {}

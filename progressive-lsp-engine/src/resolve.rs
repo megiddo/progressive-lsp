@@ -1,10 +1,13 @@
 //! T3 resolver: Ready only when EngineSupervisor is ready for (language, package).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use progressive_lsp_core::{LanguageId, LogComponent, LogPort, LogScope, NullLog, PackageId};
-use progressive_lsp_resolve::{ResolveOutcome, ResolveQuery, Resolver};
+use progressive_lsp_core::{
+    LanguageId, LogComponent, LogLevel, LogPort, LogRecord, LogScope, NullLog, PackageId,
+};
+use progressive_lsp_resolve::{QueryKind, ResolveOutcome, ResolveQuery, Resolver};
 
 use crate::supervisor::EngineSupervisor;
 
@@ -124,6 +127,48 @@ impl EngineResolver {
             package.as_str()
         ));
     }
+
+    fn emit_t3_timing(
+        &self,
+        q: &ResolveQuery,
+        started: Instant,
+        outcome: &str,
+        location_count: usize,
+        budget: Option<Duration>,
+    ) {
+        if !matches!(
+            q.kind,
+            QueryKind::Definition
+                | QueryKind::Implementation
+                | QueryKind::References
+                | QueryKind::TypeDefinition
+        ) {
+            return;
+        }
+        let t3_try_ms = started.elapsed().as_millis() as u64;
+        let _g = LogScope::enter(
+            LogScope::new()
+                .operation("engine_resolve")
+                .component(LogComponent::engine())
+                .path(q.file.as_str())
+                .line(q.position.line),
+        );
+        let mut extras = BTreeMap::new();
+        extras.insert("t3_try_ms".into(), t3_try_ms.to_string());
+        extras.insert("t3_outcome".into(), outcome.into());
+        extras.insert("query_kind".into(), q.kind.as_str().to_string());
+        extras.insert("location_count".into(), location_count.to_string());
+        if let Some(b) = budget {
+            extras.insert("t3_budget_ms".into(), b.as_millis().to_string());
+        }
+        let mut rec = LogRecord::at_caller(LogLevel::Info, "engine_resolve");
+        rec.message = format!(
+            "engine_resolve {outcome} t3_try_ms={t3_try_ms} kind={} locations={location_count}",
+            q.kind.as_str()
+        );
+        rec.extras = Some(extras);
+        self.log.emit(rec);
+    }
 }
 
 fn language_from_file(path: &str) -> Option<LanguageId> {
@@ -150,6 +195,11 @@ fn language_from_file(path: &str) -> Option<LanguageId> {
     Some(LanguageId::new(id))
 }
 
+/// Best-effort T3: if the child cannot answer within this budget, fall through to T2/T1.
+const ENGINE_RESOLVE_TRY_BUDGET: Duration = Duration::from_millis(400);
+/// References often need a cold javacs scan; still bounded so mux does not hang forever.
+const ENGINE_REFERENCES_TRY_BUDGET: Duration = Duration::from_secs(8);
+
 impl Resolver for EngineResolver {
     fn resolve(&self, q: &ResolveQuery) -> ResolveOutcome {
         let language = self.language_of(q);
@@ -158,7 +208,46 @@ impl Resolver for EngineResolver {
             self.note_skip(&language, &package);
             return ResolveOutcome::NotReady;
         }
-        self.supervisor.resolve(&language, &package, q)
+        if !self.supervisor.engine_session_warmed(&language) {
+            self.emit_t3_timing(q, Instant::now(), "skip_unwarmed", 0, None);
+            return ResolveOutcome::NotReady;
+        }
+        let budget = if q.kind == QueryKind::References {
+            ENGINE_REFERENCES_TRY_BUDGET
+        } else {
+            ENGINE_RESOLVE_TRY_BUDGET
+        };
+        let started = Instant::now();
+        let sup = Arc::clone(&self.supervisor);
+        let q_bg = q.clone();
+        let lang = language.clone();
+        let pkg = package.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(sup.resolve(&lang, &pkg, &q_bg));
+        });
+        match rx.recv_timeout(budget) {
+            Ok(outcome) => {
+                let (tag, locs) = match &outcome {
+                    ResolveOutcome::Ready(r) => ("ready", r.locations.len()),
+                    ResolveOutcome::NotReady => ("not_ready", 0),
+                };
+                self.emit_t3_timing(q, started, tag, locs, Some(budget));
+                outcome
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                self.emit_t3_timing(q, started, "timeout", 0, Some(budget));
+                self.log.debug(&format!(
+                    "engine {}: try budget ({budget:?}) elapsed; T2/T1 may answer (child RPC may still run)",
+                    language.as_str()
+                ));
+                ResolveOutcome::NotReady
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                self.emit_t3_timing(q, started, "disconnected", 0, Some(budget));
+                ResolveOutcome::NotReady
+            }
+        }
     }
 }
 

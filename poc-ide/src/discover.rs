@@ -34,6 +34,41 @@ pub struct DiscoverCommand {
     kind: DiscoverKind,
 }
 
+/// How [`DiscoverCommand::apply_locations`] and the UI consume LSP location lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoverApplyPlan {
+    pub jump: bool,
+    pub jump_locations: Vec<crate::lsp::LspLocation>,
+    pub modal_locations: Option<Vec<crate::lsp::LspLocation>>,
+}
+
+impl DiscoverApplyPlan {
+    pub fn for_locations(kind: DiscoverKind, locs: Vec<crate::lsp::LspLocation>) -> Self {
+        match kind {
+            DiscoverKind::References => Self {
+                jump: false,
+                jump_locations: Vec::new(),
+                modal_locations: Some(locs),
+            },
+            DiscoverKind::Implementation if locs.len() > 1 => Self {
+                jump: false,
+                jump_locations: Vec::new(),
+                modal_locations: Some(locs),
+            },
+            DiscoverKind::Definition if locs.len() > 1 => Self {
+                jump: true,
+                jump_locations: vec![locs[0].clone()],
+                modal_locations: None,
+            },
+            _ => Self {
+                jump: !locs.is_empty(),
+                jump_locations: locs.clone(),
+                modal_locations: None,
+            },
+        }
+    }
+}
+
 impl DiscoverCommand {
     pub fn new(kind: DiscoverKind) -> Self {
         Self { kind }
@@ -92,6 +127,8 @@ impl DiscoverCommand {
         fs: &impl FsPort,
         run_log: Option<&mut RunLog>,
         error: Option<&str>,
+        jump: bool,
+        duration_ms: Option<u64>,
     ) -> Result<usize, IdeError> {
         let uri = file_uri(path).unwrap_or_default();
         let location_count = if error.is_some() {
@@ -108,10 +145,14 @@ impl DiscoverCommand {
                 character,
                 location_count,
                 error,
+                duration_ms,
             );
         }
         if let Some(err) = error {
             return Err(IdeError::lsp(err));
+        }
+        if !jump {
+            return Ok(locations.len());
         }
         LspClient::<crate::ports::FakeLsp>::jump(locations, tabs, buffers, fs)
     }
@@ -148,6 +189,7 @@ impl DiscoverCommand {
                     character,
                     None,
                     Some(&IdeError::MissingBinary.to_string()),
+                    None,
                 );
             }
             return Err(IdeError::MissingBinary);
@@ -168,9 +210,14 @@ impl DiscoverCommand {
                         character,
                         Some(locations.len() as u64),
                         None,
+                        None,
                     );
                 }
-                LspClient::<T>::jump(&locations, tabs, buffers, fs)
+                let plan = DiscoverApplyPlan::for_locations(self.kind, locations);
+                if !plan.jump {
+                    return Ok(plan.modal_locations.as_ref().map_or(0, Vec::len));
+                }
+                LspClient::<T>::jump(&plan.jump_locations, tabs, buffers, fs)
             }
             Err(e) => {
                 if let Some(log) = run_log {
@@ -182,6 +229,7 @@ impl DiscoverCommand {
                         character,
                         None,
                         Some(&e.to_string()),
+                        None,
                     );
                 }
                 Err(e)
@@ -274,6 +322,20 @@ mod tests {
         buffers.open("/ws/lib.rs", &fs).unwrap();
         tabs.open("/ws/lib.rs");
         (fs, tabs, buffers)
+    }
+
+    #[test]
+    fn discover_apply_plan_definition_jumps_first_implementation_modals() {
+        let a = crate::lsp::LspLocation::new("file:///a", 0, 0, 0, 1);
+        let b = crate::lsp::LspLocation::new("file:///b", 0, 0, 0, 1);
+        let def = DiscoverApplyPlan::for_locations(DiscoverKind::Definition, vec![a.clone(), b.clone()]);
+        assert!(def.jump);
+        assert_eq!(def.jump_locations.len(), 1);
+        assert_eq!(def.jump_locations[0].uri(), "file:///a");
+        assert!(def.modal_locations.is_none());
+        let imp = DiscoverApplyPlan::for_locations(DiscoverKind::Implementation, vec![a, b]);
+        assert!(!imp.jump);
+        assert_eq!(imp.modal_locations.as_ref().map(Vec::len), Some(2));
     }
 
     #[test]
@@ -631,6 +693,8 @@ mod tests {
                 &fs2,
                 None,
                 None,
+                true,
+                None,
             )
             .unwrap();
         assert_eq!(empty_jump, 0);
@@ -651,6 +715,8 @@ mod tests {
                 &fs2,
                 None,
                 None,
+                true,
+                None,
             )
             .unwrap();
         assert_eq!(jumped_inbox, 1);
@@ -666,6 +732,8 @@ mod tests {
                 &fs,
                 Some(&mut log),
                 Some("eof"),
+                true,
+                None,
             )
             .unwrap_err();
         assert!(err.is_lsp());
