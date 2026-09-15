@@ -373,7 +373,10 @@ impl ServeHost {
 }
 
 impl LspIntelligence for ServeHost {
-    fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+    fn resolve_report(
+        &self,
+        q: &ResolveQuery,
+    ) -> progressive_lsp_protocol::ResolveReport {
         let operation = match q.kind {
             progressive_lsp_resolve::QueryKind::Definition => "textDocument/definition",
             progressive_lsp_resolve::QueryKind::Implementation => "textDocument/implementation",
@@ -396,7 +399,7 @@ impl LspIntelligence for ServeHost {
                 | progressive_lsp_resolve::QueryKind::References
                 | progressive_lsp_resolve::QueryKind::TypeDefinition
         );
-        self.session.resolve(q)
+        self.session.resolve_report(q)
     }
 
     fn did_open(&self, uri: &str, language_id: &str, text: &str) {

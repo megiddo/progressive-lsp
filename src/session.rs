@@ -17,8 +17,11 @@ use progressive_lsp_index::{
     IndexService, InputChange, LanguageIndexer, PackageIngest, SharedIndex,
 };
 use progressive_lsp_protocol::{
-    progressive_lsp::{session_options_from_initialize, test_chain_policy_from_env, ProgressiveLspSessionOptions},
-    LspIntelligence, ProgressiveLspRequestOptions, WorkDoneProgress,
+    progressive_lsp::{
+        new_trace_id, session_options_from_initialize, test_chain_policy_from_env,
+        ProgressiveLspSessionOptions,
+    },
+    LspIntelligence, ProgressiveLspRequestOptions, ResolveReport, WorkDoneProgress,
 };
 use progressive_lsp_resolve::{
     ChainPolicy, QueryKind, ResolveOutcome, ResolveQuery, ResolveResult, Resolver, ResolverChain,
@@ -603,8 +606,16 @@ pub(crate) fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
     }
 }
 
+fn backend_version_label(tier: Tier, _supervisor: Option<&Arc<EngineSupervisor>>) -> String {
+    match tier {
+        Tier::Types => "engine".into(),
+        Tier::Graph => format!("heuristic-graph@{}", env!("CARGO_PKG_VERSION")),
+        Tier::Syntax => format!("tree-sitter@{}", env!("CARGO_PKG_VERSION")),
+    }
+}
+
 impl LspIntelligence for WorkspaceSession {
-    fn resolve(&self, q: &ResolveQuery) -> ResolveResult {
+    fn resolve_report(&self, q: &ResolveQuery) -> ResolveReport {
         let operation = match q.kind {
             QueryKind::Definition => "textDocument/definition",
             QueryKind::Implementation => "textDocument/implementation",
@@ -621,13 +632,15 @@ impl LspIntelligence for WorkspaceSession {
                 .operation(operation),
         );
         self.log.debug(&format!("{operation} start"));
+        let trace_id = new_trace_id();
         let started = Instant::now();
-        let (outcome, _chain_steps) = self.chain.resolve_with_steps(q);
+        let (outcome, chain_steps) = self.chain.resolve_with_steps(q);
         let result = match outcome {
             ResolveOutcome::Ready(r) => r,
             ResolveOutcome::NotReady => ResolveResult::empty(Tier::Syntax),
         };
         let cache_state = self.types_cache.take_serve_state();
+        let resolve_ms = started.elapsed().as_millis() as u64;
         let discover = matches!(
             q.kind,
             QueryKind::Definition
@@ -636,7 +649,6 @@ impl LspIntelligence for WorkspaceSession {
                 | QueryKind::TypeDefinition
         );
         if discover {
-            let resolve_ms = started.elapsed().as_millis() as u64;
             self.log.debug(&format!(
                 "{operation} complete tier={} locations={} resolve_ms={resolve_ms}",
                 result.tier.as_str(),
@@ -682,7 +694,24 @@ impl LspIntelligence for WorkspaceSession {
         } else {
             self.log.debug(operation);
         }
-        result
+        let path = Path::new(q.file.as_str());
+        let backend_language = progressive_lsp_core::language_id_from_path(path)
+            .map(|id| id.as_str().to_string())
+            .unwrap_or_default();
+        let tier_str = result.tier.as_str().to_string();
+        let backend_version = backend_version_label(result.tier, self.supervisor.as_ref());
+        ResolveReport {
+            result,
+            meta: progressive_lsp_protocol::progressive_lsp::ProgressiveResultMeta {
+                trace_id,
+                tier: tier_str,
+                backend_language,
+                backend_version,
+                resolve_ms: Some(resolve_ms),
+                chain_steps: Some(chain_steps),
+                cache_state: Some(cache_state.as_str().to_string()),
+            },
+        }
     }
 
     fn effective_chain_policy(&self, per_request: ChainPolicy) -> ChainPolicy {
@@ -696,6 +725,23 @@ impl LspIntelligence for WorkspaceSession {
             ChainPolicy::merge(session, env),
             per_request,
         )
+    }
+
+    fn progressive_cap_extension(&self) -> Option<serde_json::Value> {
+        let opts = self.progressive_lsp.lock().expect("progressive_lsp");
+        if !opts.emit_result_meta {
+            return None;
+        }
+        Some(serde_json::json!({
+            "extendedResults": true,
+            "resultMetaFields": [
+                "tier",
+                "backendLanguage",
+                "backendVersion",
+                "timing",
+                "traceId"
+            ]
+        }))
     }
 
     fn effective_emit_options(

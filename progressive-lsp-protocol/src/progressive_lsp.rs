@@ -63,6 +63,59 @@ pub fn session_options_from_initialize(params: &Value) -> ProgressiveLspSessionO
     }
 }
 
+pub fn new_trace_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// Observability payload when `emitResultMeta` is enabled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgressiveResultMeta {
+    pub trace_id: String,
+    pub tier: String,
+    pub backend_language: String,
+    pub backend_version: String,
+    pub resolve_ms: Option<u64>,
+    pub chain_steps: Option<u8>,
+    pub cache_state: Option<String>,
+}
+
+impl ProgressiveResultMeta {
+    pub fn to_json(&self, emit_timing: bool) -> serde_json::Value {
+        use serde_json::json;
+        let mut timing = serde_json::Map::new();
+        if emit_timing {
+            if let Some(ms) = self.resolve_ms {
+                timing.insert("resolve_ms".into(), json!(ms));
+            }
+            if let Some(steps) = self.chain_steps {
+                timing.insert("chain_steps".into(), json!(steps));
+            }
+            if let Some(ref cache) = self.cache_state {
+                timing.insert("cache_state".into(), json!(cache));
+            }
+        }
+        json!({
+            "traceId": self.trace_id,
+            "tier": self.tier,
+            "backendLanguage": self.backend_language,
+            "backendVersion": self.backend_version,
+            "timing": timing,
+        })
+    }
+}
+
+pub fn wrap_extended_result(
+    value: serde_json::Value,
+    meta: &ProgressiveResultMeta,
+    emit_timing: bool,
+) -> serde_json::Value {
+    use serde_json::json;
+    json!({
+        "value": value,
+        "progressiveMeta": meta.to_json(emit_timing),
+    })
+}
+
 pub fn test_chain_policy_from_env() -> ChainPolicy {
     let max_chain_iter = std::env::var("PROGRESSIVE_LSP_TEST_MAX_CHAIN_ITER")
         .ok()
