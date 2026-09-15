@@ -1,53 +1,93 @@
 # progressive-lsp
 
-**Language intelligence for many languages on Linux** — go-to-definition, references, hover, symbols, and highlighting — as one Language Server Protocol process.
+## What this is
 
-It is **not** an IDE, SSH, git, a file tree, or a terminal. Point your editor at `progressive-lsp serve` (stdio). One static Linux binary; optional engine packs add richer types.
+One Language Server Protocol process for Linux. It answers definition, references, hover, symbols, and highlighting over stdio JSON-RPC. It is not an IDE, SSH, git, a file tree, or a terminal.
 
-**End users:** [docs/user/README.md](docs/user/README.md). Progressive hosts: [docs/user/progressive-v1-api.md](docs/user/progressive-v1-api.md).
+End-user install and editor wiring: [docs/user/README.md](docs/user/README.md). Progressive client APIs: [docs/user/progressive-v1-api.md](docs/user/progressive-v1-api.md).
 
-**Design and milestones:** [docs/README.md](docs/README.md). POC IDE: [docs/poc-ide/README.md](docs/poc-ide/README.md). Branch stack: [docs/branching.md](docs/branching.md).
+## What it solves
 
-## Use & development
+Editors need language intelligence on machines that should not run Node, a JVM, or CPython as the server. progressive-lsp keeps the server runtime to a static Linux binary. Optional engine packs add full type engines when you install them.
 
-Everything maintainer-facing goes through **`./build`** at the repo root (wrapper around `cargo xtask`). Run `./build help` for flags; `./build help lsp` and `./build help run` for topics.
+The core boots without any pack. Opening Java does not require clangd. Opening PHP does not require clangd.
 
-**Prerequisites:** Rust toolchain, Docker Desktop when you need the Linux runtime image or integration smoke (typical on macOS/Windows). Workspace artifacts live under `target/` (gitignored); `./build` compiles xtask into `target/operator/` so it does not fight rust-analyzer for the main `target/` lock.
+## Features
 
-### Two build phases
+- **Static artifacts.** Shipped ELFs are musl-static with no dynamic linker dependency (see [docs/t3-linux-hosts.md](docs/t3-linux-hosts.md) for known exceptions).
+- **Wide language surface.** C, C++, C#, Rust, JavaScript, TypeScript, CSS, HTML, Python, PHP, Java, Go, and Zig in the v1 matrix.
+- **Three resolution tiers.** Tree-sitter (T1), heuristics (T2), optional full engines (T3). The editor is not blocked on ingest.
+- **Stock LSP first.** `progressive-lsp serve` is enough for Neovim and similar clients. Protobuf control is optional.
+- **Optional engines.** clangd, rust-analyzer, ty, tsgo, gopls, zls, and others are built as separate static pack binaries, not hosted runtimes.
 
-| Phase | What | When you need it |
+## Structure
+
+```text
+progressive-lsp/          serve + install binary; wires crates
+progressive-lsp-core/     ids, config, errors
+progressive-lsp-*         index, resolve, watch, workspace, protocol, engine, install, …
+progressive-lsp-lang-*    one factory crate per language
+poc-ide/                  in-tree sample editor (consumer, not the server)
+xtask/                    build, musl cross, engine packs, runtime image
+integration/              container harness and tier-api-matrix suites
+docs/                     product source of truth
+```
+
+Runtime layout on a host: `$HOME/.progressivelsp/bin/progressive-lsp` and `$HOME/.progressivelsp/engines/`. Writable state stays out of git trees.
+
+Design detail: [docs/README.md](docs/README.md). Branch history: [docs/branching.md](docs/branching.md).
+
+## Development
+
+Operator entry is `./build` at the repo root (wraps `cargo xtask`). Help: `./build help`, `./build help lsp`, `./build help run`, `./build help build`.
+
+**Prerequisites:** Rust toolchain. Docker Desktop for musl pack jobs, the runtime OCI image, integration smoke, and container poc-ide on macOS or Windows. Build output goes under `target/` (gitignored). xtask itself builds under `target/operator/` so it does not lock the main workspace target.
+
+### Build
+
+You need binaries before integration or smoke tests can run. Order:
+
+1. **Native controller and poc-ide** (host development binary, no Linux image):
+
+   ```sh
+   ./build ide
+   ```
+
+2. **Linux musl server, engine packs, and runtime image** (what container mode and shipped layout use):
+
+   ```sh
+   ./build lsp aarch64
+   ```
+
+   Replace `aarch64` with `x86_64` or `all` as needed. Default flavor is **slim** (python, rust, java, php, html/css stacks, and related packs). Use **dogfood** for slim plus clangd, tsgo, gopls, and zls:
+
+   ```sh
+   ./build lsp aarch64 --flavor dogfood
+   ```
+
+   Dogfood is required for C/C++, TypeScript, Go, and Zig T3 in the runtime image. clangd is usually satisfied from pack cache pull, not a full local LLVM build; see [docs/consumer.md](docs/consumer.md).
+
+   Stamps skip unchanged work. `--force` rebuilds musl core, packs, and the image.
+
+   Pack pins: `xtask/pack-pins.toml`. Do not commit musl ELFs or pack-cache blobs.
+
+Low-level pack, cache, and dist commands: `./build help build`.
+
+### Test
+
+After the build steps you need for the test type:
+
+| Command | What it checks | Needs |
 |---|---|---|
-| **1 — progressive-lsp (Rust)** | Native `progressive-lsp` + poc-ide; unit tests | Daily Rust work, T1/T2 on the host |
-| **2 — engine packs + runtime image (Docker)** | Musl server, third-party LSP engines (clangd, tsgo, …), `progressive-lsp-runtime:local` | Container poc-ide, full T3, `./build integ` |
+| `./build test` | Workspace and harness unit tests | Rust build; uses `target/` and `.cargo-home/` |
+| `./build integ` | Hermetic discover + IT-TAM smoke in Docker | Runtime image `progressive-lsp-runtime:local`, harness `plsp-it1`; builds them if missing |
+| `./build run ide --smoke` | poc-ide on in-tree Java fixture | Container on macOS/Windows; dogfood image when packs are missing |
+| `./build run ide --folder /abs/path` | Manual poc-ide on your tree | Prior `./build lsp <arch>` for container mode; absolute path for bind mounts |
 
-You can stay in phase 1 for a long time. Phase 2 is where compile time and disk go up — especially **clangd** (cached binary or local `--cache-fill`, not cmake on every `./build lsp`).
+Native-only T1/T2 on a laptop without container:
 
-**Phase 1 commands**
-
-```text
-./build test          # workspace + harness tests (uses target/ and .cargo-home/)
-./build ide           # poc-ide + native progressive-lsp binary (no UI)
-./build run ide --native --folder /abs/path   # optional T1/T2-only on non-Linux
+```sh
+./build run ide --native --folder /abs/path
 ```
 
-**Phase 2 commands**
-
-```text
-./build lsp aarch64                              # slim packs + musl core + runtime image
-./build lsp aarch64 --flavor dogfood             # slim + full packs (C/C++, TS, Go, Zig T3)
-./build run ide --smoke                          # Java fixture; builds image if missing
-./build run ide --folder /abs/path/to/project    # container on macOS/Windows by default
-./build integ                                      # hermetic integration smoke in Docker
-```
-
-**Pack flavors (`./build lsp`)**
-
-- **`slim` (default)** — python, rust, java, php, html/css engines, etc. Enough for many fixtures and slim runtime images.
-- **`dogfood`** — slim plus **full** packs: clangd, tsgo, gopls, zls. Required for the dogfood runtime image and for C/C++/TS/Go/Zig T3 in container mode. Dogfood tries to **pull** a pinned clangd cache before failing closed; see [docs/consumer.md](docs/consumer.md).
-
-Freshness is stamp-based: unchanged sources skip rebuilds. Pass **`--force`** to rebuild musl core, packs, and the image anyway.
-
-### Low-level packaging
-
-For individual pack jobs, cache fill/pull, or dist layout, use `cargo xtask` after `./build` has built the xtask binary once — `./build help build` (via xtask) documents `build backends`, `pack`, `runtime-image`, etc. Pins live in `xtask/pack-pins.toml`. Do not commit musl ELFs or pack-cache blobs.
+That path does not replace the musl server and packs required for full T3 or CI parity.
