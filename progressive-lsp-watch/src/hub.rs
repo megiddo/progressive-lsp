@@ -1,13 +1,13 @@
 //! ADR 003: coalescing file-event hub on a dedicated thread.
 
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use progressive_lsp_core::{ClockPort, SystemClock};
 
-use crate::backend::{WatchBackend, WatchKind};
+use crate::backend::WatchBackend;
 use crate::coalescer::WatchCoalescer;
 use crate::{WatchBatch, WatchEvent};
 
@@ -23,7 +23,7 @@ pub trait HubSubscriber: Send + Sync {
     fn on_batch(&self, batch: &WatchBatch);
 }
 
-struct SubscriberList {
+pub(crate) struct SubscriberList {
     subs: Vec<Arc<dyn HubSubscriber>>,
 }
 
@@ -102,7 +102,7 @@ impl FileEventHub {
     }
 
     /// Run one hub iteration synchronously (unit tests with [`FakeClock`](progressive_lsp_core::FakeClock)).
-    pub fn drain_once(
+    pub(crate) fn drain_once(
         backend: &mut dyn WatchBackend,
         coalescer: &mut WatchCoalescer,
         rx: &Receiver<HubCommand>,

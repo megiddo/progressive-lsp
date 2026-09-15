@@ -34,5 +34,9 @@ if ! "$HARNESS_DIR/run-discover-container.sh"; then
   FAIL=1
 fi
 
-echo "=== done (fail=$FAIL) reports under $OUT ===" >&2
+if [ "$FAIL" -eq 0 ]; then
+  echo "=== integration smoke: PASS (reports under $OUT) ===" >&2
+else
+  echo "=== integration smoke: FAIL (reports under $OUT) ===" >&2
+fi
 exit "$FAIL"

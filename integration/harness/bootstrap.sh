@@ -16,7 +16,7 @@ plsp_repo_root() {
 
 plsp_export_cargo_env() {
   ROOT=$(plsp_repo_root)
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+  export CARGO_TARGET_DIR="$ROOT/target"
   export CARGO_HOME="${CARGO_HOME:-$ROOT/.cargo-home}"
   mkdir -p "$CARGO_HOME"
 }
