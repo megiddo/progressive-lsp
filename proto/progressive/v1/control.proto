@@ -138,6 +138,41 @@ message ReloadScriptsResponse {
   Status status = 1;
 }
 
+// SEAMS-3: correlated operation traces (additive).
+message Timing {
+  uint64 handler_ms = 1;
+  uint64 resolve_ms = 2;
+  uint32 chain_steps = 3;
+  string cache_state = 4;
+}
+
+message ProgressiveMeta {
+  string trace_id = 1;
+  string tier = 2;
+  string backend_language = 3;
+  string backend_version = 4;
+  Timing timing = 5;
+}
+
+message FetchTraceRequest {
+  string trace_id = 1;
+  uint32 max_rows = 2;
+}
+
+message TraceRow {
+  uint64 unix_ms = 1;
+  string level = 2;
+  string component = 3;
+  string operation = 4;
+  string message = 5;
+  map<string, string> extras = 6;
+}
+
+message FetchTraceResponse {
+  Status status = 1;
+  repeated TraceRow rows = 2;
+}
+
 // Public dispatch contract (docs/user/progressive-v1-api.md).
 // Every control frame after the u32be length prefix is this envelope.
 message Envelope {

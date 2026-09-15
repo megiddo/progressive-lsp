@@ -9,7 +9,8 @@ use progressive_lsp_control::{
     EngineStatusRow, GetConfigResponse, IndexPackage, IndexStatusRequest, IndexStatusResponse,
     InstallPacksRequest,
     InstallPacksResponse, ReloadConfigRequest, ReloadConfigResponse, ReloadScriptsRequest,
-    CacheReady, ReloadScriptsResponse, SetConfigRequest, SetConfigResponse, Status, TierReady,
+    CacheReady, FetchTraceRequest, FetchTraceResponse, ReloadScriptsResponse, SetConfigRequest,
+    SetConfigResponse, Status, TierReady, TraceRing,
     TierRow,
     TierStatusRequest, TierStatusResponse, WatchBatch, WatchEvent, WatchSubscribeRequest,
     WatchSubscribeResponse,
@@ -68,6 +69,7 @@ pub struct ServeHost {
     log: Arc<dyn LogPort>,
     supervisor: Option<Arc<EngineSupervisor>>,
     file_hub: FileHubSlot,
+    trace_ring: Arc<TraceRing>,
 }
 
 impl ServeHost {
@@ -78,12 +80,14 @@ impl ServeHost {
     pub fn new_with_log(layout: PrefixLayout, log: Arc<dyn LogPort>) -> Result<Self, ConfigError> {
         let load = load_config_file(&layout.config_path())?;
         ConfigWarnAdapter::new(Arc::clone(&log)).emit_warnings(&load.warnings);
+        let trace_ring = Arc::new(TraceRing::new());
         Ok(Self {
             session: WorkspaceSession::with_prefix_and_t2_log(
                 &layout,
                 load.config.t2_for("java"),
                 Arc::clone(&log),
-            ),
+            )
+            .with_trace_ring(Arc::clone(&trace_ring)),
             layout,
             config: Mutex::new(load.config),
             disk_watch: ServeDiskWatch::new(),
@@ -97,6 +101,7 @@ impl ServeHost {
             log,
             supervisor: None,
             file_hub: FileHubSlot::default(),
+            trace_ring,
         })
     }
 
@@ -675,6 +680,26 @@ impl ControlPlane for ServeHost {
                     status: Some(Status::error(1, e.0)),
                 }
             }
+        }
+    }
+
+    fn fetch_trace(&self, req: &FetchTraceRequest) -> FetchTraceResponse {
+        if req.trace_id.is_empty() {
+            return FetchTraceResponse {
+                status: Some(Status::error(1, "empty trace_id")),
+                rows: vec![],
+            };
+        }
+        let rows = self.trace_ring.fetch(&req.trace_id, req.max_rows);
+        if rows.is_empty() {
+            return FetchTraceResponse {
+                status: Some(Status::error(404, "trace not found")),
+                rows: vec![],
+            };
+        }
+        FetchTraceResponse {
+            status: Some(Status::ok()),
+            rows,
         }
     }
 }

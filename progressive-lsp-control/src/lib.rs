@@ -3,11 +3,13 @@
 pub mod codec;
 pub mod messages;
 pub mod service;
+pub mod trace_ring;
 
 pub use codec::{decode_frame, encode_frame, CodecError, DecodeOutcome, MAX_PAYLOAD_BYTES};
 pub use messages::*;
 pub use prost;
 pub use service::{ControlPlane, ControlServer, FilesSincePort};
+pub use trace_ring::TraceRing;
 
 #[cfg(test)]
 mod tests {

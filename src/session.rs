@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use progressive_lsp_control::IngestState;
+use progressive_lsp_control::{IngestState, TraceRing};
 use progressive_lsp_core::{
     path_to_file_uri,
     path_from_file_uri, FakeClock, InitializeFailed, LanguageId, LogComponent, LogLevel, LogPort,
@@ -76,6 +76,7 @@ pub struct WorkspaceSession {
     log: Arc<dyn LogPort>,
     unknown_languages: Mutex<HashSet<String>>,
     progressive_lsp: Mutex<ProgressiveLspSessionOptions>,
+    trace_ring: Option<Arc<TraceRing>>,
 }
 
 impl WorkspaceSession {
@@ -96,7 +97,13 @@ impl WorkspaceSession {
             log: Arc::new(NullLog),
             unknown_languages: Mutex::new(HashSet::new()),
             progressive_lsp: Mutex::new(ProgressiveLspSessionOptions::default()),
+            trace_ring: None,
         }
+    }
+
+    pub fn with_trace_ring(mut self, ring: Arc<TraceRing>) -> Self {
+        self.trace_ring = Some(ring);
+        self
     }
 
     pub fn with_log(mut self, log: Arc<dyn LogPort>) -> Self {
@@ -690,6 +697,9 @@ impl LspIntelligence for WorkspaceSession {
                 result.locations.len()
             );
             rec.extras = Some(extras);
+            if let Some(ring) = &self.trace_ring {
+                ring.append(&trace_id, &rec);
+            }
             self.log.emit(rec);
         } else {
             self.log.debug(operation);

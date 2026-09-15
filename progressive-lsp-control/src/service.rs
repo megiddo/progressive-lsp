@@ -34,6 +34,13 @@ pub trait ControlPlane: Send + Sync {
         Vec::new()
     }
     fn reload_scripts(&self, req: &ReloadScriptsRequest) -> ReloadScriptsResponse;
+    fn fetch_trace(&self, req: &FetchTraceRequest) -> FetchTraceResponse {
+        let _ = req;
+        FetchTraceResponse {
+            status: Some(Status::error(404, "trace not found")),
+            rows: vec![],
+        }
+    }
 }
 
 /// Same domain services as LSP, different encoding.
@@ -256,6 +263,16 @@ impl ControlServer {
         }
     }
 
+    pub fn fetch_trace(&self, req: &FetchTraceRequest) -> FetchTraceResponse {
+        if let Some(plane) = &self.plane {
+            return plane.fetch_trace(req);
+        }
+        FetchTraceResponse {
+            status: Some(Status::error(404, "trace not found")),
+            rows: vec![],
+        }
+    }
+
     /// Public dispatch: decode Envelope, route by method, echo request_id.
     pub fn dispatch_envelope(&self, env: &Envelope) -> Envelope {
         match env.method.as_str() {
@@ -313,6 +330,14 @@ impl ControlServer {
                     METHOD_RELOAD_SCRIPTS,
                     env.request_id,
                     self.reload_scripts(&req),
+                )
+            }
+            METHOD_FETCH_TRACE => {
+                let req = env.decode_body::<FetchTraceRequest>().unwrap_or_default();
+                Envelope::reply(
+                    METHOD_FETCH_TRACE,
+                    env.request_id,
+                    self.fetch_trace(&req),
                 )
             }
             other => {

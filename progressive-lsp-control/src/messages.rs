@@ -283,6 +283,64 @@ pub struct ReloadScriptsResponse {
     pub status: Option<Status>,
 }
 
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct Timing {
+    #[prost(uint64, tag = "1")]
+    pub handler_ms: u64,
+    #[prost(uint64, tag = "2")]
+    pub resolve_ms: u64,
+    #[prost(uint32, tag = "3")]
+    pub chain_steps: u32,
+    #[prost(string, tag = "4")]
+    pub cache_state: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ProgressiveMeta {
+    #[prost(string, tag = "1")]
+    pub trace_id: String,
+    #[prost(string, tag = "2")]
+    pub tier: String,
+    #[prost(string, tag = "3")]
+    pub backend_language: String,
+    #[prost(string, tag = "4")]
+    pub backend_version: String,
+    #[prost(message, optional, tag = "5")]
+    pub timing: Option<Timing>,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct FetchTraceRequest {
+    #[prost(string, tag = "1")]
+    pub trace_id: String,
+    #[prost(uint32, tag = "2")]
+    pub max_rows: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TraceRow {
+    #[prost(uint64, tag = "1")]
+    pub unix_ms: u64,
+    #[prost(string, tag = "2")]
+    pub level: String,
+    #[prost(string, tag = "3")]
+    pub component: String,
+    #[prost(string, tag = "4")]
+    pub operation: String,
+    #[prost(string, tag = "5")]
+    pub message: String,
+    #[prost(btree_map = "string, string", tag = "6")]
+    pub extras: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct FetchTraceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub status: Option<Status>,
+    #[prost(message, repeated, tag = "2")]
+    pub rows: Vec<TraceRow>,
+}
+
 /// Public dispatch contract. Wrap every control frame in this envelope.
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct Envelope {
@@ -337,6 +395,7 @@ pub const METHOD_TIER_STATUS: &str = "TierStatus";
 pub const METHOD_TIER_READY: &str = "TierReady";
 pub const METHOD_CACHE_READY: &str = "CacheReady";
 pub const METHOD_RELOAD_SCRIPTS: &str = "ReloadScripts";
+pub const METHOD_FETCH_TRACE: &str = "FetchTrace";
 
 #[cfg(test)]
 mod tests {
@@ -390,6 +449,34 @@ mod tests {
             since: Some(files_since_request::Since::SinceUnixMs(1)),
         };
         assert_ne!(a.encode_to_vec(), b.encode_to_vec());
+    }
+
+    #[test]
+    fn fetch_trace_round_trip_and_empty_id() {
+        let req = FetchTraceRequest {
+            trace_id: "abc".into(),
+            max_rows: 100,
+        };
+        let bytes = req.encode_to_vec();
+        assert_eq!(bytes, FetchTraceRequest::decode(bytes.as_slice()).unwrap().encode_to_vec());
+        let resp = FetchTraceResponse {
+            status: Some(Status::ok()),
+            rows: vec![TraceRow {
+                unix_ms: 1,
+                level: "info".into(),
+                component: "serve".into(),
+                operation: "def".into(),
+                message: "ok".into(),
+                extras: Default::default(),
+            }],
+        };
+        assert_round_trip_fetch(&resp);
+    }
+
+    fn assert_round_trip_fetch<T: prost::Message + Default + PartialEq + std::fmt::Debug>(msg: &T) {
+        let bytes = msg.encode_to_vec();
+        let decoded = T::decode(bytes.as_slice()).unwrap();
+        assert_eq!(&decoded, msg);
     }
 
     #[test]
