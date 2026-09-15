@@ -529,6 +529,9 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
                     "fail",
                     format!("expected progressiveLsp.mux true, got {mux}"),
                     None,
+                    None,
+                    0,
+                    false,
                     &golden,
                     line,
                     character,
@@ -544,6 +547,9 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
                 "fail",
                 format!("initialize: {e}"),
                 None,
+                None,
+                0,
+                false,
                 &golden,
                 line,
                 character,
@@ -606,37 +612,89 @@ pub fn run_discover_container(opts: &DiscoverContainerOpts) -> Result<Value, Str
     );
 
     let _init_caps = result;
-    match def_result {
+    let def_result = match def_result {
         Ok(loc) => {
             let count = location_count(&loc);
             driver.trace(
                 "discover_ok",
-                format!("locations={count} raw={}", truncate_json(&loc, 400)),
+                format!("definition locations={count} raw={}", truncate_json(&loc, 400)),
             );
-            Ok(finish_report(
+            loc
+        }
+        Err(e) => {
+            return Ok(finish_report(
                 &driver,
                 opts,
-                if count > 0 { "pass" } else { "pass_empty" },
-                format!("definition returned {count} location(s)"),
-                Some(loc),
+                "fail",
+                format!("definition: {e}"),
+                None,
+                None,
                 &golden,
                 line,
                 character,
                 &uri,
-            ))
+            ));
         }
-        Err(e) => Ok(finish_report(
-            &driver,
-            opts,
-            "fail",
-            e,
-            None,
-            &golden,
-            line,
-            character,
-            &uri,
-        )),
-    }
+    };
+    let def_count = location_count(&def_result);
+
+    driver.trace(
+        "references_start",
+        "textDocument/references (Find References)".to_string(),
+    );
+    let refs_result = driver.request_lsp(
+        3,
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true },
+        }),
+        discover_deadline,
+    );
+    let (refs_value, refs_count) = match refs_result {
+        Ok(v) => {
+            let n = location_count(&v);
+            driver.trace(
+                "references_ok",
+                format!("references locations={n} raw={}", truncate_json(&v, 400)),
+            );
+            (Some(v), n)
+        }
+        Err(e) => {
+            driver.trace("references_fail", e.clone());
+            (None, 0)
+        }
+    };
+
+    let min_refs = golden.min_references.unwrap_or(1);
+    let refs_ok = refs_count >= min_refs;
+    let result_tag = if def_count > 0 && refs_ok {
+        "pass"
+    } else if def_count > 0 {
+        "fail"
+    } else {
+        "pass_empty"
+    };
+    let notes = if refs_ok {
+        format!("definition={def_count} references={refs_count}")
+    } else {
+        format!("definition={def_count} references={refs_count} (want >={min_refs})")
+    };
+    Ok(finish_report(
+        &driver,
+        opts,
+        result_tag,
+        notes,
+        Some(def_result),
+        refs_value,
+        refs_count,
+        refs_ok,
+        &golden,
+        line,
+        character,
+        &uri,
+    ))
 }
 
 fn location_count(v: &Value) -> usize {
@@ -654,6 +712,9 @@ fn finish_report(
     result: &str,
     notes: impl Into<String>,
     definition: Option<Value>,
+    references: Option<Value>,
+    references_count: usize,
+    references_ok: bool,
     golden: &crate::ExpectedGolden,
     line: u32,
     character: u32,
@@ -667,6 +728,9 @@ fn finish_report(
         "language": golden.language,
         "result": result,
         "notes": notes,
+        "definition_ok": definition.as_ref().map(location_count).unwrap_or(0) > 0,
+        "references_ok": references_ok,
+        "references_count": references_count,
         "request": {
             "method": "textDocument/definition",
             "uri": uri,
@@ -675,6 +739,7 @@ fn finish_report(
             "find_needle": golden.find,
         },
         "definition": definition,
+        "references": references,
         "serve_wal": opts.wal.as_ref().map(|p| p.display().to_string()),
         "serve_wal_definition_ops": wal_tail,
         "trace": driver.take_trace(),

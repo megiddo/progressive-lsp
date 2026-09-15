@@ -333,6 +333,7 @@ pub(crate) struct ExpectedGolden {
     ghost_sibling: Option<String>,
     expected_ceiling: bool,
     corpus_sha: String,
+    pub(crate) min_references: Option<usize>,
 }
 
 pub(crate) fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
@@ -352,6 +353,7 @@ pub(crate) fn load_golden(path: &Path) -> Result<ExpectedGolden, String> {
         ghost_sibling: v["ghost_sibling"].as_str().map(str::to_string).filter(|s| !s.is_empty()),
         expected_ceiling: v["expected_ceiling"].as_bool().unwrap_or(false),
         corpus_sha: v["corpus_sha"].as_str().unwrap_or("").to_string(),
+        min_references: v["min_references"].as_u64().map(|n| n as usize),
     })
 }
 

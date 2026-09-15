@@ -46,7 +46,7 @@ integration/
 
 **Client:** a tiny stdio LSP driver (initialize → didOpen → request → shutdown). Progressive tests add a Unix-socket protobuf client using `progressive-lsp-control`. Do not use Neovim as the only gate; a headless driver is reproducible.
 
-**POC IDE container discover (dogfood):** `harness/run-discover-container.sh` runs `docker … serve --mux` and sends the same LSP sequence as the editor **Find Definition** context menu (`textDocument/definition` on mux channel 0, 15s deadline). Verbose steps go to stderr; JSON report + serve WAL path under `integration/out/`. Override workspace:
+**POC IDE container discover (dogfood):** `harness/run-discover-container.sh` runs `docker … serve --mux` and sends the same LSP sequence as the editor **Find Definition** and **Find References** (`textDocument/definition` then `textDocument/references` on mux channel 0, 15s deadline). Report JSON includes `references_ok` / `references_count`. Verbose steps go to stderr; JSON report + serve WAL path under `integration/out/`. Override workspace:
 
 ```bash
 PLSP_DISCOVER_ROOT="/Users/you/…/supplytech-pdf-client/src" \

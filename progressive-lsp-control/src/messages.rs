@@ -248,6 +248,16 @@ pub struct TierReady {
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
+pub struct CacheReady {
+    #[prost(string, tag = "1")]
+    pub file: String,
+    #[prost(string, tag = "2")]
+    pub query_kind: String,
+    #[prost(uint32, tag = "3")]
+    pub location_count: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
 pub struct ReloadScriptsRequest {}
 
 #[derive(Clone, PartialEq, Eq, Message)]
@@ -308,6 +318,7 @@ pub const METHOD_FILES_SINCE: &str = "FilesSince";
 pub const METHOD_INDEX_STATUS: &str = "IndexStatus";
 pub const METHOD_TIER_STATUS: &str = "TierStatus";
 pub const METHOD_TIER_READY: &str = "TierReady";
+pub const METHOD_CACHE_READY: &str = "CacheReady";
 pub const METHOD_RELOAD_SCRIPTS: &str = "ReloadScripts";
 
 #[cfg(test)]

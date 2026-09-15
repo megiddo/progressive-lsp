@@ -37,12 +37,12 @@ Fine-grained work packages for **ABS-0 … ABS-4**. Depends-on is strict.
 
 | ID | Work package | Depends-on | Exit criteria | Done |
 |----|--------------|------------|---------------|------|
-| ABS-1.1 | `ServeReadiness` (or extend session): workspace ingest, package tier, engine rows, query-key inflight map | TCACHE on main | Unit: transitions on ingest complete, engine ready | [ ] |
-| ABS-1.2 | Remove synchronous `try_engine_discover` / mux `supervisor.resolve` | ABS-1.1 | No mux resolve; IT uses NotReady + builder path | [ ] |
-| ABS-1.3 | T3′ `inflight` keys; mux chain returns NotReady when pending (not `Ready([])` at T1 for pending types) | ABS-1.1 | Unit: miss + inflight → NotReady; hit → Ready | [ ] |
-| ABS-1.4 | Proto `CacheReady` + control push; wire builder completion | ABS-1.3 | Unit + control round-trip | [ ] |
-| ABS-1.5 | Audit: `lsp_child` only on builder/warm threads | ABS-1.2 | Grep gate or test: no resolve from mux thread | [ ] |
-| ABS-1.6 | Update [progressive-lsp-apis.md](../progressive-lsp-apis.md) | ABS-1.4 | Doc lists `CacheReady` | [ ] |
+| ABS-1.1 | `ServeReadiness` (or extend session): workspace ingest, package tier, engine rows, query-key inflight map | TCACHE on main | Unit: transitions on ingest complete, engine ready | [x] |
+| ABS-1.2 | Remove synchronous `try_engine_discover` / mux `supervisor.resolve` | ABS-1.1 | No mux resolve; IT uses NotReady + builder path | [x] |
+| ABS-1.3 | T3′ `inflight` keys; mux chain returns NotReady when pending (not `Ready([])` at T1 for pending types) | ABS-1.1 | Unit: miss + inflight → NotReady; hit → Ready | [x] |
+| ABS-1.4 | Proto `CacheReady` + control push; wire builder completion | ABS-1.3 | Unit + control round-trip | [x] |
+| ABS-1.5 | Audit: `lsp_child` only on builder/warm threads | ABS-1.2 | Grep gate or test: no resolve from mux thread | [x] |
+| ABS-1.6 | Update [progressive-lsp-apis.md](../progressive-lsp-apis.md) | ABS-1.4 | Doc lists `CacheReady` | [x] |
 
 **Phase exit:** ABS-1.1–ABS-1.6 signed off in [milestones.md](../milestones.md).
 

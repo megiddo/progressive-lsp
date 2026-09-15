@@ -9,7 +9,8 @@ use progressive_lsp_control::{
     EngineStatusRow, GetConfigResponse, IndexPackage, IndexStatusRequest, IndexStatusResponse,
     InstallPacksRequest,
     InstallPacksResponse, ReloadConfigRequest, ReloadConfigResponse, ReloadScriptsRequest,
-    ReloadScriptsResponse, SetConfigRequest, SetConfigResponse, Status, TierReady, TierRow,
+    CacheReady, ReloadScriptsResponse, SetConfigRequest, SetConfigResponse, Status, TierReady,
+    TierRow,
     TierStatusRequest, TierStatusResponse, WatchBatch, WatchEvent, WatchSubscribeRequest,
     WatchSubscribeResponse,
 };
@@ -62,6 +63,7 @@ pub struct ServeHost {
     pending_batches: Mutex<Vec<WatchBatch>>,
     snapshot: Mutex<HashMap<PathBuf, u64>>,
     pending_tier: Mutex<Vec<TierReady>>,
+    pending_cache_ready: Arc<Mutex<Vec<CacheReady>>>,
     log: Arc<dyn LogPort>,
     supervisor: Option<Arc<EngineSupervisor>>,
 }
@@ -89,13 +91,24 @@ impl ServeHost {
             pending_batches: Mutex::new(Vec::new()),
             snapshot: Mutex::new(HashMap::new()),
             pending_tier: Mutex::new(Vec::new()),
+            pending_cache_ready: Arc::new(Mutex::new(Vec::new())),
             log,
             supervisor: None,
         })
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
-        self.session.attach_supervisor(Arc::clone(&supervisor));
+        let pending_cb = Arc::clone(&self.pending_cache_ready);
+        self.session.attach_supervisor(
+            Arc::clone(&supervisor),
+            Some(Arc::new(move |notice| {
+                pending_cb.lock().expect("cache ready").push(CacheReady {
+                    file: notice.file.as_str().to_string(),
+                    query_kind: notice.kind.as_str().to_string(),
+                    location_count: notice.location_count,
+                });
+            })),
+        );
         self.supervisor = Some(supervisor);
         self
     }
@@ -578,6 +591,10 @@ impl ControlPlane for ServeHost {
 
     fn take_tier_ready(&self) -> Vec<TierReady> {
         std::mem::take(&mut *self.pending_tier.lock().expect("tier"))
+    }
+
+    fn take_cache_ready(&self) -> Vec<CacheReady> {
+        std::mem::take(&mut *self.pending_cache_ready.lock().expect("cache ready"))
     }
 
     fn reload_scripts(&self, _req: &ReloadScriptsRequest) -> ReloadScriptsResponse {

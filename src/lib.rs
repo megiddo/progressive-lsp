@@ -27,6 +27,7 @@ use progressive_lsp_script::ScriptHost;
 
 mod control_socket;
 mod serve_host;
+mod serve_readiness;
 mod session;
 pub use serve_host::{root_from_params, ServeDiskWatch, ServeHost};
 pub use session::{register_languages, WorkspaceSession};

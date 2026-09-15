@@ -103,6 +103,11 @@ mod tests {
             package_id: "p".into(),
             tier: "graph".into(),
         });
+        assert_round_trip(&CacheReady {
+            file: "App.java".into(),
+            query_kind: "definition".into(),
+            location_count: 2,
+        });
         assert_round_trip(&ReloadScriptsRequest {});
         assert_round_trip(&ReloadScriptsResponse { status: None });
         assert_round_trip(&Envelope::request(

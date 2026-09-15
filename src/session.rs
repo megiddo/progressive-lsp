@@ -93,15 +93,20 @@ impl WorkspaceSession {
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<EngineSupervisor>) -> Self {
-        self.attach_supervisor(supervisor);
+        self.attach_supervisor(supervisor, None);
         self
     }
 
-    pub fn attach_supervisor(&mut self, supervisor: Arc<EngineSupervisor>) {
+    pub fn attach_supervisor(
+        &mut self,
+        supervisor: Arc<EngineSupervisor>,
+        cache_ready: Option<progressive_lsp_types_cache::CacheReadyListener>,
+    ) {
         if self.supervisor.is_none() {
             self.types_cache.attach_engine_builder(
                 Arc::clone(&supervisor),
                 self.index.clone(),
+                cache_ready,
             );
         }
         self.supervisor = Some(supervisor);
@@ -362,7 +367,11 @@ impl WorkspaceSession {
     }
 
     pub fn cache_entries(&self) -> u64 {
-        self.index.lock().cache.len() as u64
+        if self.supervisor.is_some() {
+            self.types_cache.types_cache_entry_count()
+        } else {
+            self.index.lock().cache.len() as u64
+        }
     }
 
     pub fn index_generation(&self) -> u64 {
@@ -1370,8 +1379,9 @@ mod tests {
             Some(&"miss".to_string())
         );
         let second = session.resolve(&q);
-        assert_eq!(first.tier, Tier::Syntax);
-        assert_eq!(second.tier, Tier::Syntax);
+        assert_eq!(first.tier, Tier::Types);
+        assert!(first.locations.is_empty());
+        assert_eq!(second.tier, Tier::Types);
         let engine_skips: Vec<_> = log
             .records()
             .into_iter()
@@ -1382,6 +1392,39 @@ mod tests {
             })
             .collect();
         assert!(engine_skips.is_empty(), "engine is builder-only on mux: {engine_skips:?}");
+    }
+
+    #[test]
+    fn mux_discover_does_not_call_supervisor_resolve() {
+        let clock = Arc::new(FakeClock::at_unix_ms(1));
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = PrefixLayout::from_path(dir.path());
+        prefix.ensure_dirs().unwrap();
+        let fake = progressive_lsp_engine::FakeEngineAdapter::java()
+            .with_binary(progressive_lsp_engine::EngineBinary {
+                pack_name: "java".into(),
+                path: dir.path().join("javacs"),
+                sha256: [0; 32],
+            });
+        let mut sup = EngineSupervisor::new(clock, prefix);
+        sup.register(Box::new(fake));
+        let _ = sup.try_spawn(
+            "java",
+            &LanguageId::new("java"),
+            &PackageId::new("pkg"),
+            dir.path(),
+        );
+        let session = WorkspaceSession::java_default().with_supervisor(Arc::new(sup));
+        session.did_open("file:///Use.java", "java", "class Use { void f() { Ref r; } }\n");
+        let q = ResolveQuery::new(
+            progressive_lsp_core::FileId::new("Use.java"),
+            progressive_lsp_resolve::Position::new(0, 20),
+            QueryKind::References,
+        );
+        let r = session.resolve(&q);
+        assert_eq!(r.tier, Tier::Types);
+        assert!(r.locations.is_empty());
+        assert_eq!(session.types_cache.types_cache_entry_count(), 0);
     }
 
     #[test]

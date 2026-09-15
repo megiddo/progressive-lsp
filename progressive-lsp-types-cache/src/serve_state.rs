@@ -4,6 +4,7 @@
 pub enum CacheServeState {
     Hit,
     Miss,
+    Inflight,
     Stale,
     NotApplicable,
 }
@@ -13,6 +14,7 @@ impl CacheServeState {
         match self {
             Self::Hit => "hit",
             Self::Miss => "miss",
+            Self::Inflight => "inflight",
             Self::Stale => "stale",
             Self::NotApplicable => "n/a",
         }

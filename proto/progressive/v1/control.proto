@@ -114,6 +114,13 @@ message TierReady {
   string tier = 2;
 }
 
+// Additive (ABS-1): T3′ query key left inflight → ready on the builder worker.
+message CacheReady {
+  string file = 1;
+  string query_kind = 2;
+  uint32 location_count = 3;
+}
+
 message ReloadScriptsRequest {}
 
 message ReloadScriptsResponse {

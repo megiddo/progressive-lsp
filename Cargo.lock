@@ -3550,6 +3550,7 @@ dependencies = [
  "progressive-lsp-core",
  "progressive-lsp-engine",
  "progressive-lsp-index",
+ "progressive-lsp-lang-java",
  "progressive-lsp-resolve",
  "progressive-lsp-watch",
  "tempfile",

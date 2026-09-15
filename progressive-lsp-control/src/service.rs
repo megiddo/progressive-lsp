@@ -30,6 +30,9 @@ pub trait ControlPlane: Send + Sync {
     fn index_status(&self, req: &IndexStatusRequest) -> IndexStatusResponse;
     fn tier_status(&self, req: &TierStatusRequest) -> TierStatusResponse;
     fn take_tier_ready(&self) -> Vec<TierReady>;
+    fn take_cache_ready(&self) -> Vec<CacheReady> {
+        Vec::new()
+    }
     fn reload_scripts(&self, req: &ReloadScriptsRequest) -> ReloadScriptsResponse;
 }
 
@@ -340,6 +343,11 @@ impl ControlServer {
         }
         for ready in self.take_tier_ready() {
             out.push(Envelope::push(METHOD_TIER_READY, ready));
+        }
+        if let Some(plane) = &self.plane {
+            for ready in plane.take_cache_ready() {
+                out.push(Envelope::push(METHOD_CACHE_READY, ready));
+            }
         }
         out
     }

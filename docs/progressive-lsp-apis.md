@@ -121,7 +121,7 @@ All responses include `Status { code, message }` (`code == 0` ok).
 |--------|---------|
 | `WatchBatch` | Coalesced file events + `overflow`, `need_rescan`, `generation` |
 | `TierReady` | Package upgraded to a new tier |
-| `CacheReady` | **Planned** ([ADR 002](adr/002-serve-readiness-fsm.md)) — T3′ key/region ready |
+| `CacheReady` | T3′ query left `inflight` → `ready` on builder worker (`file`, `query_kind`, `location_count`) |
 
 ---
 

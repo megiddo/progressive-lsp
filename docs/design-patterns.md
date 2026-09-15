@@ -331,8 +331,10 @@ llvm-cov excludes `xtask/`. Spawn shells are not on the 95% denominator.
 | `TypesCacheKey` | Value object | `(QueryKind, FileId, Position, CacheGeneration)` identity; generation mismatch → miss |
 | `TypesCacheEntry` | Value object | `ResolveResult` + `filled_at_unix_ms` + `source` + `engine_generation` |
 | `CacheGeneration` | Value object | Monotonic u64 from index dirty / global generation |
-| `TypesCacheResolver` | Chain of Responsibility step | Read path only; miss enqueues builder; never calls engine |
+| `TypesCacheResolver` | Chain of Responsibility step | Read path only; miss enqueues builder; with engine builder stops at empty `Tier::Types` (no T2 fallthrough); never calls engine on mux |
 | `TypesCacheBuilder` | Command + background worker | `on_miss` hook; engine fill in TC-3 |
+| `ServeReadiness` | Value object / FSM snapshot | Workspace ingest + `query_pending_at_types` from WAL `cache_state` (ADR 002) |
+| `CacheReady` | Event / DTO | Control push when T3′ key leaves `inflight` on builder worker |
 | `BuilderQueue` | Command queue | Dedupes misses by query identity (ignoring generation) |
 | `InvalidationPolicy` | Strategy | `on_file_dirty` / `on_engine_restart` → store eviction |
 | `GenerationPort` | Port | `file_generation` for keys; `IndexGenerationPort` reads `IndexService` |

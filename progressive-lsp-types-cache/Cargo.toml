@@ -15,3 +15,4 @@ progressive-lsp-engine = { path = "../progressive-lsp-engine" }
 
 [dev-dependencies]
 tempfile.workspace = true
+progressive-lsp-lang-java = { path = "../progressive-lsp-lang-java" }
