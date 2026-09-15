@@ -30,6 +30,8 @@ T3 engines (Java/javacs, etc.) are **inherently slow** (JVM, project model, proj
 
 **EngineResolver is not a chain step** after cutover; it is **only** the builder’s adapter to the pack child.
 
+**Readiness:** Subsystem state (ingest, tier, engine, T3′ keys) lives in a **serve-side FSM** ([ADR 002](../adr/002-serve-readiness-fsm.md)). Clients poll **control** (`IndexStatus`, future `CacheReady`); they do not implement parallel timeout-based tier truth.
+
 ---
 
 ## Storage model (two layers)

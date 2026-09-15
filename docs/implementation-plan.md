@@ -929,6 +929,29 @@ pre-tcache-base   # base working branch — all pre-TCACHE local work committed 
 
 Fine-grained WP rows: [types-cache/implementation-checklist.md](types-cache/implementation-checklist.md). Milestone exits: [milestones.md](milestones.md) TCACHE section.
 
+## SERVE-ABS — N-tier readiness + file event hub
+
+**Status:** **Planned** after TCACHE merges to `main`. **Not started** on branch `fix/post-tcache-dogfood` until base is `main` + TCACHE.
+
+**Doc package:** [serve-abs/README.md](serve-abs/README.md) — [requirements](serve-abs/requirements.md), [design](serve-abs/design.md), [implementation-checklist](serve-abs/implementation-checklist.md), [agent-context](serve-abs/agent-context.md). Master plan: [architecture/abstraction-targets-plan.md](architecture/abstraction-targets-plan.md). ADRs: [002](adr/002-serve-readiness-fsm.md), [003](adr/003-file-event-hub.md). N-tier: [architecture/n-tier-framework.md](architecture/n-tier-framework.md).
+
+**Public API index:** [progressive-lsp-apis.md](progressive-lsp-apis.md) (update on each ABS sign-off).
+
+```text
+main   # after TCACHE merge
+  └── serve-abs-1   # ABS-1 readiness FSM (CacheReady, NotReady, no mux engine)
+        └── serve-abs-2   # ABS-2 FileEventHub
+              └── serve-abs-3   # ABS-3 tier registry + capabilities
+                    └── serve-abs-4   # ABS-4 TierPort (human gate on lang crates)
+```
+
+| Milestone | Branch | Target |
+|-----------|--------|--------|
+| ABS-1 | `serve-abs-1` | ADR 002 B1–B5 |
+| ABS-2 | `serve-abs-2` | ADR 003 hub |
+| ABS-3 | `serve-abs-3` | Capabilities on control plane |
+| ABS-4 | `serve-abs-4` | Generic tier ports |
+
 ## Spikes (do not skip hygiene on merge)
 
 | Spike | Lives | Merge rule |

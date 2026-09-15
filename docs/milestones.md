@@ -1467,7 +1467,69 @@ Master docs: [types-cache/requirements.md](types-cache/requirements.md), [types-
 | **TCACHE-4** | TC-4 | `tcache-4` | `tcache-3` | **SIGNED OFF** — P0 refactors (`language_id_from_path`, thin discover) |
 | **TCACHE-5** | TC-5 | `tcache-5` | `tcache-4` | **SIGNED OFF** — relation graph + ≤20 ms unit gates |
 
-**Next:** merge **`tcache-5`** → human review on `pre-tcache-base` stack.
+**Next:** merge **`tcache-5`** → `main` (PR #13 merged). Follow-on: **SERVE-ABS** program.
+
+## SERVE-ABS — N-tier readiness + file event hub
+
+**Status:** **ABS-0 SIGNED OFF** on `main`. Next: **`serve-abs-1`** (readiness FSM).
+
+Plan: [serve-abs/README.md](serve-abs/README.md) · [requirements](serve-abs/requirements.md) · [design](serve-abs/design.md) · [implementation-checklist](serve-abs/implementation-checklist.md). APIs: [progressive-lsp-apis.md](progressive-lsp-apis.md).
+
+| Milestone | Branch | Summary |
+|-----------|--------|---------|
+| **ABS-1** | `serve-abs-1` | Serve FSM; NotReady; `CacheReady`; no mux engine |
+| **ABS-2** | `serve-abs-2` | `FileEventHub` pub/sub (ADR 003) |
+| **ABS-3** | `serve-abs-3` | `TierDescriptor` + capabilities on control |
+| **ABS-4** | `serve-abs-4` | `TierPort`; dynamic chain (human gate) |
+
+**Sign-off checklist (ABS-0 — docs)**
+
+- [x] Phase exit in [serve-abs/implementation-checklist.md](serve-abs/implementation-checklist.md) ABS-0
+- [x] Tests — **N/A** (docs only)
+- [x] 95% llvm-cov / 80% mutants — **N/A**
+- [x] No `sleep` in tests — **N/A**
+- [x] `check-static` if ELF changed — **N/A**
+- [x] [design-patterns.md](design-patterns.md) — **N/A**
+- [x] [progressive-lsp-apis.md](progressive-lsp-apis.md) — unchanged until ABS-1
+
+**Sign-off checklist (ABS-1 — pending)**
+
+- [ ] Phase exit ABS-1.1–ABS-1.6 in [serve-abs/implementation-checklist.md](serve-abs/implementation-checklist.md)
+- [ ] Tests: unit FSM + chain inflight; IT-ABS-1a/1b
+- [ ] 95% llvm-cov / 80% mutants on touched crates
+- [ ] No `sleep` for serve tier semantics in tests
+- [ ] `check-static` if ELF changed
+- [ ] [design-patterns.md](design-patterns.md) updated for `ServeReadiness` / new types
+- [ ] [progressive-lsp-apis.md](progressive-lsp-apis.md) lists `CacheReady`
+- [ ] No mux `EngineSupervisor::resolve` (grep gate)
+
+**Sign-off checklist (ABS-2 — pending)**
+
+- [ ] Phase exit ABS-2.6 in checklist
+- [ ] Tests: FakeWatcher units; IT-ABS-2a/2b
+- [ ] 95% / 80% on touched crates
+- [ ] No `sleep` for tier truth
+- [ ] `check-static` if ELF changed
+- [ ] design-patterns: `FileEventHub`, subscribers
+- [ ] APIs doc if `WatchBatch` behavior changes
+
+**Sign-off checklist (ABS-3 — pending)**
+
+- [ ] Phase exit ABS-3.3 in checklist + [control-protocol.md](control-protocol.md)
+- [ ] Tests: descriptor sort; IT-ABS-3
+- [ ] 95% / 80% on touched crates
+- [ ] No `sleep` for tier truth
+- [ ] `check-static` if ELF changed
+- [ ] design-patterns: `TierDescriptor`, registry
+- [ ] progressive-lsp-apis: `TierCapabilities` or extended `IndexStatus`
+
+**Sign-off checklist (ABS-4 — pending)**
+
+- [ ] Phase exit ABS-4.1–4.3 (or human defer 4.2/4.3)
+- [ ] Tests: fake tier chain; IT-ABS-4
+- [ ] 95% / 80% on touched crates
+- [ ] Human ack if lang-* boundaries touched
+- [ ] design-patterns: `TierPort`
 
 **Sign-off checklist (TCACHE-1 — complete)**
 
