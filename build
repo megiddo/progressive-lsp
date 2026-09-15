@@ -103,7 +103,8 @@ reap_orphaned_xtask_cargo() {
 
 run_xtask() {
   reap_orphaned_xtask_cargo
-  operator_target=${CARGO_TARGET_DIR:-"$ROOT/target/operator"}
+  # Always isolate xtask from a shell CARGO_TARGET_DIR (e.g. after manual cargo test).
+  operator_target="$ROOT/target/operator"
   echo "./build: cargo build -p xtask (CARGO_TARGET_DIR=$operator_target)" >&2
   CARGO_TARGET_DIR="$operator_target" \
     CARGO_TERM_PROGRESS_WHEN=never \

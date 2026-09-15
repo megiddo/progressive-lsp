@@ -60,6 +60,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if !status.success() {
         return Err(format!("integration smoke failed ({status})"));
     }
+    eprintln!("xtask integ: PASS");
     Ok(())
 }
 
