@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::result_tree::{tail_output, Outcome, ResultTree};
 use crate::workspace_root;
 
 fn workspace_target(root: &PathBuf) -> PathBuf {
@@ -18,50 +19,83 @@ fn cargo_cmd(root: &PathBuf) -> Command {
     cmd
 }
 
+fn run_cargo_test(root: &PathBuf, args: &[&str]) -> (Outcome, Option<String>) {
+    let output = match cargo_cmd(root).args(args).output() {
+        Ok(o) => o,
+        Err(e) => return (Outcome::Fail, Some(format!("spawn: {e}"))),
+    };
+    if output.status.success() {
+        (Outcome::Pass, None)
+    } else {
+        let detail = tail_output(&output.stdout, &output.stderr, 10);
+        let detail = if detail.is_empty() {
+            Some(format!("exit {}", output.status))
+        } else {
+            Some(detail)
+        };
+        (Outcome::Fail, detail)
+    }
+}
+
 pub fn run(_args: &[String]) -> Result<(), String> {
     let root = workspace_root();
-    let target = workspace_target(&root);
-    eprintln!("xtask test: CARGO_TARGET_DIR={}", target.display());
+    let mut tree = ResultTree::new("test");
 
-    let steps: &[(&str, &[&str])] = &[
+    let groups: &[(&str, &[(&str, &[&str])])] = &[
         (
             "core crates",
             &[
-                "test",
-                "-p",
-                "progressive-lsp-resolve",
-                "-p",
-                "progressive-lsp-protocol",
-                "-p",
-                "progressive-lsp-control",
-                "-p",
-                "progressive-lsp-types-cache",
+                (
+                    "progressive-lsp-resolve",
+                    &["test", "-p", "progressive-lsp-resolve"],
+                ),
+                (
+                    "progressive-lsp-protocol",
+                    &["test", "-p", "progressive-lsp-protocol"],
+                ),
+                (
+                    "progressive-lsp-control",
+                    &["test", "-p", "progressive-lsp-control"],
+                ),
+                (
+                    "progressive-lsp-types-cache",
+                    &["test", "-p", "progressive-lsp-types-cache"],
+                ),
             ],
         ),
         (
-            "progressive-lsp + seams_extended",
-            &["test", "-p", "progressive-lsp", "--test", "seams_extended"],
+            "seams_extended",
+            &[(
+                "seams_extended",
+                &["test", "-p", "progressive-lsp", "--test", "seams_extended"],
+            )],
         ),
         (
             "integration harness",
-            &[
-                "test",
-                "--manifest-path",
-                "integration/harness/Cargo.toml",
-            ],
+            &[(
+                "plsp-it1 unit tests",
+                &["test", "--manifest-path", "integration/harness/Cargo.toml"],
+            )],
         ),
     ];
 
-    for (label, args) in steps {
-        eprintln!("xtask test: {label}");
-        let status = cargo_cmd(&root)
-            .args(*args)
-            .status()
-            .map_err(|e| format!("cargo {label}: {e}"))?;
-        if !status.success() {
-            return Err(format!("cargo test ({label}) failed ({status})"));
+    for (group, leaves) in groups {
+        let mut group_outcome = Outcome::Pass;
+        let mut leaf_results = Vec::new();
+        for (leaf_name, args) in *leaves {
+            let (outcome, detail) = run_cargo_test(&root, args);
+            group_outcome = group_outcome.merge(outcome);
+            leaf_results.push((*leaf_name, outcome, detail));
+        }
+        tree.push(1, *group, group_outcome);
+        for (name, outcome, detail) in leaf_results {
+            tree.push_detail(2, name, outcome, detail);
         }
     }
-    eprintln!("xtask test: OK");
+
+    tree.print();
+    if tree.failed() {
+        return Err("unit tests failed (see tree above)".into());
+    }
     Ok(())
 }

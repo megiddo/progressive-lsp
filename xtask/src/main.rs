@@ -8,6 +8,7 @@ mod dist;
 mod freshness;
 mod integ;
 mod musl;
+mod result_tree;
 mod ws_test;
 mod pack;
 mod perf;
