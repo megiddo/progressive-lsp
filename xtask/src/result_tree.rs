@@ -230,15 +230,36 @@ impl Line {
 }
 
 /// Sum `test result:` lines from `cargo test` (lib + integration + doc bins).
-/// Per-package totals from one `cargo test` log (`Running …` + following `test result:`).
+/// Per-package totals from one `cargo test` log (`Running …` + `test result:` pairs).
 pub fn parse_cargo_test_by_package(text: &str) -> std::collections::BTreeMap<String, (u32, u32)> {
     use std::collections::BTreeMap;
-    let mut out: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+    let mut runnings: Vec<String> = Vec::new();
+    let mut results: Vec<(u32, u32)> = Vec::new();
+    for line in text.lines() {
+        let trimmed = strip_ansi(line.trim());
+        if trimmed.starts_with("Running ") && trimmed.contains("(target/") {
+            if let Some(stem) = deps_stem_from_running_line(&trimmed) {
+                runnings.push(package_from_deps_stem(&stem));
+            }
+            continue;
+        }
+        if trimmed.starts_with("test result:") {
+            results.push(parse_single_test_result_line(&trimmed));
+        }
+    }
+
+    let mut out = BTreeMap::new();
+    if runnings.len() == results.len() && !runnings.is_empty() {
+        merge_package_totals(&mut out, runnings.into_iter().zip(results));
+        return out;
+    }
+
+    // TTY order: `Running` then `test result:` for the same binary.
     let mut current_pkg: Option<String> = None;
     for line in text.lines() {
-        let trimmed = line.trim();
+        let trimmed = strip_ansi(line.trim());
         if trimmed.starts_with("Running ") && trimmed.contains("(target/") {
-            if let Some(stem) = deps_stem_from_running_line(trimmed) {
+            if let Some(stem) = deps_stem_from_running_line(&trimmed) {
                 current_pkg = Some(package_from_deps_stem(&stem));
             }
             continue;
@@ -246,11 +267,39 @@ pub fn parse_cargo_test_by_package(text: &str) -> std::collections::BTreeMap<Str
         if !trimmed.starts_with("test result:") {
             continue;
         }
-        let (p, f) = parse_single_test_result_line(trimmed);
+        let (p, f) = parse_single_test_result_line(&trimmed);
         let pkg = current_pkg.clone().unwrap_or_else(|| "unknown".into());
         let entry = out.entry(pkg).or_insert((0, 0));
         entry.0 += p;
         entry.1 += f;
+    }
+    out
+}
+
+fn merge_package_totals(
+    out: &mut std::collections::BTreeMap<String, (u32, u32)>,
+    pairs: impl Iterator<Item = (String, (u32, u32))>,
+) {
+    for (pkg, (p, f)) in pairs {
+        let entry = out.entry(pkg).or_insert((0, 0));
+        entry.0 += p;
+        entry.1 += f;
+    }
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            while let Some(next) = chars.next() {
+                if next == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
     }
     out
 }
@@ -474,12 +523,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_cargo_test_by_package_groups_running_blocks() {
+    fn parse_cargo_test_by_package_tty_running_before_result() {
         let sample = "\
      Running unittests src/lib.rs (target/debug/deps/progressive_lsp_core-0123456789abcdef)
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running unittests src/lib.rs (target/debug/deps/progressive_lsp_resolve-fedcba9876543210)
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+";
+        let map = parse_cargo_test_by_package(sample);
+        assert_eq!(map.get("progressive-lsp-core"), Some(&(10, 0)));
+        assert_eq!(map.get("progressive-lsp-resolve"), Some(&(5, 0)));
+    }
+
+    #[test]
+    fn parse_cargo_test_by_package_captured_result_before_running() {
+        let sample = "\
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs (target/debug/deps/progressive_lsp_core-0123456789abcdef)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs (target/debug/deps/progressive_lsp_resolve-fedcba9876543210)
 ";
         let map = parse_cargo_test_by_package(sample);
         assert_eq!(map.get("progressive-lsp-core"), Some(&(10, 0)));

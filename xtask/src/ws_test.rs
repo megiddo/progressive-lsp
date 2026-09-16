@@ -158,8 +158,11 @@ fn push_workspace_breakdown(tree: &mut ResultTree, ws: &TestRun) {
         };
         tree.push_counts(2, pkg, outcome, *p, *f, None);
     }
+    if by_pkg.len() == 1 && by_pkg.contains_key("unknown") {
+        return;
+    }
     for (pkg, (p, f)) in &by_pkg {
-        if workspace_package_order().contains(&pkg.as_str()) {
+        if pkg == "unknown" || workspace_package_order().contains(&pkg.as_str()) {
             continue;
         }
         if *p == 0 && *f == 0 {
