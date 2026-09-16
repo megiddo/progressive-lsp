@@ -71,6 +71,7 @@ fn run_cargo_test(root: &PathBuf, args: &[&str]) -> TestRun {
 /// Workspace library crates for one `cargo test` (xtask excluded — run `cargo test -p xtask` separately).
 const WORKSPACE_TEST_ARGS: &[&str] = &[
     "test",
+    "--no-fail-fast",
     "-p",
     "progressive-lsp-core",
     "-p",
@@ -157,9 +158,6 @@ fn push_workspace_breakdown(tree: &mut ResultTree, ws: &TestRun) {
             Outcome::Pass
         };
         tree.push_counts(2, pkg, outcome, *p, *f, None);
-    }
-    if by_pkg.len() == 1 && by_pkg.contains_key("unknown") {
-        return;
     }
     for (pkg, (p, f)) in &by_pkg {
         if pkg == "unknown" || workspace_package_order().contains(&pkg.as_str()) {
